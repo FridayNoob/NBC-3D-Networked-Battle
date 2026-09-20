@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Server.Game - 服务端战斗逻辑层
+       职责：
+         · 引入 NBC.Shared 的战斗核心逻辑（与客户端【同一份】代码）
+         · 按 Tick 推进战斗模拟
+         · 生成快照（状态同步）/ 收集输入并广播（帧同步）/ 生成关键帧（状态帧同步）
+         · 权威战斗判定与结算数据生成
+       ⚠️ 本层必须能被客户端复用同一份逻辑 - 因此战斗规则本身写在 NBC.Shared 里，
+          本层只做"服务端侧的驱动与编排"
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NBC.Server.Game</RootNamespace>
+    <AssemblyName>NBC.Server.Game</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+    <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
+  </ItemGroup>
+
+</Project>

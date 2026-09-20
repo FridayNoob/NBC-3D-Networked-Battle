@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Server.Core - 服务端基础设施层
+       职责（需求文档 §13.2、§13.3）：
+         · 网络层：TcpListener / 粘包拆包 / 心跳 / 超时 / 会话管理
+         · 消息分发：MsgId 注册表（显式注册，不用反射 - 见 NET-02）
+         · 主循环：单线程定长 Tick（30Hz），网络 IO 回调只入队
+         · 房间/大厅管理：RoomMgr / LobbyMgr
+         · 帧循环与同步策略：状态同步 / 帧同步 / 状态帧同步
+       ⚠️ 本层【禁止】引用 UnityEngine（服务端是纯 .NET 进程）
+       ⚠️ 本层【禁止】被 Behavior Designer 等 Unity 插件污染（见 M0 手册 D14 实验）
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NBC.Server.Core</RootNamespace>
+    <AssemblyName>NBC.Server.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- ========================================================================
+       第三方依赖（M0 阶段先不引入）
+       M3 接入时取消注释：
+       <ItemGroup>
+         <PackageReference Include="protobuf-net" Version="3.2.*" />
+       </ItemGroup>
+       ======================================================================== -->
+
+</Project>

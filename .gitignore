@@ -1,0 +1,200 @@
+# ============================================================================
+#  .gitignore —— 3D联网战斗Demo（NBC）
+#  仓库根：3D联网战斗Demo/
+#  生成日期：2026-09-16
+#
+#  目录约定（见 Docs/01-项目需求文档.md §2.4）：
+#    Client/   Unity 工程（由 Unity Hub 创建）
+#    Server/   .NET 8 服务端解决方案
+#    Docs/     文档
+#    Tools/    独立工具
+#    Builds/   打包产物（全部忽略）
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Unity 工程（Client/）
+# ---------------------------------------------------------------------------
+
+# Unity 自动生成的工程目录
+#
+# 📌 写法说明（2026-09-20 用真实 git 仓库 + `git check-ignore -v` 实测修正）：
+#    下面两种写法【都能】正确忽略整个目录，以及目录内的所有文件 ——
+#      Client/Library/       ← 本项目采用：大小写精确，一眼看懂
+#      Client/[Ll]ibrary/    ← 同样有效，但没必要
+#    实测证据：`Library/ScriptAssemblies/Assembly-CSharp.dll` 被 `[Ll]ibrary/` 正确忽略
+#    （git 对"已被忽略的目录"根本不会向下遍历，所以目录内文件自动一并忽略）。
+#
+# ⚠️ 更正记录：本文档早先写过"[Ll]ibrary/ 这种字符类写法会漏掉目录内的文件"，
+#    那是【错误结论】，来源是一个我自己写错的路径模拟校验脚本。
+#    教训：校验器本身也要先被校验 —— 不要用"自己写的模拟器"去否定真实工具的语义。
+Client/Library/
+Client/Temp/
+Client/Obj/
+Client/obj/
+Client/Build/
+Client/Builds/
+Client/Logs/
+Client/UserSettings/
+Client/MemoryCaptures/
+Client/Recordings/
+Client/Logs/
+Client/crashlytics-build.properties
+
+# Unity 自动生成的 IDE 工程文件（由 Unity 生成，不需要提交）
+Client/*.csproj
+Client/*.sln
+Client/*.unityproj
+Client/*.suo
+Client/*.user
+Client/*.userprefs
+Client/*.pidb
+Client/*.booproj
+Client/*.svd
+Client/*.tmp
+Client/*.opendb
+Client/.vsconfig
+Client/.vs/
+Client/.idea/
+Client/.vscode/
+
+# Unity 崩溃报告
+Client/sysinfo.txt
+Client/crashlytics-build.properties
+Client/[Aa]ssets/[Aa]ssetStoreTools*
+Client/[Aa]ssets/[Pp]lugins/[Ee]ditor/JetBrains*
+
+# 构建产物
+Client/ExportedObj/
+Client/*.apk
+Client/*.aab
+Client/*.unitypackage
+Client/*.app
+Client/*.zip
+
+# ---------------------------------------------------------------------------
+# .NET 服务端（Server/）
+# ---------------------------------------------------------------------------
+#
+# 📌 写法说明（2026-09-20 实测）：裸 `bin/`、`obj/` 与 `**/bin/`、`**/obj/` 【都有效】。
+#    本项目用裸目录名：更短，且在任何层级都能匹配到
+#    （实测 `Server/NBC.Host/bin/Debug/host.exe` 被裸 `bin/` 正确忽略）。
+#    早先本文档写的"**/bin/ 可能匹配不到"是【错误结论】，一并更正。
+bin/
+obj/
+
+# 全局工具与 SDK 缓存
+Server/.dotnet/
+Server/.nuget/
+Server/TestResults/
+Server/*.trx
+Server/Logs/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ---------------------------------------------------------------------------
+# 付费第三方插件：许可禁止再分发 → 不提交进仓库（2026-09-20 决定）
+# ---------------------------------------------------------------------------
+#
+# 依据（均取自插件包内的授权说明）：
+#   · Behavior Designer 1.7.13 —— AssetStore **Commercial License（按席位）**
+#   · A* Pathfinding Project Pro 5.4.7 —— AssetStore **Commercial License**
+#   · DOTween 1.3.030（免费版）—— 免费版许可允许项目中免费使用，
+#     但这里**统一**按同一策略忽略，避免以后换 Pro 版时漏改
+#
+# 代价：clone 下来**不含**这三个插件，需自行导入离线包
+#       → 导入步骤写在仓库根 `README.md` 的「第三方插件如何导入」一节
+#
+# ⚠️ 落地路径是【实测】出来的（用 tar 读 .unitypackage 里的 pathname），不是猜的：
+#    · Behavior Designer → `Client/Assets/Behavior Designer/` + `Client/Assets/Gizmos/Behavior Designer*`
+#    · A* Pathfinding Project Pro → **`Client/Packages/com.arongranberg.astar/`**（5.x 起是 UPM 嵌入式包，
+#      **不再**是老的 `Assets/AstarPathfindingProject/`）
+#    · DOTween → `Client/Assets/Plugins/Demigiant/`
+Client/Assets/Behavior Designer/
+Client/Assets/Gizmos/Behavior Designer*
+Client/Packages/com.arongranberg.astar/
+Client/Assets/Plugins/Demigiant/
+
+# 同类付费/受限内容（如果以后导入）——留位，避免临到提交才发现
+# Client/Assets/Editor Default Resources/
+# Client/Assets/Plugins/Sirenix/
+
+# ---------------------------------------------------------------------------
+# 打包产物
+# ---------------------------------------------------------------------------
+Builds/
+[Bb]uild/
+[Oo]utput/
+
+# ---------------------------------------------------------------------------
+# 热更 / 资源服务器目录（本地模拟用，产物不入库）
+# ---------------------------------------------------------------------------
+AssetServer/
+AssetBundles/
+CDN/
+
+# ---------------------------------------------------------------------------
+# 敏感信息（硬性：绝不提交）
+# ---------------------------------------------------------------------------
+# 数据库密码、令牌、密钥等本地覆盖文件
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+**/secrets.json
+*.pfx
+*.snk
+.env
+.env.local
+
+# 注意：appsettings.json 本体是模板（密码留空，用环境变量 NBC_DB_PASSWORD 覆盖），
+#       因此【要】提交；只有 *.Local.json 这类覆盖文件被忽略。
+
+# ---------------------------------------------------------------------------
+# IDE / 编辑器
+# ---------------------------------------------------------------------------
+.vs/
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# 临时与日志
+# ---------------------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+*_backup_*
+*_old_*
+[Cc]rashlytics/
+[Cc]rashReports/
+Logs/
+logs/
+Temp/
+temp/
+
+# 注意：Client/ 下的临时目录与日志已被上面的 Client/ 规则覆盖
+
+# Python 辅助脚本的缓存（Tools/ 里会用到 Python 做配置表工具）
+__pycache__/
+*.pyc
+
+# ---------------------------------------------------------------------------
+# 明确保留（避免被上面规则误伤）
+# ---------------------------------------------------------------------------
+#
+# 📌 怎么验证这一段有没有生效（2026-09-20 实测，别用错判据）：
+#    ✅ 正确判据 = 地面真值，即"这些文件最终会不会进仓库"：
+#         git add --dry-run .
+#         git status --porcelain -uall
+#       该保留的必须出现在输出里。
+#    ❌ 不要只用 `git check-ignore -v`：它会把"被下面这些 ! 取反规则命中"的路径
+#       也打印出来、且退出码为 0，很容易被误读成"这条被忽略了"。
+#
+#    实测结果（2026-09-20）：22 项应保留 + 17 项应忽略，全部符合预期。
+!Server/**/*.csproj
+!Server/**/*.sln
+!*.asmdef
+!*.asmref
+!.gitkeep

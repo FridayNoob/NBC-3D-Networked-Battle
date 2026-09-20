@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Server.Tests - 服务端单元测试（xUnit）
+       用途（需求文档 §14.3 MOD-03）：
+         · 定点数学 Fix64 的精度与边界测试
+         · 帧同步确定性测试（同一输入序列 → 同一状态哈希）
+         · A* / 流场的路径一致性测试
+         · 共享逻辑在 .NET 环境下可直接运行 - 这是"纯 C# 逻辑层"的机械证据
+       ⚠️ 本项目的存在本身就是一条架构约束的验证：
+          NBC.Shared 若能在这里被测试，就说明它确实不依赖 Unity
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NBC.Server.Tests</RootNamespace>
+    <AssemblyName>NBC.Server.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+    <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
+    <ProjectReference Include="..\NBC.Server.Game\NBC.Server.Game.csproj" />
+  </ItemGroup>
+
+  <!-- ========================================================================
+       第三方依赖（M0 阶段先不引入，避免首次 build 卡在还原）
+       M1 接入时取消注释：
+       <ItemGroup>
+         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+         <PackageReference Include="xunit" Version="2.*" />
+         <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+       </ItemGroup>
+       ======================================================================== -->
+
+</Project>

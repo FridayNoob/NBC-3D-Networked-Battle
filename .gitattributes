@@ -1,0 +1,134 @@
+# ============================================================================
+#  .gitattributes —— 3D联网战斗Demo（NBC）
+#  生成日期：2026-09-16
+#
+#  目的：
+#    ① 统一换行符，避免 Windows/Linux 混用导致整文件 diff
+#    ② 明确标记二进制资源，避免 Git 尝试做文本 diff 或换行转换
+#    ③ 让 Unity 的 .meta 不参与文本 diff 统计
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# 默认：交给 Git 自动识别，统一用 LF 存档（检出时不强制转换，减少意外）
+# ---------------------------------------------------------------------------
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# 代码与文本：显式声明为文本并强制 LF
+# ---------------------------------------------------------------------------
+*.cs        text eol=lf
+*.lua       text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.xml       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
+*.shader    text eol=lf
+*.hlsl      text eol=lf
+*.cginc     text eol=lf
+*.compute   text eol=lf
+*.asmdef    text eol=lf
+*.csproj    text eol=lf
+*.sln       text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
+
+# Windows 专用脚本保留 CRLF，否则 cmd 解析异常
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Unity YAML 资产：必须当文本处理（需要 diff / merge），但强制 LF
+# ---------------------------------------------------------------------------
+*.unity     text eol=lf
+*.prefab    text eol=lf
+*.asset     text eol=lf
+*.mat       text eol=lf
+*.anim      text eol=lf
+*.controller text eol=lf
+*.overrideController text eol=lf
+*.physicMaterial text eol=lf
+*.physicsMaterial2D text eol=lf
+*.meta      text eol=lf
+*.asmref    text eol=lf
+*.spriteatlas text eol=lf
+*.mixer     text eol=lf
+*.guiskin   text eol=lf
+*.fontsettings text eol=lf
+*.preset    text eol=lf
+*.index     text eol=lf
+
+# Unity 的 .meta 是机器生成内容，不参与 diff（也不计入语言统计）
+*.meta      -diff linguist-generated=true
+
+# ---------------------------------------------------------------------------
+# 二进制资源：禁止 Git 做文本处理
+# ---------------------------------------------------------------------------
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.bmp       binary
+*.tga       binary
+*.psd       binary
+*.tif       binary
+*.exr       binary
+*.hdr       binary
+*.iff       binary
+*.fbx       binary
+*.obj       binary
+*.blend     binary
+*.dae       binary
+*.3ds       binary
+*.max       binary
+*.mp3       binary
+*.wav       binary
+*.ogg       binary
+*.aiff      binary
+*.aif       binary
+*.mp4       binary
+*.mov       binary
+*.webm      binary
+*.ttf       binary
+*.otf       binary
+*.dll       binary
+*.so        binary
+*.dylib     binary
+*.a         binary
+*.lib       binary
+*.bundle    binary
+*.unity3d   binary
+*.bytes     binary
+*.zip       binary
+*.7z        binary
+*.rar       binary
+*.gz        binary
+*.apk       binary
+*.aab       binary
+*.exe       binary
+*.pdb       binary
+
+# ---------------------------------------------------------------------------
+# Git LFS（可选）
+# ---------------------------------------------------------------------------
+# 本项目预计的资源体积不大（Mixamo 角色 + 免费场景包），默认【不启用 LFS】。
+# 若后续发现仓库体积增长过快（例如 > 500MB），再启用下面几行，
+# 并按 Git LFS 官方步骤执行 `git lfs install` 与 `git lfs migrate`。
+#
+# *.fbx     filter=lfs diff=lfs merge=lfs -text
+# *.psd     filter=lfs diff=lfs merge=lfs -text
+# *.png     filter=lfs diff=lfs merge=lfs -text
+# *.wav     filter=lfs diff=lfs merge=lfs -text
+# *.mp3     filter=lfs diff=lfs merge=lfs -text
+# *.unity3d filter=lfs diff=lfs merge=lfs -text
+
+# ---------------------------------------------------------------------------
+# 文档与第三方目录：不计入语言统计
+# ---------------------------------------------------------------------------
+Docs/**     linguist-documentation=true
+Client/Assets/ThirdParty/** linguist-vendored=true

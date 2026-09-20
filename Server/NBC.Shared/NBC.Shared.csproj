@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Shared - 客户端与服务端【共享】的程序集
+       ⚠️ 关键约束（需求文档 §4.2 R5、§6.4 DET-08）：
+         · 必须是 netstandard2.1 - Unity 2022.3 能引用，.NET 8 也能引用
+         · 绝不能改成 net8.0，否则 Unity 无法引用，双端共享逻辑就断了
+         · 本程序集用于：协议定义、定点数学、战斗核心逻辑、AI 决策（帧同步需要）
+       ⚠️ 依赖约束（需求文档 §4.2 R1、DET-02）：
+         · 本程序集【禁止】引用 UnityEngine（帧同步确定性的硬前提）
+         · M1 阶段会改为 asmdef 镜像 + 单元测试机械校验
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>NBC.Shared</RootNamespace>
+    <AssemblyName>NBC.Shared</AssemblyName>
+
+    <!-- 明确禁用引擎引用：本程序集只能依赖 BCL -->
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!-- ========================================================================
+       第三方依赖（M0 阶段先不引入，避免首次 build 就卡在还原）
+       M1 接入时取消注释：
+       <ItemGroup>
+         <PackageReference Include="protobuf-net" Version="3.2.*" />
+       </ItemGroup>
+       ======================================================================== -->
+
+</Project>

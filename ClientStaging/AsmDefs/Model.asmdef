@@ -1,0 +1,16 @@
+{
+    "name": "NBC.Model",
+    "rootNamespace": "NBC.Model",
+    "references": [
+        "NBC.Framework"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

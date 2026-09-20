@@ -1,0 +1,66 @@
+<Project>
+
+  <!-- ========================================================================
+       NBC 服务端统一构建属性
+       项目：3D联网战斗Demo
+       对应需求文档：Docs/01-项目需求文档.md §5.2、§13
+
+       本文件被 Server 目录下所有工程自动继承（MSBuild 约定：向上查找最近的
+       Directory.Build.props）。作用是把"每个工程都要写一遍"的公共设置集中一处。
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <!-- 语言与运行时 -->
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- 版本信息 -->
+    <Version>0.1.0</Version>
+    <Company>NBC</Company>
+    <Product>NBC Server</Product>
+
+    <!-- 关掉一些噪音（CS1591 = 公共成员缺少 XML 注释） -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- ==========================================================================
+       ⚠️ 重要教训：这里【不能】覆盖 BaseIntermediateOutputPath（即 obj 目录）
+
+       本文件早期版本为了"统一输出目录"写过：
+
+           <BaseOutputPath>$(RepoRoot)..\Builds\Server\bin\</BaseOutputPath>
+           <BaseIntermediateOutputPath>$(RepoRoot)..\Builds\Server\obj\</BaseIntermediateOutputPath>
+
+       结果 5 个工程同时编译失败，报：
+
+           error NETSDK1005: 资产文件 "...\Builds\Server\obj\project.assets.json"
+           没有 "netstandard2.1" 的目标。
+
+       根因：
+         · BaseIntermediateOutputPath 在【项目文件之前】求值，因此 $(MSBuildProjectName)
+           此时还不可用；5 个工程算出的是【同一个】obj 目录。
+         · obj 目录里的 project.assets.json 是【按工程】的还原结果记录
+           （包含该工程的目标框架、依赖清单）。多个工程共用一个 obj
+           就会互相覆盖，于是某个工程读到的是【别人的】资产文件 ——
+           它里面当然没有本工程需要的 netstandard2.1。
+
+       结论（可复用的判据）：
+         · BaseOutputPath（产物 dll 位置）—— 共享是安全的
+         · BaseIntermediateOutputPath（obj）—— 【绝不能】共享
+         让每个工程用自己的 obj/bin（.NET 默认），是唯一稳妥做法。
+         需要集中收集产物时，用发布步骤去做，不要动 obj。
+       ========================================================================== -->
+
+  <!-- ==========================================================================
+       统一输出路径需求的正解（M6 打包时再启用）
+       不用改 obj，而是让 bin 输出集中到一处；且用项目名区分，避免同名文件覆盖：
+
+           <BaseOutputPath>$(MSBuildThisFileDirectory)..\Builds\Server\bin\$(MSBuildProjectName)\</BaseOutputPath>
+
+       注意 $(MSBuildProjectName) 在 BaseOutputPath 里是安全的（它在项目求值后使用）。
+       ========================================================================== -->
+
+</Project>

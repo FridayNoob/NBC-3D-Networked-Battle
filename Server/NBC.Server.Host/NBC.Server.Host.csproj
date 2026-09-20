@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Server.Host - 服务端进程宿主（控制台）
+       职责（需求文档 §13.3 SRV-01）：
+         · 读 appsettings.json（端口 / DB 连接串 / Tick 率 / 日志级别）
+         · 组装依赖（Core + Game）
+         · 启动网络监听与主循环
+         · Ctrl+C 优雅关闭（SRV-17）
+       产物：Builds\Server\bin\Debug\net8.0\NBC.Server.Host.dll
+            发布后：NBC.Server.exe
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NBC.Server.Host</RootNamespace>
+    <AssemblyName>NBC.Server.Host</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
+    <ProjectReference Include="..\NBC.Server.Game\NBC.Server.Game.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 配置文件要随进程输出，且支持运行时修改（不嵌入） -->
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- ========================================================================
+       第三方依赖（M0 阶段先不引入）
+       M3 接入时取消注释（数据访问用 Dapper + MySqlConnector，见需求文档 §5.2）：
+       <ItemGroup>
+         <PackageReference Include="Dapper" Version="2.*" />
+         <PackageReference Include="MySqlConnector" Version="2.*" />
+         <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.*" />
+         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.*" />
+       </ItemGroup>
+       ======================================================================== -->
+
+</Project>
