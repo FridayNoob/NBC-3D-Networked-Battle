@@ -46,13 +46,33 @@
 
   <!-- ======================================================================
        xLua：Lua 绑定与委托生成
-       ⚠️ 这两条在 xLua 导入之前【匹配不到任何 DLL】—— 这是预期的，不是配置错误。
-          下方 `pending:plugin-not-imported` 标注供校验脚本识别，导入 xLua 后请删除。
-          校验脚本：Tools\Verify-PluginDlls.ps1
+
+       ⚠️ 2026-09-20 实测修正（这条原先写错了，而且错得很隐蔽）：
+          xLua **整棵源码树里没有任何 .asmdef** —— 它的 C# 全部编译进 Unity 自动生成的
+          **Assembly-CSharp**，而不是一个叫 "XLua" 的程序集。
+          实测证据：扫描 Library\ScriptAssemblies\Assembly-CSharp.dll 的元数据，
+          其中有 **109 个 XLua.* 类型**（含 XLua.LuaEnv / DelegateBridge / ObjectTranslator）。
+          所以原来的 <assembly fullname="XLua" /> 与 "XLua.Example" **永远匹配不到任何程序集** ——
+          而 Unity 对不匹配的 link.xml 条目**不报错也不警告**，保护静默失效，
+          只会在 IL2CPP 包里表现为崩溃或数据异常（风险 R4）。
+
+       为什么用 Assembly-CSharp 是安全的（不会把业务代码一起冻住）：
+          本项目业务代码都带 asmdef（NBC.Framework / NBC.Game / NBC.Model / NBC.Editor），
+          所以 Assembly-CSharp 里**只有** xLua 自己的代码 + Examples + Tutorial
+          （实测：Assembly-CSharp 共 742 个类型，其中 XLua* 109 个）。
+
+       M5 收窄方向（两条，按优先级）：
+         ① **用 xLua 自带的 LinkXmlGen**：`XLua → Generate Code` 时会额外生成一份
+            `Assets/XLua/Gen/link.xml`（源码：`XLua/Src/Editor/LinkXmlGen/`），
+            它按 `[LuaCallCSharp]` / `[ReflectionUse]` 标注把保护精确到 `<type>` 粒度，
+            比这里的"整程序集 all"精确得多。Unity 会**合并项目里所有 link.xml**，
+            届时可以把下面这行删掉。
+            ⚠️ **注意：Generate Code 之后项目里会有两份 link.xml，这是正常的，不是重复。**
+         ② 给 `ThirdParty\XLua\Src` 单独加 asmdef，让它成为独立程序集。
+       **M0 阶段仍保留下面这条粗粒度条目**：因为①依赖"所有反射用到的类型都已被正确标注"，
+       漏一个就是运行时崩溃；先用最保险的写法把 D17 跑通，再用数据收窄。
        ====================================================================== -->
-  <!-- pending:plugin-not-imported (xLua, M0 步骤 D6) -->
-  <assembly fullname="XLua" preserve="all" />
-  <assembly fullname="XLua.Example" preserve="all" />
+  <assembly fullname="Assembly-CSharp" preserve="all" />
 
   <!-- ======================================================================
        项目自身：协议类与配置类大量使用特性 + 反射，同样需要保护

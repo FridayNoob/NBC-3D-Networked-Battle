@@ -134,6 +134,34 @@ if ($dllList.Count -eq 0) {
     exit 0
 }
 
+# ---------------------------------------------------------------------------
+# 2b. Index Unity-compiled assemblies (outside Assets) for link.xml validation
+#
+# WHY THIS IS NEEDED
+#   IL2CPP strips the assemblies Unity *compiles*, not only the DLLs that sit in
+#   Assets. When a plugin ships loose .cs files with NO .asmdef, its code lands in
+#   Assembly-CSharp - so a correct link.xml entry may name "Assembly-CSharp".
+#   That is exactly how xLua is packaged (verified 2026-09-20: Assembly-CSharp.dll
+#   contains 109 XLua.* types). Without this index such an entry is reported as a
+#   false "no matching DLL" defect.
+#
+#   These assemblies are only used to validate link.xml names. They are NOT added
+#   to the plugin DLL listing above, to keep that report about imported plugins.
+# ---------------------------------------------------------------------------
+$foundGenerated = @{}
+$scriptAsmDir = Join-Path $Root 'Client\Library\ScriptAssemblies'
+if (Test-Path $scriptAsmDir) {
+    Get-ChildItem -Path $scriptAsmDir -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $anGen = [System.Reflection.AssemblyName]::GetAssemblyName($_.FullName)
+            $foundGenerated[$anGen.Name.ToLower()] = $_.Name
+        } catch { }
+    }
+    Write-Info "Unity-compiled assemblies indexed for link.xml check: $($foundGenerated.Count)"
+} else {
+    Write-Info 'Library\ScriptAssemblies not found - open the Unity project once so it compiles, then re-run.'
+}
+
 Write-Host ''
 Write-Host ('  {0,-32} {1,-16} {2}' -f 'ASSEMBLY NAME', 'VERSION', 'FILE') -ForegroundColor White
 Write-Host ('  ' + ('-' * 74)) -ForegroundColor DarkGray
@@ -228,6 +256,8 @@ if (-not (Test-Path $LinkXml)) {
             if ([string]::IsNullOrWhiteSpace($fn)) { continue }
             if ($found.ContainsKey($fn.ToLower())) {
                 Write-Ok "link.xml entry matches a real assembly: $fn"
+            } elseif ($foundGenerated.ContainsKey($fn.ToLower())) {
+                Write-Ok "link.xml entry matches a Unity-compiled assembly: $fn  (Library\ScriptAssemblies\$($foundGenerated[$fn.ToLower()]))"
             } elseif ($pending.Contains($fn)) {
                 Write-Info "pending (annotated as not-yet-imported plugin): $fn"
                 $pendingMissing += $fn
