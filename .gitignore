@@ -33,6 +33,16 @@ Client/Obj/
 Client/obj/
 Client/Build/
 Client/Builds/
+# ⚠️ YooAsset 的【构建输出根目录】叫 Bundles（不是 Builds！一个字母之差）
+#    实测：Editor\BundleBuilder\BundleBuilderHelper.cs:18 的 GetDefaultBuildOutputRoot()
+#    返回 "{UnityProjectPath}/Bundles"，清单文件写在
+#    {BuildOutputRoot}/{BuildTarget}/{PackageName}/{PackageVersion}/（BuildParameters.cs:226）
+#    漏掉这一条的话，一跑"模拟构建"就会有上百个文件涌进 git status。
+Client/Bundles/
+# YooAsset 的随包资源（内置 AB / 模拟清单的落点；默认 YooFolderName = "yoo"）
+# 只忽略 yoo 子目录，不忽略整个 StreamingAssets —— 那里可能有我们自己手写的文件。
+Client/Assets/StreamingAssets/yoo/
+Client/Assets/StreamingAssets/yoo.meta
 Client/Logs/
 Client/UserSettings/
 Client/MemoryCaptures/
