@@ -11,7 +11,7 @@
         /> entry does not match a real assembly name, Unity does not warn; the
         protection simply does not apply, and you only find out as a crash in an
         IL2CPP build (risk R4).
-     2. Assets\ThirdParty\ProtobufNet\ - Unity needs the whole dependency closure
+     2. Assets\ThirdParty\GoogleProtobuf\ - Unity needs the whole dependency closure
         (main package PLUS its transitive dependencies), not just the main DLL.
 
    This script reads the ACTUAL assembly names out of the DLL files on disk, so
@@ -20,7 +20,7 @@
 
  WHY A SCRIPT AND NOT A DOC
    Assembly names cannot be reliably inferred from package names. Example:
-   the NuGet package "protobuf-net.Core" ships an assembly that must be verified
+   the NuGet package "Google.Protobuf" ships an assembly that must be verified
    on disk. Guessing here costs hours of AOT debugging later.
 
  THIS SCRIPT IS READ-ONLY
@@ -91,7 +91,7 @@ foreach ($rel in $ExtraPaths) {
 
 if ($searchPaths.Count -eq 0) {
     Write-Miss 'No candidate DLL folders found.'
-    Write-Info 'Expected at least: Client\Assets\ThirdParty (protobuf-net)'
+    Write-Info 'Expected at least: Client\Assets\ThirdParty (Google.Protobuf)'
     Write-Info 'Import the plugins per M0 manual D6-D10, then re-run.'
     exit 0
 }

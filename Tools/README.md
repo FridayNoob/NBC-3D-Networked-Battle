@@ -85,16 +85,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Test-Network.ps1 -Prox
 
 ## Verify-PluginDlls.ps1
 
-**只读**验证脚本：读取 DLL 的**真实程序集名**，用于确认 `link.xml` 写对了、以及 protobuf-net 的依赖闭包放齐了。
+**只读**验证脚本：读取 DLL 的**真实程序集名**，用于确认 `link.xml` 写对了、以及 Google.Protobuf 的依赖闭包放齐了。
 
 ### 为什么需要它：这两件事都会"静默失败"
 
 | 风险 | 静默失败的表现 |
 | --- | --- |
 | `link.xml` 里的 `fullname` 与真实程序集名不符 | Unity **不报错、不警告**，保护条目被直接忽略。只在 **IL2CPP 出包后**表现为崩溃或数据错误（风险 R4） |
-| `Assets/ThirdParty/ProtobufNet/` 少放了传递依赖 DLL | 编译报"类型定义在未引用的程序集中"，但不容易联想到是"少放了一个包" |
+| `Assets/ThirdParty/GoogleProtobuf/` 少放了传递依赖 DLL | 编译报"类型定义在未引用的程序集中"，但不容易联想到是"少放了一个包" |
 
-**程序集名不能从包名推断** —— 脚本会从 DLL 元数据里读出来告诉你。例如把任意 DLL 重命名为 `protobuf-net.dll`，
+**程序集名不能从包名推断** —— 脚本会从 DLL 元数据里读出来告诉你。例如把任意 DLL 重命名为 `MyProto.dll`，
 脚本仍会报出它内部真实的程序集名（这正是我在测试中验证过的行为）。
 
 ### 用法
@@ -112,7 +112,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Verify-PluginDlls.ps1 
 | 项 | 说明 |
 | --- | --- |
 | DLL 程序集名清单 | 列出 `Assets/ThirdParty`、`Behavior Designer`、`AstarPathfindingProject` 下所有 DLL 的真实程序集名与版本 |
-| protobuf-net 依赖闭包 | 检查 `protobuf-net` / `protobuf-net.Core` / `System.Collections.Immutable` 三个是否都在（缺任一都会编译失败） |
+| protobuf 依赖闭包 | 检查 `Google.Protobuf` / `System.Runtime.CompilerServices.Unsafe` 两个是否都在（缺任一都会编译失败） |
 | `link.xml` 条目校验 | 逐条比对真实程序集名，报出**匹配不到**的条目（静默失效的那些） |
 | 反向检查 | 对 protobuf/lua/immutable 类程序集，若未进 `link.xml`，**直接打印该加的那一行** |
 | 资产目录盘点 | 列出关键目录是否存在及文件数 |
@@ -121,7 +121,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Verify-PluginDlls.ps1 
 
 | 时机 | 目的 |
 | --- | --- |
-| 导入完 protobuf-net 后（M0/D7） | 确认 3 个 DLL 放齐 |
+| 导入完 Google.Protobuf 后（M0/D7） | 确认 **2 个** DLL 放齐 |
 | 导入完 xLua 后（M0/D6） | 确认程序集名与 `link.xml` 一致 |
 | **出 IL2CPP 包之前（M0/D17）** | 最后一道防线，避免静默失效 |
 | 每次升级插件版本后 | 程序集名可能变，`link.xml` 要同步 |
@@ -291,7 +291,7 @@ Unity 的 `link.xml` 用 `<assembly fullname="..." />` 声明"这些程序集不
 该条目被静默忽略 —— 只在 IL2CPP 出包后表现为崩溃或数据错误（风险 R4）。
 
 而**程序集名不能从文件名或包名推断**。这不是理论：本脚本的测试里，把任意 DLL 重命名为
-`protobuf-net.dll` 放进去，它内部的真实名字是别的（`ILLink.CodeFixProvider`）。
+`MyProto.dll` 放进去，它内部的真实名字是别的（`ILLink.CodeFixProvider`）。
 
 ### 不用脚本，你自己怎么得出同样结论
 
@@ -301,14 +301,14 @@ Unity 的 `link.xml` 用 `<assembly fullname="..." />` 声明"这些程序集不
 ```
 
 对照步骤：
-1. 对 `Client\Assets\ThirdParty\ProtobufNet\` 下每个 DLL 跑一遍上面的命令，记下 `Name`
+1. 对 `Client\Assets\ThirdParty\GoogleProtobuf\` 下每个 DLL 跑一遍上面的命令，记下 `Name`
 2. 打开 `Client\Assets\link.xml`，逐条比对 `<assembly fullname="...">` 与记下的 `Name`
 3. **对不上的那条就是静默失效的** —— 改成正确名字，或删掉它
 
 ### 为什么还要检查"依赖闭包"
 
 Unity 不认 NuGet：服务端用 `PackageReference` 会自动拉传递依赖，**Unity 只能靠你手工放 DLL**。
-`protobuf-net 3.2.30` 在 `netstandard2.1` 下需要 **3 个 DLL**（主包 + `.Core` + `System.Collections.Immutable`），
+`Google.Protobuf 3.21.1` 需要 **2 个 DLL**（主包 + `System.Runtime.CompilerServices.Unsafe`），
 少放任何一个都会编译失败，而报错信息指向的是"找不到某个类型"，很难联想到是"少放了一个包"。
 
 ---

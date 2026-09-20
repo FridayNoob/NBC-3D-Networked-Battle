@@ -13,9 +13,9 @@
 
 | 暂存文件 | 搬到（相对 `3D联网战斗Demo/`） | 作用 |
 | --- | --- | --- |
-| `NBV0_EnvironmentProbe.cs` | `Client/Assets/_Project/Tests/Manual/NBV0_EnvironmentProbe.cs` | **D17 的验证脚本**：在 IL2CPP 出包后验证 protobuf-net 与 xLua 是否可用 |
-| `Editor/NBV0_DefineInitializer.cs` | `Client/Assets/_Project/Editor/NBV0_DefineInitializer.cs` | 自动检测 dll 并注入编译符号 `NBC_HAS_PROTOBUF_NET` / `NBC_HAS_XLUA`；另带诊断菜单 |
-| `link.xml` | `Client/Assets/link.xml` | **IL2CPP 裁剪保护**：防止 protobuf-net / xLua 被 strip 掉 |
+| `NBV0_EnvironmentProbe.cs` | `Client/Assets/_Project/Tests/Manual/NBV0_EnvironmentProbe.cs` | **D17 的验证脚本**：在 IL2CPP 出包后验证 **Google.Protobuf** 与 xLua 是否可用 |
+| `Editor/NBV0_DefineInitializer.cs` | `Client/Assets/_Project/Editor/NBV0_DefineInitializer.cs` | 自动检测 dll 并注入编译符号 `NBC_HAS_PROTOBUF` / `NBC_HAS_XLUA`（会清理遗留的 `NBC_HAS_PROTOBUF_NET`）；另带诊断菜单 |
+| `link.xml` | `Client/Assets/link.xml` | **IL2CPP 裁剪保护**：防止 xLua 被 strip 掉（**Google.Protobuf 不需要**：生成代码零反射） |
 
 ### 1.2 程序集定义（asmdef）
 
@@ -122,7 +122,7 @@ Write-Host "搬运完成。回到 Unity 等待编译。"
    `Client/Assets/Scenes/Scene_Test_AOT.unity`
 2. Hierarchy 里右键 **Create Empty**，命名 `EnvProbe`
 3. 选中 `EnvProbe` → Inspector → **Add Component** → 搜 `NBV0_EnvironmentProbe` 添加
-4. 确认两个勾选框都是 ✅（`testProtobufNet` / `testXLua`）
+4. 确认两个勾选框都是 ✅（`testProtobuf` / `testXLua`）
 
 ### 步骤 2：加入 Build 列表
 
@@ -131,7 +131,7 @@ Write-Host "搬运完成。回到 Unity 等待编译。"
 ### 步骤 3：确认编译符号已自动注入
 
 1. 看 Console 是否有这条日志：
-   `[NBV0] 已更新编译符号：NBC_HAS_PROTOBUF_NET=True, NBC_HAS_XLUA=True`
+   `[NBV0] 已更新编译符号：NBC_HAS_PROTOBUF=True, NBC_HAS_XLUA=True`
 2. 若没有，或值为 False，打开 **Tools → NBC → 诊断 M0 探针依赖**，把输出贴给我
 3. 也可手动核对：**Edit → Project Settings → Player → Other Settings → Scripting Define Symbols**
 
@@ -142,7 +142,7 @@ Write-Host "搬运完成。回到 Unity 等待编译。"
 ```
 NBV0 环境探针（M0 / D17）
 Runtime: 2022.3.62f3c1 | ... | Scripting: Mono (Editor 或 Mono 出包)
-protobuf-net: 通过 (XX 字节) ...
+protobuf: 通过 Google.Protobuf (49 字节) ...
 xLua: 通过 Lua 求和 1..10 = 55（期望 55）
 ```
 
@@ -163,7 +163,7 @@ xLua: 通过 Lua 求和 1..10 = 55（期望 55）
 | 画面显示 | 判定 | 下一步 |
 | --- | --- | --- |
 | 两项都"通过" | ✅ **D17 通过，M0 收关** | 把截图/日志给我，我记录实测结论 |
-| protobuf-net 报异常 | ❌ AOT 裁剪问题（**风险 R4 命中**） | 见下方排查 |
+| protobuf 报异常 | ❌ 见下方排查（2026-09-20 已由 protobuf-net 换为 Google.Protobuf） | 见下方排查 |
 | xLua 报异常 | ❌ 绑定代码未生成或符号未找到 | 菜单 **XLua → Generate Code** 后重新出包 |
 | 两项都显示"跳过" | ⚠️ 编译符号没注入 | Tools → NBC → 诊断 M0 探针依赖 |
 | 游戏闪退，看不到画面 | 看日志判定 | 见下方排查 |
@@ -173,7 +173,7 @@ xLua: 通过 Lua 求和 1..10 = 55（期望 55）
 | 现象 | 大概率原因 | 处理 |
 | --- | --- | --- |
 | 打包就失败，提示找不到 C++ 编译器 | 缺 VS2022「使用 C++ 的桌面开发」工作负载 | VS Installer → 修改 → 勾选该工作负载 + Windows 10/11 SDK |
-| protobuf-net 抛 `NullReferenceException` / 字段全默认值 | **未做预编译序列化器** 或 link.xml 未生效 | ① 确认 `Assets/link.xml` 到位 ② 按 M0 手册 D7 生成静态序列化器 ③ 确认 dll 名称与 link.xml 一致 |
+| protobuf 报 `DllNotFoundException` / 找不到类型 | 少了 `Google.Protobuf.dll` 或 `System.Runtime.CompilerServices.Unsafe.dll` | 跑 `Tools\Verify-PluginDlls.ps1` 看依赖闭包 2/2 是否齐；见 M0 手册 D7 |
 | `XLua.LuaException: attempt to call a nil value` | xLua 绑定代码未生成 | **XLua → Generate Code** |
 | 编译符号一直是 False，但 dll 明明放了 | dll 文件名与脚本探测的候选名不同 | 跑诊断菜单，把实际文件名给我，我改探测列表 |
 | 画面全黑但日志有输出 | 场景没加进 Build 列表，跑的是空场景 | 检查 Build Settings 的 Scenes In Build |
