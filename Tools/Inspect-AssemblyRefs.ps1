@@ -23,8 +23,13 @@
 
  USAGE
    # Inspect one or more assemblies
+   # NOTE: both Unity editors on this machine work here. Since 2026-09-20 the
+   #       project uses 2022.3.62f3c1 (installed on D: via the Unity Hub
+   #       secondary install path); the older 2022.3.17f1c1 is kept for RPG_Git
+   #       and for reproducing the D14 probe output verbatim. Either path is fine -
+   #       this script only reads assembly metadata.
    powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Inspect-AssemblyRefs.ps1 `
-       -Path "C:\Program Files\Unity\Hub\Editor\2022.3.17f1c1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll"
+       -Path "D:\SOFT\Unity\Hub\Editor\2022.3.62f3c1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll"
 
    # Inspect every DLL in a folder (summary only)
    powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Inspect-AssemblyRefs.ps1 `

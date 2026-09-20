@@ -141,7 +141,7 @@ Write-Host "搬运完成。回到 Unity 等待编译。"
 
 ```
 NBV0 环境探针（M0 / D17）
-Runtime: 2022.3.17f1c1 | ... | Scripting: Mono (Editor 或 Mono 出包)
+Runtime: 2022.3.62f3c1 | ... | Scripting: Mono (Editor 或 Mono 出包)
 protobuf-net: 通过 (XX 字节) ...
 xLua: 通过 Lua 求和 1..10 = 55（期望 55）
 ```

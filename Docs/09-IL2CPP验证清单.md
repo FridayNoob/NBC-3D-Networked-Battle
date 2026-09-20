@@ -17,7 +17,7 @@
 
 | # | 检查项 | 在哪看 | 通过标准 |
 | --- | --- | --- | --- |
-| 1 | Unity 版本 | **Help → About Unity** | 2022.3.17f1c1 |
+| 1 | Unity 版本 | **Help → About Unity** | **2022.3.62f3c1**（2026-09-20 由 2022.3.17f1c1 升级，原因见 `Docs\11-环境配置说明.md` §六 / 需求文档 R16） |
 | 2 | **IL2CPP 模块已安装** | Unity Hub → Installs → 该版本 → 齿轮 → Add modules | ☑ Windows Build Support (IL2CPP) |
 | 3 | **VS2022 C++ 工作负载** | Visual Studio Installer → 修改 | ☑ 使用 C++ 的桌面开发；☑ Windows 10/11 SDK |
 | 4 | Scripting Backend | **Edit → Project Settings → Player → Other Settings** | **IL2CPP** |

@@ -6,7 +6,7 @@
 | 项 | 内容 |
 | --- | --- |
 | 项目代号 | **NBC**（Networked Battle Combat） |
-| 引擎 | Unity **2022.3.17f1c1** LTS + **URP** |
+| 引擎 | Unity **2022.3.62f3c1** LTS + **URP** |
 | 服务端 | C# / **.NET 8** 独立控制台进程 + **MySQL 8.0** |
 | 网络 | 自研 TCP（protobuf-net 序列化）+ 三种同步模式 |
 | 热更 | **xLua** + **YooAsset**（底层 AssetBundle） |
@@ -75,7 +75,7 @@
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
-| Unity | 2022.3.17f1c1 | 必须勾选 **Windows Build Support (IL2CPP)** 模块 |
+| Unity | 2022.3.62f3c1 | 必须勾选 **Windows Build Support (IL2CPP)** 模块 |
 | .NET SDK | 8.0 | 服务端 |
 | MySQL | 8.0 | 本机服务 |
 | Git | 任意较新版本 | — |
@@ -120,6 +120,18 @@ Asset Store **Commercial License（按席位授权）**，**许可不允许再�
 
 > 更细的验收判据、失败排查与"导入前后 `manifest.json` / `packages-lock.json` 该有什么变化"，
 > 见 [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md) 的 **D8 / D9 / D10**。
+
+### clone 后会看到的几个"孤儿"文件（**正常，不用管**）
+
+因为插件本体被忽略，仓库里仍保留了 6 个**属于我们自己**的小文件（合计约 2.4 KB，不含任何插件源码）：
+
+| 文件 | 是什么 | 为什么保留 |
+| --- | --- | --- |
+| `Client/Assets/Behavior Designer.meta`、`Client/Assets/Gizmos.meta`、`Client/Assets/Plugins/Demigiant.meta` | Unity 的**文件夹 GUID 存根**（90~172 字节） | 保证目录 GUID 稳定，导入插件后立刻重新生效 |
+| `Client/Assets/Resources/DOTweenSettings.asset`(+`.meta`) | **我们**的 DOTween 项目设置（1.3 KB） | 是配置，不是插件内容；丢了会在 clone 后回到默认值 |
+| `Client/ProjectSettings/com.arongranberg.astar/settings.asset` | **我们**的 A\* 项目级设置（410 字节） | 同上；以后 Grid Graph 的设置也可能存在这里 |
+
+导入对应插件之前，它们指向的目标暂时不存在 —— Unity 会提示"资源缺失"，**这是预期的**，导入后自动恢复。
 
 ---
 
