@@ -1,0 +1,17 @@
+{
+    "name": "NBC.Framework.YooAsset",
+    "rootNamespace": "NBC.Framework.Asset.Adapter",
+    "references": [
+        "NBC.Framework",
+        "YooAsset"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
