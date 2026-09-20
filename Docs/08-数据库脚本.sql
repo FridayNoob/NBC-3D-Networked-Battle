@@ -5,15 +5,31 @@
 --  数据库：MySQL 8.0  字符集：utf8mb4  引擎：InnoDB
 --  生成日期：2026-09-16
 --
---  执行方式（命令行）：
---    mysql -u root -p --default-character-set=utf8mb4
---    source E:/U3D Projects/0_MyFile/3D联网战斗Demo/Docs/08-数据库脚本.sql
+--  执行方式：
+--
+--   ✅ 方式 A（推荐）：用 cmd 的输入重定向，【在 cmd 里执行，不要在 PowerShell 里】
+--        cd /d "E:\U3D Projects\0_MyFile\3D联网战斗Demo"
+--        mysql -u root -p --default-character-set=utf8mb4 < "Docs\08-数据库脚本.sql"
+--      或在任意目录用完整路径：
+--        mysql -u root -p --default-character-set=utf8mb4 < "E:\U3D Projects\0_MyFile\3D联网战斗Demo\Docs\08-数据库脚本.sql"
+--
+--   ❌ 不要用 `source` 直接喂这个路径：
+--        mysql> source E:/U3D Projects/0_MyFile/3D联网战斗Demo/Docs/08-数据库脚本.sql
+--        → ERROR: Failed to open file '...', error: 42
+--      原因：`error: 42` 在 Windows CRT 里是 EILSEQ（非法字节序列），即
+--            **mysql.exe 自己打不开含非 ASCII 字符的路径**（路径编码转换失败）。
+--            与脚本内容无关 —— cmd 能打开同一路径（已实测），只有 mysql 的 fopen 不行。
+--      若确实想用 source：先把脚本复制到**纯 ASCII 路径**（目录名和文件名都要 ASCII），例如
+--        mkdir C:\nbc && copy "Docs\08-数据库脚本.sql" C:\nbc\nbc_db.sql
+--        mysql> source C:/nbc/nbc_db.sql
+--      （缺点：副本会与 Docs 下的原文件脱节，所以优先用方式 A）
 --
 --  说明：
 --   · 本脚本可重复执行（先 DROP 再 CREATE），便于开发期反复重建
 --   · ⚠️ 执行会清空 nbc_db 下的既有数据，请确认无重要数据后再跑
 --   · 测试账号密码：所有测试账号的明文密码都是 123456
 --     （存储的是 SHA256(salt + password) 的十六进制，不是明文）
+--   · 文件本身：UTF-8 **无 BOM**、LF 换行 —— 有 BOM 会让第一条语句报 1064，别加
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

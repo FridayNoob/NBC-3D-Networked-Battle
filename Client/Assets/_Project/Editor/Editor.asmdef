@@ -1,0 +1,20 @@
+{
+    "name": "NBC.Editor",
+    "rootNamespace": "NBC.EditorTools",
+    "references": [
+        "NBC.Framework",
+        "NBC.Game",
+        "NBC.Model"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

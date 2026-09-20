@@ -1,0 +1,17 @@
+{
+    "name": "NBC.Game",
+    "rootNamespace": "NBC.Game",
+    "references": [
+        "NBC.Framework",
+        "NBC.Model"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

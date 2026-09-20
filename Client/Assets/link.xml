@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  link.xml —— IL2CPP 托管代码裁剪保护清单
+  项目：3D联网战斗Demo
+
+  放置位置（等 D1 创建 Unity 工程后）：
+      Client/Assets/link.xml
+
+  为什么需要它：
+      IL2CPP 出包时会"裁剪"（strip）掉它认为没被用到的代码，以减小包体。
+      但 protobuf-net 与 xLua 都依赖【运行时反射】去查找类型与成员 ——
+      这类用法对裁剪器是"不可见"的，于是所需成员被删掉，
+      表现为：Editor 里一切正常，打包后报 NullReferenceException 或字段全为默认值。
+
+      link.xml 就是告诉裁剪器："这些程序集里的东西，一个都别动。"
+
+  使用说明：
+      · preservation 级别：
+          - "all"          保留该程序集全部内容（最安全、包体最大）
+          - "fields"/"types" 等可细分（最省，但容易漏）
+        本项目 M0 阶段先用 "all" 保证 D17 能通过，
+        等 M5 做性能/包体优化时再收窄（届时用 HUD 与包体数据说话）。
+      · ⚠️ 下列 assembly 名称需在 D17 后核对实际 dll 名称再定稿。
+        若某行名称写错，Unity 不会报错，只会"静默不生效" —— 这正是 AOT 问题难查的原因。
+        核对方法：在 Editor 菜单 Tools/NBC/诊断 M0 探针依赖 里看实际扫描到的 dll。
+-->
+<linker>
+
+  <!-- ======================================================================
+       protobuf-net：C# 特性标注 + 运行时反射构建序列化器
+       程序集名已用 AssemblyName.GetAssemblyName() 实测确认（不是从包名推断）：
+         protobuf-net.dll       → 程序集名 "protobuf-net"        v3.0.0.0
+         protobuf-net.Core.dll  → 程序集名 "protobuf-net.Core"   v3.0.0.0
+       ====================================================================== -->
+  <assembly fullname="protobuf-net" preserve="all" />
+  <assembly fullname="protobuf-net.Core" preserve="all" />
+
+  <!-- ======================================================================
+       System.Collections.Immutable：protobuf-net 与 .Core 共同的运行时依赖
+       （实测引用：两者都 ref System.Collections.Immutable）
+       Unity 2022.3 的脚本程序集与 NetStandard shim 目录【都不提供】它，
+       所以必须随插件一起放进 Assets/ThirdParty/ProtobufNet/。
+       程序集名 "System.Collections.Immutable" v7.0.0.0（NuGet netstandard2.0 目标）。
+       ====================================================================== -->
+  <assembly fullname="System.Collections.Immutable" preserve="all" />
+
+  <!-- ======================================================================
+       xLua：Lua 绑定与委托生成
+       ⚠️ 这两条在 xLua 导入之前【匹配不到任何 DLL】—— 这是预期的，不是配置错误。
+          下方 `pending:plugin-not-imported` 标注供校验脚本识别，导入 xLua 后请删除。
+          校验脚本：Tools\Verify-PluginDlls.ps1
+       ====================================================================== -->
+  <!-- pending:plugin-not-imported (xLua, M0 步骤 D6) -->
+  <assembly fullname="XLua" preserve="all" />
+  <assembly fullname="XLua.Example" preserve="all" />
+
+  <!-- ======================================================================
+       项目自身：协议类与配置类大量使用特性 + 反射，同样需要保护
+       （M1 建好 NBC.Shared 的 Unity 镜像程序集后取消注释）
+       ====================================================================== -->
+  <!-- <assembly fullname="NBC.Shared" preserve="all" /> -->
+  <!-- <assembly fullname="NBC.Game" preserve="all" /> -->
+  <!-- <assembly fullname="NBC.Framework" preserve="all" /> -->
+
+</linker>
