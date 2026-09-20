@@ -11,7 +11,7 @@
 | 网络 | 自研 TCP（**Google.Protobuf** 序列化）+ 三种同步模式 |
 | 热更 | **xLua** + **YooAsset**（底层 AssetBundle） |
 | 平台 | PC（Windows） |
-| 当前阶段 | ✅ **M0 · 项目奠基已完成（2026-09-20，18/18）** —— 下一步进入 M1（框架与基础设施） |
+| 当前阶段 | 🚧 **M1 · 框架与基础设施（进行中）** —— M0 已收关（2026-09-20，18/18）；M1 已完成 A1~A4 + B2，见下方「M1 进度」 |
 
 ---
 
@@ -33,7 +33,32 @@
 - **AI 分两套实现**（接口隔离）：插件行为树（客户端）+ 自研确定性决策（帧同步）；因为 Behavior Designer 依赖 Unity 运行时，无法在纯 .NET 服务端运行
 - **四种寻路**：A\* Pathfinding Project Pro / Unity NavMesh / 自研流场+群体避障 / 自研定点 A\*（帧同步兜底）
 - **热更分层**：YooAsset 负责资源分发，业务侧热更管理自研（需求要求"这部分不用框架"）
+- **序列化选型用实测数据改过一次**：IL2CPP 出包证明 protobuf-net 在消息含集合字段时必抛异常（IL2CPP 未实现它依赖的 icall）；再用 **4 条路矩阵**把"自动发现 / 显式 TypeModel"两条路都验证否掉，随后换成 Google.Protobuf（`protoc` 生成纯 C#、零反射）—— **不靠偏好，靠三次出包的数据**
 - **性能 HUD + 优化报告**：FPS / DC / SetPass / GC Alloc / 网络 / 回滚次数，含前后对比数据
+
+---
+
+## 一之二、M1 进度（框架与基础设施）
+
+每一个模块都遵循同一条纪律：**先读原框架源码逐行核对缺陷 → 先复现再修 → 写可执行的验证 → 记录"现象/根因/改法/验证"四段式**。
+
+| 任务 | 内容 | 修掉的原框架缺陷 | 验证 |
+| --- | --- | --- | --- |
+| **A1** | 单例三件套（`Singleton<T>` / `SingletonMono` / `SingletonAutoMono`） | FW-01 可被 `new` 出第二个实例、FW-02 `GetInstance` 返回 null、FW-03 缺并发保护 | EditMode 7 + PlayMode 8 |
+| **A2** | 对象池（`ObjectPool<T>` / `GameObjectPool`） | FW-04 `List.RemoveAt(0)` 是 O(n)、FW-05 无上限无回收、P-04 `Clear` 名不副实、P-10 补货对象不设父、P-11 public 容器 | EditMode 20 + PlayMode 11（含 O(1) 对比实测：**快 21.1 倍**） |
+| **A3** | 事件中心（`EventCenter` + 强类型 `EventId`） | FW-06 string key 拼错静默不触发、FW-07 同 key 异类型 NRE、P-16 未注册事件无反馈、P-18 派发中增删监听语义不确定 | EditMode 26 |
+| **A4** | 公共 Mono 宿主（`MonoManager`） | P-13 宿主一帧未受保护窗口、P-05 订阅不退订 | PlayMode 18 |
+| **B2** | 资源层（`AssetManager` + `YooAssetProvider`） | FW-08 基于 `Resources` 无法热更、且**没有任何释放入口** | EditMode 21（用假加载器确定性测试） |
+| **A11** | 分层方向的机械校验 | FW-12 框架与业务耦合 | EditMode 5（含**阳性对照**，防止断言假绿） |
+
+**几条值得一提的工程细节**：
+
+- **YooAsset 3.0.5 是重构过的 v3 API** —— v2.3 那套写法（`InitializeAsync` / `EditorSimulateModeParameters`）在 3.0.5 里被 `#if YOOASSET_LEGACY_API` 包着且**默认不编译**。这是读包源码 + 四条证据确认的，不是查教程得来的。
+- **框架侧不认识 YooAsset**：`NBC.Framework` 的 `references` 为**空**（有一条测试机械保证），适配层独立成 `NBC.Framework.YooAsset` 程序集 —— 换资源方案只需删这一个程序集。
+- **引用计数逻辑放在框架侧**，于是可以用假加载器在 EditMode 里**确定性地**测掉，不需要 YooAsset、不需要打包。
+- **一条用实验定下来的测试划分**：EditMode 下连 `Awake` 都不会被调用（5 对照实验实测，连基线都是 0），所以 MonoBehaviour 生命周期一律放 PlayMode 测。
+
+> 完整的"现象 → 根因 → 改法 → 验证"记录、以及对原框架 12 条缺陷的**逐行审计**（含 18 条清单之外的新发现），见 [`Docs/06-框架改造记录.md`](Docs/06-框架改造记录.md)。
 
 ---
 
@@ -46,7 +71,8 @@
 ├─ Client/                     # Unity 工程（Unity Hub 创建，URP）
 │  └─ Assets/
 │     ├─ _Project/             #   自研框架与业务代码
-│     │  ├─ Framework/         #     框架底座（可整包导出复用）
+│     │  ├─ Framework/         #     框架底座（**零外部依赖**，可整包导出复用）
+│     │  ├─ Framework.YooAsset/#     ★ YooAsset 适配层（全工程唯一引用 YooAsset 的地方）
 │     │  ├─ Game/              #     业务逻辑（Model / View / Controller / Service）
 │     │  ├─ Configs/           #     生成的 ScriptableObject 配置资产
 │     │  ├─ Protocol/          #     protoc 生成的协议 C#（命名空间 NBC.Protocol，入库）
@@ -150,9 +176,13 @@ Asset Store **Commercial License（按席位授权）**，**许可不允许再�
 | --- | --- |
 | [`Docs/00-项目工作规则.md`](Docs/00-项目工作规则.md) | 本项目的工作规则（含第三方依赖例外清单 E1~E5、工具边界） |
 | [`Docs/01-项目需求文档.md`](Docs/01-项目需求文档.md) | **需求基准（Single Source of Truth）**：13 条需求收敛、优先级、验收标准、里程碑、风险 |
-| [`Docs/05-依赖清单.md`](Docs/05-依赖清单.md) | 第三方依赖登记（版本 / 来源 / 许可 / 用途 / 是否例外） |
+| [`Docs/02-架构设计文档.md`](Docs/02-架构设计文档.md) | 架构与 **ADR**：分层与依赖方向、**ADR-001 `AssetManager` 接口定稿**（含被否决的备选方案） |
+| [`Docs/05-依赖清单.md`](Docs/05-依赖清单.md) | 第三方依赖登记（版本 / 来源 / 许可 / 用途 / 是否例外）；含 **YooAsset 3.0.5 v3 API 实测对照表** |
+| [`Docs/06-框架改造记录.md`](Docs/06-框架改造记录.md) | ★ **原框架逐行审计 + 每个模块的"现象→根因→改法→验证"**（12 条已登记缺陷 + 18 条审计新增发现） |
 | [`Docs/08-数据库脚本.sql`](Docs/08-数据库脚本.sql) | 建库建表 + 测试数据 |
 | [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md) | M0 逐步操作手册 |
+| [`Docs/11-环境配置说明.md`](Docs/11-环境配置说明.md) | 环境速查、protoc 生成、**不开 Unity 也能核对 Unity API 的编译闸门** |
+| [`Docs/16-M1开工清单.md`](Docs/16-M1开工清单.md) | M1 任务拆分 / 验收 V1~V13 / **手动验证操作单** / 工具说明（Test Runner 是什么） |
 | [`ClientStaging/README.md`](ClientStaging/README.md) | 客户端暂存文件的搬运说明 + D17 验证流程 |
 | `DeepSeekOutput/` | 开发过程知识点总结（含踩坑记录与新概念复习） |
 
