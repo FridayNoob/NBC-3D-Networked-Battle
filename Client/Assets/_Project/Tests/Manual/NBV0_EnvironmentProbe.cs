@@ -7,19 +7,22 @@
 //
 //  用途：
 //      在【IL2CPP 打包后】的进程里验证三件事（这是 M0 的最终关卡）：
-//        ① protobuf-net 能否正常序列化/反序列化（验证 AOT 裁剪问题，风险 R4）
+//        ① protobuf 序列化往返（**Google.Protobuf**，代码由 protoc 从 .proto 生成）——
+//           验证风险 R4。注：曾用 protobuf-net，实测在 IL2CPP 下含集合字段必抛
+//           NotSupportedException，已换库，详见 Docs/09-IL2CPP验证清单.md §五
 //        ② xLua 能否创建 LuaEnv 并执行 Lua 代码
 //        ③ 运行环境信息（是否真为 IL2CPP、监听日志）
 //
 //  使用方法：
-//      1. 新建场景 Client/Assets/Scenes/Scene_Test_AOT.unity
-//      2. 场景里建一个空物体，命名 "EnvProbe"，挂上本脚本
+//      1. 场景 Client/Assets/Scenes/Scene_AOTProbe.unity（由 M0 手册 D17 步骤 6 创建）
+//      2. 场景里建一个空物体，命名 "AOTProbe"，挂上本脚本
 //      3. 把该场景加入 Build Settings 的 Scenes In Build（放第一个）
 //      4. 按 M0 手册 D17 用 IL2CPP 出 Release 包并运行
 //      5. 观察屏幕上的大号结论文字 + Player.log
 //
 //  ⚠️ 本脚本刻意不使用任何项目自研类型（NBC.Shared 等），
-//     目的是让 M0 阶段就能独立验证第三方库，不被尚未完成的业务代码阻塞。
+//     只依赖生成的协议类 NBC.Protocol.ProbeMessage，目的是让 M0 阶段就能独立验证
+//     第三方库，不被尚未完成的业务代码阻塞。
 // ============================================================================
 
 using System;
@@ -27,8 +30,9 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 
-#if NBC_HAS_PROTOBUF_NET
-using ProtoBuf;
+#if NBC_HAS_PROTOBUF
+using Google.Protobuf;   // ToByteArray() 等是 Google.Protobuf 里的扩展方法，必须有这个 using
+using NBC.Protocol;
 #endif
 
 namespace NBC.Tests.Manual
@@ -36,8 +40,8 @@ namespace NBC.Tests.Manual
     public sealed class NBV0_EnvironmentProbe : MonoBehaviour
     {
         [Header("验证开关")]
-        [Tooltip("是否验证 protobuf-net 序列化往返")]
-        public bool testProtobufNet = true;
+        [Tooltip("是否验证 protobuf（Google.Protobuf，protoc 生成代码）序列化往返")]
+        public bool testProtobuf = true;
 
         [Tooltip("是否验证 xLua 执行 Lua 代码")]
         public bool testXLua = true;
@@ -53,8 +57,8 @@ namespace NBC.Tests.Manual
 
             ProbeRuntime();
 
-            if (testProtobufNet)
-                ProbeProtobufNet();
+            if (testProtobuf)
+                ProbeProtobuf();
 
             if (testXLua)
                 ProbeXLua();
@@ -89,13 +93,19 @@ namespace NBC.Tests.Manual
         }
 
         // --------------------------------------------------------------------
-        // ② protobuf-net 序列化往返（风险 R4 的直接验证）
+        // ② protobuf 序列化往返（风险 R4 的直接验证）
+        //
+        //   2026-09-20 更换实现：原来是 protobuf-net，实测在 IL2CPP 下
+        //   只要消息含集合字段就抛 NotSupportedException（IL2CPP 未实现
+        //   RuntimeParameterInfo::GetTypeModifiers 这个 icall）→ 见 Docs/09 §五。
+        //   现改为 Google.Protobuf：代码由 protoc 3.21.1 从 Protocol/nbc_probe.proto
+        //   生成（纯 C#、零运行时反射），因此不受该 icall 影响。
         // --------------------------------------------------------------------
-        private void ProbeProtobufNet()
+        private void ProbeProtobuf()
         {
-#if !NBC_HAS_PROTOBUF_NET
-            _protobufResult = "跳过：未定义 NBC_HAS_PROTOBUF_NET\n" +
-                              "（说明 protobuf-net 尚未接入，见 M0 手册 D7）";
+#if !NBC_HAS_PROTOBUF
+            _protobufResult = "跳过：未定义 NBC_HAS_PROTOBUF\n" +
+                              "（说明 Google.Protobuf 尚未接入，见 M0 手册 D7）";
             Debug.LogWarning("[NBV0][Protobuf] " + _protobufResult);
 #else
             try
@@ -111,29 +121,33 @@ namespace NBC.Tests.Manual
                 for (int i = 0; i < 8; i++)
                     original.SkillIds.Add(2001 + i);
 
-                byte[] bytes;
-                using (var ms = new MemoryStream())
-                {
-                    Serializer.Serialize(ms, original);
-                    bytes = ms.ToArray();
-                }
+                // 生成代码提供的是直接方法（无反射、无运行时模型构建）
+                byte[] bytes = original.ToByteArray();
+                ProbeMessage restored = ProbeMessage.Parser.ParseFrom(bytes);
 
-                ProbeMessage restored;
-                using (var ms = new MemoryStream(bytes))
-                {
-                    restored = Serializer.Deserialize<ProbeMessage>(ms);
-                }
-
+                bool idOk = restored.Id == original.Id;
                 bool nameOk = restored.Name == original.Name;
                 bool hpOk = restored.Hp == original.Hp;
-                bool listOk = restored.SkillIds.Count == original.SkillIds.Count;
-                bool allOk = nameOk && hpOk && listOk && restored.Id == original.Id;
+                bool ratioOk = Math.Abs(restored.Ratio - original.Ratio) < 1e-6f;
+                bool flagOk = restored.Flag == original.Flag;
+                bool listLenOk = restored.SkillIds.Count == original.SkillIds.Count;
+
+                bool listContentOk = listLenOk;
+                if (listLenOk)
+                {
+                    for (int i = 0; i < original.SkillIds.Count; i++)
+                    {
+                        if (restored.SkillIds[i] != original.SkillIds[i]) { listContentOk = false; break; }
+                    }
+                }
+
+                bool allOk = idOk && nameOk && hpOk && ratioOk && flagOk && listContentOk;
 
                 _protobufResult =
-                    $"{(allOk ? "通过" : "失败")}  ({bytes.Length} 字节)\n" +
+                    $"{(allOk ? "通过" : "失败")}  Google.Protobuf  ({bytes.Length} 字节)\n" +
                     $"  Id={restored.Id} Name={restored.Name} Hp={restored.Hp}\n" +
-                    $"  SkillIds={restored.SkillIds.Count} 个\n" +
-                    $"  Name匹配={nameOk} Hp匹配={hpOk} 列表长度匹配={listOk}";
+                    $"  SkillIds={restored.SkillIds.Count} 个（首个={FirstSkill(restored)}）\n" +
+                    $"  id={idOk} name={nameOk} hp={hpOk} ratio={ratioOk} flag={flagOk} 列表={listLenOk}/{listContentOk}";
 
                 if (allOk)
                     Debug.Log("[NBV0][Protobuf] 序列化往返成功：" + _protobufResult);
@@ -142,12 +156,16 @@ namespace NBC.Tests.Manual
             }
             catch (Exception e)
             {
-                // 这一步失败最常见的原因就是 AOT 裁剪 —— 见 M0 手册 D7 / D17 排查表
-                _protobufResult = "异常（极可能是 AOT/裁剪问题）：\n  " + e.GetType().Name + ": " + e.Message;
+                _protobufResult = "异常：\n  " + e.GetType().Name + ": " + e.Message;
                 Debug.LogError("[NBV0][Protobuf] " + _protobufResult + "\n" + e.StackTrace);
             }
 #endif
         }
+
+#if NBC_HAS_PROTOBUF
+        private static string FirstSkill(ProbeMessage m)
+            => m.SkillIds.Count > 0 ? m.SkillIds[0].ToString() : "(空)";
+#endif
 
         // --------------------------------------------------------------------
         // ③ xLua 执行验证
@@ -215,7 +233,7 @@ namespace NBC.Tests.Manual
             var sb = new StringBuilder();
             sb.AppendLine("================ NBV0 结论 ================");
             sb.AppendLine("[Runtime]").AppendLine(_runtimeInfo);
-            sb.AppendLine("[protobuf-net]").AppendLine(_protobufResult);
+            sb.AppendLine("[protobuf]").AppendLine(_protobufResult);
             sb.AppendLine("[xLua]").AppendLine(_xluaResult);
             sb.AppendLine("==========================================");
             Debug.Log(sb.ToString());
@@ -238,7 +256,7 @@ namespace NBC.Tests.Manual
             GUILayout.BeginArea(new Rect(20, 20, Screen.width - 40, 280));
             GUILayout.Label("NBV0 环境探针（M0 / D17）", style);
             GUILayout.Label("Runtime: " + _runtimeInfo.Replace("\n", " | "), style);
-            GUILayout.Label("protobuf-net: " + Shorten(_protobufResult), style);
+            GUILayout.Label("protobuf: " + Shorten(_protobufResult), style);
             GUILayout.Label("xLua: " + Shorten(_xluaResult), style);
             GUILayout.EndArea();
         }
@@ -246,25 +264,4 @@ namespace NBC.Tests.Manual
         private static string Shorten(string s)
             => string.IsNullOrEmpty(s) ? "(空)" : s.Replace("\n", "  ");
     }
-
-#if NBC_HAS_PROTOBUF_NET
-    /// <summary>
-    /// 探针专用的 protobuf 消息。
-    /// </summary>
-    /// <remarks>
-    /// 刻意定义在测试脚本内部，不引用项目的协议类 —— 这样即使协议层还没写，
-    /// M0 也能独立验证 protobuf-net 本身在 IL2CPP 下能否工作。
-    /// 正式协议类会放在 NBC.Shared/Protocol/（见需求文档 §6.7）。
-    /// </remarks>
-    [ProtoContract]
-    public sealed class ProbeMessage
-    {
-        [ProtoMember(1)] public int Id { get; set; }
-        [ProtoMember(2)] public string Name { get; set; }
-        [ProtoMember(3)] public int Hp { get; set; }
-        [ProtoMember(4)] public float Ratio { get; set; }
-        [ProtoMember(5)] public bool Flag { get; set; }
-        [ProtoMember(6)] public System.Collections.Generic.List<int> SkillIds { get; } = new();
-    }
-#endif
 }

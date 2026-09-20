@@ -6,10 +6,16 @@
 //      Client/Assets/_Project/Editor/NBV0_DefineInitializer.cs
 //
 //  为什么需要它：
-//      NBV0_EnvironmentProbe.cs 用 #if NBC_HAS_PROTOBUF_NET / #if NBC_HAS_XLUA 来
+//      NBV0_EnvironmentProbe.cs 用 #if NBC_HAS_PROTOBUF / #if NBC_HAS_XLUA 来
 //      "有则验证、无则跳过"。但这两个符号默认不存在，手填容易漏，
 //      而且手填错了不会报错、只会静默走"跳过"分支 —— 那 D17 就白验了。
 //      本脚本在 Unity 编译完成后自动检测 dll 是否存在，并注入/移除符号。
+//
+//  2026-09-20 换库：序列化从 protobuf-net 改为 Google.Protobuf，因此
+//      · 检测目标从 protobuf-net.dll 改为 Google.Protobuf.dll
+//      · 符号名从 NBC_HAS_PROTOBUF_NET 改为 NBC_HAS_PROTOBUF（去掉库名，换库不再改符号）
+//      · 并且会主动清理遗留的旧符号 NBC_HAS_PROTOBUF_NET（否则它会一直留在
+//        Player Settings 里，变成一个谁也说不清用途的死符号）
 //
 //  ⚠️ 这是【Editor 脚本】，只在编辑器里运行，不会打进最终包。
 // ============================================================================
@@ -25,13 +31,16 @@ using UnityEngine;
 namespace NBC.EditorTools
 {
     /// <summary>
-    /// 检测 protobuf-net / xLua 是否已接入，自动维护对应的 Scripting Define Symbols。
+    /// 检测 protobuf（Google.Protobuf）/ xLua 是否已接入，自动维护对应的 Scripting Define Symbols。
     /// </summary>
     [InitializeOnLoad]
     public static class NBV0_DefineInitializer
     {
-        private const string DefineProtobuf = "NBC_HAS_PROTOBUF_NET";
+        private const string DefineProtobuf = "NBC_HAS_PROTOBUF";
         private const string DefineXLua = "NBC_HAS_XLUA";
+
+        /// <summary>已废弃的符号：换库前的 NBC_HAS_PROTOBUF_NET，检测到就清掉。</summary>
+        private const string DefineProtobufNetObsolete = "NBC_HAS_PROTOBUF_NET";
 
         static NBV0_DefineInitializer()
         {
@@ -47,6 +56,7 @@ namespace NBC.EditorTools
             bool changed = false;
             changed |= ApplyDefine(DefineProtobuf, hasProtobuf);
             changed |= ApplyDefine(DefineXLua, hasXLua);
+            changed |= ApplyDefine(DefineProtobufNetObsolete, false);   // 清理遗留符号
 
             if (changed)
             {
@@ -56,7 +66,7 @@ namespace NBC.EditorTools
         }
 
         /// <summary>
-        /// 在工程内查找 protobuf-net 的 dll。
+        /// 在工程内查找 Google.Protobuf 的 dll。
         /// </summary>
         /// <remarks>
         /// ⚠️ 找不到时会返回 null，探针就只会走"跳过"分支。
@@ -65,8 +75,7 @@ namespace NBC.EditorTools
         /// </remarks>
         private static string FindProtobufDll()
         {
-            // 常见命名：protobuf-net.dll（NuGet）；某些 Unity 包会改名或带后缀
-            var candidates = new[] { "protobuf-net.dll", "protobuf-net.Core.dll", "protobufnet.dll" };
+            var candidates = new[] { "Google.Protobuf.dll", "Google.Protobuf.Core.dll" };
             foreach (var name in candidates)
             {
                 var found = FindFileInAssets(name);
@@ -137,7 +146,7 @@ namespace NBC.EditorTools
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("=== M0 探针依赖诊断 ===");
-            sb.AppendLine("protobuf-net : " + (protobuf ?? "未找到"));
+            sb.AppendLine("Google.Protobuf : " + (protobuf ?? "未找到"));
             sb.AppendLine("xLua         : " + (xlua ?? "未找到"));
             sb.AppendLine();
             sb.AppendLine("当前编译符号 : " +

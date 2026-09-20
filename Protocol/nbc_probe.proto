@@ -1,0 +1,43 @@
+// ============================================================================
+//  nbc_probe.proto —— M0/D17 用的最小探针协议
+//  项目：3D联网战斗Demo（NBC）
+//
+//  【为什么有这个文件】
+//  M0 的 D17 要证明"protobuf 序列化在 IL2CPP 出包后能正常工作"。
+//  为此需要一个最小消息，且要覆盖容易出问题的形状：**标量 + repeated（集合）**。
+//  （protobuf-net 当初就是死在集合字段上 —— 见 Docs/09-IL2CPP验证清单.md §五）
+//
+//  ⚠️ 这是**探针专用**消息，不是正式协议。
+//     正式协议在 M3 定义（需求文档 §6.7 / §13），会另建 .proto 文件。
+//
+//  【生成 C# 的命令】（protoc 3.21.1，必须与 Google.Protobuf 运行时同版本）
+//      cd <仓库根>
+//      "E:\U3D Projects\TeachNet\Protobuf\protoc.exe" ^
+//          --proto_path=Protocol ^
+//          --csharp_out=Client/Assets/_Project/Protocol ^
+//          Protocol/nbc_probe.proto
+//
+//  版本配对很重要：
+//      protoc 3.21.1  ←→  Google.Protobuf 3.21.1（本机 E:\U3D Projects\TeachNet\ 里那份）
+//      混用不同版本的 protoc 与运行时，生成代码可能编译不过或运行期报错。
+// ============================================================================
+
+syntax = "proto3";
+
+package nbc.probe;
+
+// 生成的 C# 命名空间（不写的话会按 package 推导成 Nbc.Probe）
+option csharp_namespace = "NBC.Protocol";
+
+message ProbeMessage
+{
+    int32  id        = 1;
+    string name      = 2;
+    int32  hp        = 3;
+    float  ratio     = 4;
+    bool   flag      = 5;
+
+    // 关键：集合字段。这正是 protobuf-net 在 IL2CPP 下无法处理的形状。
+    // Google.Protobuf 生成的是显式 C# 代码，不做任何运行时反射，因此不受影响。
+    repeated int32 skill_ids = 6;
+}

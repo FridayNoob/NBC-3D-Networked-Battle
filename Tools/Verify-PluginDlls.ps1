@@ -172,24 +172,31 @@ Write-Host ''
 Write-Info "total DLLs read: $($dllList.Count)"
 
 # ---------------------------------------------------------------------------
-# 3. Check the protobuf-net dependency closure
+# 3. Check the protobuf dependency closure
 # ---------------------------------------------------------------------------
-Write-Header 'protobuf-net dependency closure (Unity needs ALL of these)'
+Write-Header 'protobuf dependency closure (Unity needs ALL of these)'
 
-# Required assemblies, verified empirically on 2026-09-20 by reading the DLLs'
-# own assembly-reference metadata (Assembly.ReflectionOnlyLoadFrom + GetReferencedAssemblies).
-# The real chain is:
-#   protobuf-net.dll            -> protobuf-net.Core + System.Collections.Immutable
-#   protobuf-net.Core.dll       -> System.Collections.Immutable
-#   System.Collections.Immutable-> System.Memory + System.Runtime.CompilerServices.Unsafe
-# Unity 2022.3 provides System.Memory / System.Buffers / System.Numerics.Vectors via
-# its NetStandard shim folder, BUT NOT System.Collections.Immutable and NOT
-# System.Runtime.CompilerServices.Unsafe - so those two must ship with the plugin.
+# Required assemblies, verified empirically by reading the DLLs' own
+# assembly-reference metadata (see Tools\Inspect-AssemblyRefs.ps1).
+#
+# 2026-09-20: the serializer was switched from protobuf-net to Google.Protobuf
+# because protobuf-net throws on IL2CPP as soon as a message has a repeated
+# (collection) field - IL2CPP does not implement the
+# RuntimeParameterInfo::GetTypeModifiers icall that its runtime model builder
+# calls. Evidence: Docs\09 (IL2CPP verification checklist) section 5.
+#
+# Google.Protobuf 3.21.1 reference chain (measured):
+#   Google.Protobuf.dll                 -> mscorlib, System, System.Core,
+#                                          System.Memory,
+#                                          System.Runtime.CompilerServices.Unsafe
+# Unity 2022.3 provides System.Memory / System.Buffers / System.Numerics.Vectors
+# via its NetStandard shim folder, BUT NOT System.Runtime.CompilerServices.Unsafe
+# - so that one must ship next to Google.Protobuf.dll.
+# (The generated protocol code is plain C# and needs no reflection at all, so no
+#  link.xml entry is required for it - that is why link.xml has no protobuf line.)
 $required = @(
-    @{ Name = 'protobuf-net';                           Why = 'main package assembly' }
-    @{ Name = 'protobuf-net.Core';                      Why = 'transitive dependency of protobuf-net' }
-    @{ Name = 'System.Collections.Immutable';           Why = 'transitive dependency (NOT provided by Unity)' }
-    @{ Name = 'System.Runtime.CompilerServices.Unsafe'; Why = 'dependency of Immutable (NOT provided by Unity)' }
+    @{ Name = 'Google.Protobuf';                        Why = 'protoc-generated code + runtime (main assembly)' }
+    @{ Name = 'System.Runtime.CompilerServices.Unsafe'; Why = 'dependency of System.Memory (NOT provided by Unity)' }
 )
 
 $missing = @()
@@ -289,9 +296,17 @@ if (-not (Test-Path $LinkXml)) {
         # Reverse view: for each DLL that looks like a reflection-dependent library,
         # show which link.xml entry (if any) covers it. This is the actionable output:
         # it tells you the EXACT fullname string to put in link.xml.
+        #
+        # Exemptions (do NOT report these as missing an entry):
+        #   Google.Protobuf - codegen-based serializer. The protoc-generated types are
+        #     plain C# with concrete fields (no Activator / Emit / MakeGenericType /
+        #     GetType()), and (de)serialization calls the generated WriteTo/MergeFrom.
+        #     There is no reflection to protect, so preserve="all" would only bloat
+        #     the build. Deliberately absent - see Assets\link.xml for the full note.
         Write-Host ''
         Write-Info 'Reverse check - reflection-dependent DLLs and the link.xml entry that covers them:'
         $declaredNames = @($entries | ForEach-Object { $_.fullname })
+        $linkXmlExempt = @('Google.Protobuf')
         $deps = $dllList | Where-Object {
             $n = $_.Assembly.ToLower()
             $n -like '*protobuf*' -or $n -like '*lua*' -or $n -like '*immutable*'
@@ -303,6 +318,8 @@ if (-not (Test-Path $LinkXml)) {
             foreach ($d in $deps) {
                 if ($declaredNames -contains $d.Assembly) {
                     Write-Ok ("covered by link.xml : {0}" -f $d.Assembly)
+                } elseif ($linkXmlExempt -contains $d.Assembly) {
+                    Write-Ok ("no entry needed     : {0}   (codegen-based, zero reflection)" -f $d.Assembly)
                 } else {
                     Write-Miss ("NOT in link.xml    : {0}" -f $d.Assembly)
                     Write-Info ("    -> add:  <assembly fullname=`"{0}`" preserve=`"all`" />" -f $d.Assembly)
@@ -323,9 +340,10 @@ $inventory = @(
     @{ p = '_Project\Game';        need = 'NBC.Game - View/Controller/Service' }
     @{ p = '_Project\Editor';      need = 'NBC.Editor tools' }
     @{ p = '_Project\Tests\Manual';need = 'NBV0 AOT probe script' }
+    @{ p = '_Project\Protocol';    need = 'protoc-generated protocol C# (NBC.Protocol)' }
     @{ p = 'LuaScripts';           need = 'Lua sources (hot-update target)' }
     @{ p = 'Scenes';               need = 'Unity scenes' }
-    @{ p = 'ThirdParty\ProtobufNet'; need = 'protobuf-net DLLs (4 needed: net + Core + Immutable + Unsafe)' }
+    @{ p = 'ThirdParty\GoogleProtobuf'; need = 'Google.Protobuf.dll + Unsafe (2 needed)' }
     @{ p = 'ThirdParty\XLua';      need = 'xLua sources' }
 )
 foreach ($i in $inventory) {

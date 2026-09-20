@@ -8,10 +8,10 @@
 | 项目代号 | **NBC**（Networked Battle Combat） |
 | 引擎 | Unity **2022.3.62f3c1** LTS + **URP** |
 | 服务端 | C# / **.NET 8** 独立控制台进程 + **MySQL 8.0** |
-| 网络 | 自研 TCP（protobuf-net 序列化）+ 三种同步模式 |
+| 网络 | 自研 TCP（**Google.Protobuf** 序列化）+ 三种同步模式 |
 | 热更 | **xLua** + **YooAsset**（底层 AssetBundle） |
 | 平台 | PC（Windows） |
-| 当前阶段 | **M0 · 项目奠基（进行中）** |
+| 当前阶段 | ✅ **M0 · 项目奠基已完成（2026-09-20，18/18）** —— 下一步进入 M1（框架与基础设施） |
 
 ---
 
@@ -42,16 +42,18 @@
 ```
 3D联网战斗Demo/
 ├─ Docs/                       # 文档（需求、工作规则、依赖清单、手册…）
+├─ Protocol/                   # ★ .proto 协议定义的【唯一来源】（protoc 据此生成 C#）
 ├─ Client/                     # Unity 工程（Unity Hub 创建，URP）
 │  └─ Assets/
 │     ├─ _Project/             #   自研框架与业务代码
 │     │  ├─ Framework/         #     框架底座（可整包导出复用）
 │     │  ├─ Game/              #     业务逻辑（Model / View / Controller / Service）
 │     │  ├─ Configs/           #     生成的 ScriptableObject 配置资产
+│     │  ├─ Protocol/          #     protoc 生成的协议 C#（命名空间 NBC.Protocol，入库）
 │     │  ├─ Editor/            #     编辑器工具（配置表工具等）
 │     │  └─ Tests/             #     EditMode / PlayMode 测试
 │     ├─ LuaScripts/           #   Lua 业务脚本（热更对象）
-│     ├─ ThirdParty/           #   xLua / protobuf-net 等
+│     ├─ ThirdParty/           #   xLua / Google.Protobuf 等
 │     ├─ Art/                  #   美术资源
 │     └─ Scenes/               #   场景
 ├─ ClientStaging/              # 待放入 Unity 工程的客户端文件（暂存区，见该目录 README）
@@ -66,6 +68,9 @@
 ├─ Builds/                     # 打包产物（不入库）
 └─ DeepSeekOutput/             # 开发过程知识点总结（见规则 1）
 ```
+
+> 📌 **改协议的正确姿势**：改 `Protocol/*.proto` → 用 `protoc` **重新生成** `Client/Assets/_Project/Protocol/*.cs` → 两个产物**一起提交**。
+> 生成命令（含"不能给 protoc 传中文路径"那个坑）见 [`Docs/11-环境配置说明.md`](Docs/11-环境配置说明.md) 与 [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md) 的 **D7**。
 
 ---
 
@@ -86,11 +91,15 @@
 1. **建库**：执行 `Docs/08-数据库脚本.sql`（命令行可用 `source`，注意路径用正斜杠）
 2. **创建 Unity 工程**：Unity Hub → New project → **3D (URP)** → 名称 `Client`，位置为本仓库根目录
 3. **把 `ClientStaging/` 里的文件搬到 Unity 工程**（见 `ClientStaging/README.md`，含精确路径）
-4. **导入插件**：YooAsset（OpenUPM）→ xLua → protobuf-net → **Behavior Designer 经典版 1.7.13** → **A\* Pathfinding Project Pro 5.4.7** → **DOTween 1.3.030**（后三者见 [§三之二](#三之二第三方插件如何导入本仓库不含付费插件)）
-5. **编译服务端**：`cd Server && dotnet build`
-6. **跑 AOT 验证**：按 `ClientStaging/README.md` 的 D17 流程出 IL2CPP 包并运行探针
+4. **放入序列化库**：把 **`Google.Protobuf.dll` + `System.Runtime.CompilerServices.Unsafe.dll`（共 2 个）** 放进 `Client/Assets/ThirdParty/GoogleProtobuf/`（见 M0 手册 **D7**）
+5. **导入插件**：YooAsset（OpenUPM）→ xLua → **Behavior Designer 经典版 1.7.13** → **A\* Pathfinding Project Pro 5.4.7** → **DOTween 1.3.030**（后三者见 [§三之二](#三之二第三方插件如何导入本仓库不含付费插件)）
+6. **编译服务端**：`cd Server && dotnet build`
+7. **跑 AOT 验证**：按 M0 手册 **D17** 出 IL2CPP 包并运行探针
 
 > 📘 **完整步骤请看 [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md)** —— 含每步的菜单路径、按钮名、预期结果与失败排查。
+>
+> 📌 **协议代码已经入库**（`Client/Assets/_Project/Protocol/NbcProbe.cs`），clone 后**不需要装 protoc** 就能编译；
+> 只有要改 `.proto` 时才需要，见上文的「改协议的正确姿势」。
 
 ---
 

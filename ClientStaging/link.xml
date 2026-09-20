@@ -27,22 +27,23 @@
 <linker>
 
   <!-- ======================================================================
-       protobuf-net：C# 特性标注 + 运行时反射构建序列化器
-       程序集名已用 AssemblyName.GetAssemblyName() 实测确认（不是从包名推断）：
-         protobuf-net.dll       → 程序集名 "protobuf-net"        v3.0.0.0
-         protobuf-net.Core.dll  → 程序集名 "protobuf-net.Core"   v3.0.0.0
-       ====================================================================== -->
-  <assembly fullname="protobuf-net" preserve="all" />
-  <assembly fullname="protobuf-net.Core" preserve="all" />
+       protobuf（Google.Protobuf）：**刻意不在这里声明**
 
-  <!-- ======================================================================
-       System.Collections.Immutable：protobuf-net 与 .Core 共同的运行时依赖
-       （实测引用：两者都 ref System.Collections.Immutable）
-       Unity 2022.3 的脚本程序集与 NetStandard shim 目录【都不提供】它，
-       所以必须随插件一起放进 Assets/ThirdParty/ProtobufNet/。
-       程序集名 "System.Collections.Immutable" v7.0.0.0（NuGet netstandard2.0 目标）。
+       2026-09-20 换库后重新评估的结论：**不需要 preserve 条目**。
+       理由（都是实测/可查证的事实，不是推断）：
+         · 代码由 protoc 3.21.1 从 Protocol/*.proto **生成**，是普通 C#：
+           每个字段都是具体字段 + 直接实例化（例：`RepeatedField<int> skillIds_ = new()`），
+           危险信号扫描结果：`Activator` / `Emit` / `MakeGenericType` / `GetType(` 均为 **0 次**。
+         · 序列化走生成代码里的 WriteTo/MergeFrom，**不查反射**。
+         · 只引用 mscorlib / System / System.Core / System.Memory /
+           System.Runtime.CompilerServices.Unsafe（用 Tools\Inspect-AssemblyRefs.ps1 实测）。
+
+       ⚠️ 历史记录：这里原先有三条 protobuf-net 条目（protobuf-net / protobuf-net.Core /
+          System.Collections.Immutable）。protobuf-net 因 IL2CPP 未实现
+          RuntimeParameterInfo::GetTypeModifiers 这个 icall 而被弃用 ——
+          **注意当时的方向也判断错了**：那不是"元数据被裁剪"，加 link.xml 无效。
+          完整记录见 Docs\09-IL2CPP验证清单.md §五。
        ====================================================================== -->
-  <assembly fullname="System.Collections.Immutable" preserve="all" />
 
   <!-- ======================================================================
        xLua：Lua 绑定与委托生成
@@ -67,7 +68,13 @@
             它按 `[LuaCallCSharp]` / `[ReflectionUse]` 标注把保护精确到 `<type>` 粒度，
             比这里的"整程序集 all"精确得多。Unity 会**合并项目里所有 link.xml**，
             届时可以把下面这行删掉。
-            ⚠️ **注意：Generate Code 之后项目里会有两份 link.xml，这是正常的，不是重复。**
+            ⚠️ **2026-09-20 实测确认**：跑完 `Generate Code` 后，项目里共有 **3 份 link.xml**，
+            Unity 会**全部合并** —— 这是正常的，不是重复：
+              ① `Assets/link.xml`（本文件，我们手写的粗粒度保护）
+              ② `Assets/XLua/Gen/link.xml`（xLua 自动生成：实测声明了 mscorlib /
+                 UnityEngine.CoreModule / AnimationModule / ParticleSystemModule / Assembly-CSharp 的**具体类型**）
+              ③ `Packages/com.arongranberg.astar/link.xml`（A\* 自带）
+            **不要手改 ②**，它每次 Generate Code 都会被覆盖。
          ② 给 `ThirdParty\XLua\Src` 单独加 asmdef，让它成为独立程序集。
        **M0 阶段仍保留下面这条粗粒度条目**：因为①依赖"所有反射用到的类型都已被正确标注"，
        漏一个就是运行时崩溃；先用最保险的写法把 D17 跑通，再用数据收窄。
