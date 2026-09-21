@@ -3,6 +3,7 @@
     "rootNamespace": "NBC.Tests.EditMode",
     "references": [
         "NBC.Framework",
+        "NBC.Framework.UI",
         "NBC.Game",
         "NBC.Model",
         "UnityEngine.TestRunner",

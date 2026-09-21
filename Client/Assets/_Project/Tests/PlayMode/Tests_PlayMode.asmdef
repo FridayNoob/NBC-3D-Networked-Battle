@@ -3,6 +3,7 @@
     "rootNamespace": "NBC.Tests.PlayMode",
     "references": [
         "NBC.Framework",
+        "NBC.Framework.UI",
         "NBC.Framework.YooAsset",
         "NBC.Game",
         "NBC.Model",

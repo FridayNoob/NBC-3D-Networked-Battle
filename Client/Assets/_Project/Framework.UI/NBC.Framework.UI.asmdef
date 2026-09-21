@@ -1,0 +1,17 @@
+{
+    "name": "NBC.Framework.UI",
+    "rootNamespace": "NBC.Framework.UI",
+    "references": [
+        "NBC.Framework",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
