@@ -155,6 +155,20 @@ namespace NBC.Framework.Asset
         /// <param name="assetType">期望类型。</param>
         IAssetLoadOperation LoadSync(string location, Type assetType);
 
+        /// <summary>
+        /// 异步加载一个场景（需求 **YOO-08**：场景也走资源层）。
+        /// </summary>
+        /// <param name="location">场景地址。</param>
+        /// <param name="mode">加载模式（单场景 / 叠加）。</param>
+        ISceneLoadOperation LoadSceneAsync(string location, UnityEngine.SceneManagement.LoadSceneMode mode);
+
+        /// <summary>
+        /// 卸载一个已加载的场景。
+        /// 由 <see cref="ISceneHandle.Dispose"/> 触发，业务不直接调。
+        /// </summary>
+        /// <param name="operation">当初加载它时的那个操作。</param>
+        void UnloadScene(ISceneLoadOperation operation);
+
         /// <summary>卸载底层已经没有人用的资源。</summary>
         void UnloadUnused();
 

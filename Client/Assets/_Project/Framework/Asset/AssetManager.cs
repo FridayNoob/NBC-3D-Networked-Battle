@@ -215,6 +215,40 @@ namespace NBC.Framework.Asset
         }
 
         // ====================================================================
+        //  场景（需求 YOO-08：场景也走资源层，而不是 SceneManager.LoadScene）
+        // ====================================================================
+
+        /// <summary>
+        /// 异步加载一个场景。
+        /// <para>
+        /// ⚠️ 与资源句柄不同：**`ISceneHandle.Dispose()` 会卸载场景**。
+        /// 场景没有"引用计数"语义 —— 你说不要了，它就该被卸掉。
+        /// </para>
+        /// <para>
+        /// 注意这里**不做缓存**：同一个场景加载两次就是两次独立的加载请求
+        /// （叠加模式 `LoadSceneMode.Additive` 本来就要能加载多个）。
+        /// 需要"进度 / 超时 / 事件广播"这些更高层的能力，请用 `SceneLoader`（见 `Framework\Scene`）。
+        /// </para>
+        /// </summary>
+        /// <param name="location">场景地址。</param>
+        /// <param name="mode">加载模式。</param>
+        /// <returns>场景句柄。</returns>
+        public ISceneHandle LoadSceneAsync(string location, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            ThrowIfNotInitialized();
+            ThrowIfBadLocation(location);
+
+            ISceneLoadOperation operation = m_provider.LoadSceneAsync(location, mode);
+            if (operation == null)
+            {
+                throw new InvalidOperationException(
+                    "[AssetManager] 加载器对场景【" + location + "】返回了 null 操作。加载器实现有误。");
+            }
+
+            return new SceneHandle(m_provider, operation);
+        }
+
+        // ====================================================================
         //  释放与观测
         // ====================================================================
 

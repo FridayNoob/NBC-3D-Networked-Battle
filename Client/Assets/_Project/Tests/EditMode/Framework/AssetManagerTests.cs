@@ -118,6 +118,9 @@ namespace NBC.Tests.EditMode
     {
         public readonly List<FakeLoadOperation> Operations = new List<FakeLoadOperation>();
 
+        /// <summary>场景加载操作（`SceneLoaderTests` 会用）。</summary>
+        public readonly List<FakeSceneOperation> SceneOperations = new List<FakeSceneOperation>();
+
         public bool IsInitialized { get; private set; }
 
         public int UnloadUnusedCalls { get; private set; }
@@ -145,6 +148,27 @@ namespace NBC.Tests.EditMode
             return LoadAsync(location, assetType);
         }
 
+        public ISceneLoadOperation LoadSceneAsync(string location, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            FakeSceneOperation op = new FakeSceneOperation(location, mode);
+            SceneOperations.Add(op);
+            return op;
+        }
+
+        public void UnloadScene(ISceneLoadOperation operation)
+        {
+            FakeSceneOperation fake = operation as FakeSceneOperation;
+            if (fake != null)
+            {
+                fake.UnloadCalled = true;
+            }
+
+            if (operation != null)
+            {
+                operation.Dispose();
+            }
+        }
+
         public void UnloadUnused()
         {
             UnloadUnusedCalls++;
@@ -153,6 +177,96 @@ namespace NBC.Tests.EditMode
         public void UnloadAll()
         {
             UnloadAllCalls++;
+        }
+    }
+
+    /// <summary>
+    /// 可手动控制完成时机、**可以从没完成过**的假场景操作 —— 后者用来测超时。
+    /// <para>
+    /// 这几个假类型被 `AssetManagerTests` 与 `SceneLoaderTests` **共用**，
+    /// 所以刻意放在同一处（namespace 内 internal），不各自复制一份。
+    /// </para>
+    /// </summary>
+    internal sealed class FakeSceneOperation : ISceneLoadOperation
+    {
+        public event Action<ISceneLoadOperation> OnComplete;
+
+        private AssetStatus m_status = AssetStatus.Loading;
+
+        public FakeSceneOperation(string location, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            Location = location;
+            Mode = mode;
+        }
+
+        public string Location { get; private set; }
+
+        public UnityEngine.SceneManagement.LoadSceneMode Mode { get; private set; }
+
+        public AssetStatus Status
+        {
+            get { return m_status; }
+        }
+
+        public float Progress { get; private set; }
+
+        public string Error { get; private set; } = string.Empty;
+
+        public UnityEngine.SceneManagement.Scene Scene { get; private set; }
+
+        public bool IsDone
+        {
+            get { return m_status == AssetStatus.Succeeded || m_status == AssetStatus.Failed; }
+        }
+
+        public bool Disposed { get; private set; }
+
+        /// <summary>是否被卸载过（测"超时必须卸载"用）。</summary>
+        public bool UnloadCalled { get; set; }
+
+        public bool ActivateCalled { get; private set; }
+
+        public void SetProgress(float progress)
+        {
+            Progress = progress;
+        }
+
+        public void Complete()
+        {
+            Progress = 1f;
+            m_status = AssetStatus.Succeeded;
+            Raise();
+        }
+
+        public void Fail(string error)
+        {
+            Error = error;
+            m_status = AssetStatus.Failed;
+            Raise();
+        }
+
+        public bool Activate()
+        {
+            ActivateCalled = true;
+            return true;
+        }
+
+        public void WaitForAsyncComplete()
+        {
+        }
+
+        public void Dispose()
+        {
+            Disposed = true;
+        }
+
+        private void Raise()
+        {
+            Action<ISceneLoadOperation> handlers = OnComplete;
+            if (handlers != null)
+            {
+                handlers(this);
+            }
         }
     }
 

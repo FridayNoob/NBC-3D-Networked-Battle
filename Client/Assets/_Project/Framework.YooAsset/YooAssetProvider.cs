@@ -207,6 +207,47 @@ namespace NBC.Framework.Asset.Adapter
         }
 
         /// <summary>
+        /// 异步加载一个场景（需求 YOO-08）。
+        /// </summary>
+        /// <param name="location">场景地址。</param>
+        /// <param name="mode">加载模式。</param>
+        public ISceneLoadOperation LoadSceneAsync(string location, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            ThrowIfNotReady();
+            YooAsset.SceneHandle handle = m_package.LoadSceneAsync(location, mode);
+            return new YooAssetSceneOperation(location, handle);
+        }
+
+        /// <summary>
+        /// 卸载一个已加载的场景。
+        /// <para>
+        /// 注意区分 YooAsset 的两件事：`Dispose()` 只释放句柄，
+        /// **`UnloadSceneAsync()` 才真的卸载场景**（`SceneHandle.cs:132`）——
+        /// 这里两件都做，否则场景会一直留在内存里。
+        /// </para>
+        /// </summary>
+        /// <param name="operation">当初加载它时的那个操作。</param>
+        public void UnloadScene(ISceneLoadOperation operation)
+        {
+            YooAssetSceneOperation sceneOperation = operation as YooAssetSceneOperation;
+            if (sceneOperation != null)
+            {
+                var unloadOperation = sceneOperation.UnloadAndDispose();
+                if (unloadOperation != null)
+                {
+                    unloadOperation.Completed += OnBackgroundOperationCompleted;
+                }
+
+                return;
+            }
+
+            if (operation != null)
+            {
+                operation.Dispose();
+            }
+        }
+
+        /// <summary>
         /// 让 YooAsset 卸载已经没人用的资源。
         /// <para>
         /// ⚠️ 底层是**异步**的：这里只负责发起，完成与否不阻塞调用方；
