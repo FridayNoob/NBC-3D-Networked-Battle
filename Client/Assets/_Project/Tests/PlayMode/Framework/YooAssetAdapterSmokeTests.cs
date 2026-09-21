@@ -69,9 +69,6 @@ namespace NBC.Tests.PlayMode
         /// <summary>测试资源里写死的内容，用来断言"拿到的是真东西"。</summary>
         private const string ExpectedText = "NBC-ASSET-SMOKE-TEST-OK";
 
-        /// <summary>本用例是否装过加载器（TearDown 据此决定要不要收尾，并且**必须**收尾成功）。</summary>
-        private bool m_providerInstalled;
-
         /// <summary>Unity 工程根目录（`Application.dataPath` 的上一级）。</summary>
         private static string ProjectRoot
         {
@@ -96,32 +93,28 @@ namespace NBC.Tests.PlayMode
         public void TearDown()
         {
             // ================================================================
-            //  ⚠️ 顺序至关重要：收尾必须在 ResetAll **之前**
+            //  ⚠️ 这里【刻意不】销毁 YooAsset 的全局状态
             // ================================================================
-            //  ShutdownInstalled() 的工作方式是"**通过 AssetManager 单例**去找当前的加载器"。
-            //  如果先把单例重置了，它就找不到了 —— 于是**静默返回 false、什么都不做**，
-            //  YooAsset 的全局包会一直留着，下一个用例初始化时就撞上：
-            //      Resource package 'DefaultPackage' is already initialized.
+            //  资源系统**一个进程只初始化一次** —— 见 `YooAssetProvider.InitializeAsync` 的"幂等"注释。
+            //  PlayMode 结束时 `YooAssetsDriver.OnApplicationQuit()` 会自己 `YooAssets.Destroy()`
+            //  （`YooAssetsDriver.cs:29-32`，仅编辑器），不需要我们操心。
             //
-            //  这个坑 2026-09-20 真实踩到过（两条用例因此失败）。
-            //  所以这里除了排对顺序，还**加了一条断言**：装过就必须收得掉 ——
-            //  **不许再出现"静默什么都没做"**。
-            if (m_providerInstalled)
-            {
-                Assert.IsTrue(
-                    YooAssetProvider.ShutdownInstalled(),
-                    "TearDown 没能收尾加载器。最常见原因：顺序写反了 —— " +
-                    "必须在 SingletonRegistry.ResetAll() **之前**调用 ShutdownInstalled()。");
-            }
-
+            //  走过的弯路（2026-09-20，两条用例因此失败）：
+            //    一开始在每个用例的 TearDown 里 `ShutdownInstalled()` → `YooAssets.Destroy()`。
+            //    结果是**下一次初始化会得到一个畸形状态**：
+            //        InitializeStatus == Succeeded  但  ActiveManifest == null
+            //    于是加载时报 `Active package manifest not found`（ResourcePackage.cs:1002），
+            //    日志里还能看到 `DownloadSchedulerOperation has been aborted` —— 它被我打断了。
+            //
+            //  结论：**不去修第三方"销毁后重新初始化"那条路径**，而是按真实用法组织测试。
             SingletonRegistry.ResetAll();
-            m_providerInstalled = false;
         }
 
         /// <summary>
-        /// 装加载器并记录"装过"。
+        /// 装加载器。每个用例都装一个新的（因为上一句 `ResetAll` 把 `AssetManager` 单例清掉了），
+        /// 但底下的 YooAsset 包是**同一个、已初始化好的** —— `InitializeAsync` 会幂等地复用它。
         /// <para>
-        /// 刻意不写 `using YooAsset;` 去调 `YooAssets.Destroy()`：
+        /// 刻意不写 `using YooAsset;` 去直接操作 YooAsset：
         /// ① Unity 的 asmdef 引用**不传递** —— 本测试引用了适配层，也看不到适配层引用的 YooAsset，
         ///    直接写会 `CS0246`（本项目真的踩过）；
         /// ② 更重要的是**边界**：只有适配层该接触 YooAsset，测试也一样，走我们自己的 API。
@@ -129,9 +122,7 @@ namespace NBC.Tests.PlayMode
         /// </summary>
         private YooAssetProvider InstallProvider()
         {
-            YooAssetProvider provider = YooAssetProvider.Install(PackageName, SimulatePackageRoot);
-            m_providerInstalled = true;
-            return provider;
+            return YooAssetProvider.Install(PackageName, SimulatePackageRoot);
         }
 
         [UnityTest]

@@ -109,9 +109,32 @@ namespace NBC.Framework.Asset.Adapter
             }
 
             ResourcePackage existing;
-            m_package = YooAssets.TryGetPackage(m_packageName, out existing)
-                ? existing
-                : YooAssets.CreatePackage(m_packageName);
+            if (YooAssets.TryGetPackage(m_packageName, out existing))
+            {
+                m_package = existing;
+
+                // ⚠️ **幂等**：已经初始化成功的包直接复用，**绝不重复初始化**。
+                //
+                // 为什么必须这样（2026-09-20 实测教训）：
+                //  `ResourcePackage.InitializePackageAsync` 在 `_initializeOp != null` 时会直接抛
+                //  `already initialized`（ResourcePackage.cs:100-101）。
+                //  更麻烦的是——**先 `YooAssets.Destroy()` 再重新初始化这条路在 v3 里不可靠**：
+                //  实测会得到 `InitializeStatus == Succeeded` 但 `ActiveManifest == null`，
+                //  于是加载时报 `Active package manifest not found`（ResourcePackage.cs:1002），
+                //  而且日志里能看到 `DownloadSchedulerOperation has been aborted`（被 Destroy 打断）。
+                //
+                //  与其去绕开资源库的这条路径，不如**按真实用法来**：
+                //  **一个进程只初始化一次资源系统**。引导代码写错重复调用时，这里也应当是安全的。
+                if (existing.InitializeStatus == EOperationStatus.Succeeded)
+                {
+                    IsInitialized = true;
+                    return;
+                }
+            }
+            else
+            {
+                m_package = YooAssets.CreatePackage(m_packageName);
+            }
 
             InitializePackageOptions options = BuildOptions(mode);
 
