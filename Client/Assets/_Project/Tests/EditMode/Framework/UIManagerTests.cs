@@ -340,9 +340,15 @@ namespace NBC.Tests.EditMode
         //  关闭 = 真销毁
         // ====================================================================
 
-        /// <summary>`ClosePanel` 才是真的关掉：对象销毁，下次显示要重新加载。</summary>
+        /// <summary>
+        /// `ClosePanel` 才是真的关掉：**对象被销毁**，下次显示必须**重造一个实例**。
+        /// <para>
+        /// ⚠️ 注意这里**不断言"重新向资源系统加载了一次"** —— 那是错的。
+        /// 素材有缓存（见下一条用例），"关掉再打开"只会重造**实例**，不会重打资源请求。
+        /// </para>
+        /// </summary>
         [Test]
-        public void ClosePanel_DestroysAndForcesReloadNextTime()
+        public void ClosePanel_DestroysInstance_AndShowAgainCreatesANewOne()
         {
             BasePanel panel = RequestAndShow("BagPanel");
             GameObject instance = panel.gameObject;
@@ -353,13 +359,41 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual(0, m_ui.VisiblePanelCount);
             Assert.AreEqual(0, m_ui.PooledPanelCount);
 
-            int requestsBefore = CountRequests("UI/BagPanel");
-
             BasePanel reloaded = RequestAndShow("BagPanel");
 
-            Assert.AreNotSame(panel, reloaded);
-            Assert.AreEqual(requestsBefore + 1, CountRequests("UI/BagPanel"),
-                "关掉之后应当重新加载");
+            Assert.AreNotSame(panel, reloaded, "被销毁的实例不能复用，必须重造一个");
+            Assert.IsTrue(reloaded.gameObject != null);
+            Assert.IsTrue(m_ui.IsPanelVisible("BagPanel"));
+        }
+
+        /// <summary>
+        /// **素材有缓存**：关掉面板再打开，不会重新向资源系统要一遍。
+        /// <para>
+        /// 这一条**曾经是我的测试写错**：我断言"应当重新加载"，结果红了
+        /// （期望 2 次请求，实际 1 次）。
+        /// 根因是我把 `AssetManager` 的释放语义记错了 ——
+        /// `ClosePanel` 释放句柄只是把**引用计数降到 0**，条目**不会立刻卸载**，
+        /// 要等 `ReleaseUnused()` 才回收（ADR-001 的三级释放）。
+        /// 于是再加载同一个地址时**直接复用缓存条目**，不经过提供方。
+        /// </para>
+        /// <para>**这是更好的行为**：开关面板不应该反复打资源系统。所以把它钉住。</para>
+        /// </summary>
+        [Test]
+        public void ClosePanel_ThenShowAgain_IsServedFromAssetCache()
+        {
+            RequestAndShow("BagPanel");
+
+            int requestsAfterFirstShow = CountRequests("UI/BagPanel");
+
+            m_ui.ClosePanel("BagPanel");
+            RequestAndShow("BagPanel");
+
+            Assert.AreEqual(requestsAfterFirstShow, CountRequests("UI/BagPanel"),
+                "素材已被 AssetManager 缓存，重开面板不该再向资源系统要一次。\n" +
+                "⚠️ 若这条红了，说明缓存的释放语义被动过了 —— 先去看 Docs/06 §13.4「三级释放」。");
+
+            // 但**实例**是新的：缓存的是素材，不是面板对象。
+            Assert.AreEqual(1, m_ui.VisiblePanelCount);
         }
 
         /// <summary>`CloseAll` 把显示中的和池里的一起清掉。</summary>
@@ -542,10 +576,19 @@ namespace NBC.Tests.EditMode
         /// <param name="panelName">面板名。</param>
         private void CompletePanel(string panelName)
         {
+            string location = "UI/" + panelName;
+
+            // 可能根本没有新请求 —— 素材被缓存时，加载会**同步**完成，
+            // 此时面板已经显示出来了，不需要（也不能）再喂一次。
+            if (!HasRequest(location) || OperationFor(location).IsDone)
+            {
+                return;
+            }
+
             GameObject prefab = Track(new GameObject(panelName + "Prefab", typeof(RectTransform)));
             prefab.AddComponent<ProbePanel>();
 
-            Complete("UI/" + panelName, prefab);
+            Complete(location, prefab);
         }
 
         /// <summary>造一个 Canvas 预制体；`withLayers` 为 false 时故意不挂组件。</summary>
@@ -645,7 +688,18 @@ namespace NBC.Tests.EditMode
         /// <param name="asset">素材。</param>
         private void Complete(string location, UnityEngine.Object asset)
         {
-            OperationFor(location).Complete(asset);
+            FakeLoadOperation operation = OperationFor(location);
+
+            // ⚠️ **不能对已经完成的操作用再 Complete 一次。**
+            // `FakeLoadOperation.Complete` 没有防重复，它会再 Raise 一轮；
+            // `AssetManager` 于是再通知一次 → 面板被**实例化两遍**，
+            // 多出来的那个没人管 —— 那是测试自己制造的脏数据。
+            if (operation.IsDone)
+            {
+                return;
+            }
+
+            operation.Complete(asset);
         }
 
         /// <summary>把已发出的请求列成一句人话（报错用）。</summary>
