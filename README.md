@@ -53,6 +53,7 @@
 | **A8** | 音频（`AudioManager`） | FW-09 音效对象不复用（每次 `AddComponent` 播完 `Destroy`）、宿主未 `DontDestroyOnLoad` → 切场景后 `MissingReferenceException`、`Update` 里 `isPlaying` 无防御 | EditMode 41 + PlayMode 6 |
 | **B2** | 资源层（`AssetManager` + `YooAssetProvider`） | FW-08 基于 `Resources` 无法热更、且**没有任何释放入口** | EditMode 21（用假加载器确定性测试） |
 | **A9** | UI 框架（UILayers / BasePanel / UIManager / 加载遮罩） | FW-10 层路径硬编码、P-08 Awake 脆弱、P-09 销毁与字典不同步、P-11 public 容器、P-12 s 不检查 | EditMode 66（含**反射式机械守卫**：BasePanel 不许有 Awake） |
+| **A10** | 通用状态机（`StateMachine` / `HierarchicalStateMachine`） | 新写 FW-M14（原框架没有）：**纯 C# 零 UnityEngine 依赖**（帧同步前提）、帧驱动、分层约束 | EditMode 42（含 FSM-09 机械检查：不许出现 `MonoBehaviour` 或协程或 `Time.deltaTime`） |
 | **B3** | YooAsset 初始化与运行模式 | 同上（运行期验证） | PlayMode 41（**编辑器模拟模式下真的加载到资源并断言了内容**） |
 | **A11** | 分层方向的机械校验 | FW-12 框架与业务耦合 | EditMode 5（含**阳性对照**，防止断言假绿） |
 
