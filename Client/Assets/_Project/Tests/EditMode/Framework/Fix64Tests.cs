@@ -78,13 +78,33 @@ namespace NBC.Tests.EditMode
             Assert.Throws<ArgumentException>(() => Fix64.FromDouble(double.NaN));
         }
 
-        /// <summary>转整数是**向零截断**，不是四舍五入。</summary>
+        /// <summary>
+        /// **`ToInt` 与 `Floor` 是两回事**，别混用：
+        /// `ToInt()` 朝**零**截断（-1.5 → -1），`Floor()` 朝**负无穷**（-1.5 → -2）。
+        /// <para>
+        /// ⚠️ 第一版 `ToInt` 用的是算术右移，也就是 `Floor` 的语义 —— 契约写的是"向零截断"，
+        /// 实现却给了 -2。是这条测试抓出来的。
+        /// （顺带记一笔：我那个"几百万组随机对拍"的数值探针**没抓到它**，
+        ///   因为探针压根没测 `ToInt` —— **再强的随机测试也覆盖不到它没调用的函数**。）
+        /// </para>
+        /// </summary>
         [Test]
-        public void ToInt_TruncatesTowardZero()
+        public void ToInt_TruncatesTowardZeroNotFloor()
         {
-            Assert.AreEqual(1, Fix64.FromRaw(Fix64.OneRaw * 3 / 2).ToInt());
-            Assert.AreEqual(-1, Fix64.FromRaw(-(Fix64.OneRaw * 3 / 2)).ToInt());
+            Fix64 positive = Fix64.FromRaw(Fix64.OneRaw * 3 / 2);
+            Fix64 negative = Fix64.FromRaw(-(Fix64.OneRaw * 3 / 2));
+
+            Assert.AreEqual(1, positive.ToInt());
+            Assert.AreEqual(-1, negative.ToInt(), "(-1.5).ToInt() 必须是 -1（朝零），不是 -2（朝负无穷）");
             Assert.AreEqual(2, Fix64.FromInt(2).ToInt());
+            Assert.AreEqual(-2, Fix64.FromInt(-2).ToInt());
+
+            Assert.AreEqual(1L, positive.ToLong());
+            Assert.AreEqual(-1L, negative.ToLong());
+
+            // 和 Floor 对照：同一个输入，两个函数结果**故意不同**
+            Assert.AreEqual(-2, Fix64.Floor(negative).ToInt(), "Floor(-1.5) 是 -2");
+            Assert.AreEqual(-1, negative.ToInt(), "ToInt 是 -1");
         }
 
         // ====================================================================
@@ -380,11 +400,21 @@ namespace NBC.Tests.EditMode
             }
         }
 
-        /// <summary>整数的加减乘除是**精确**的（在范围内不该有任何误差）。</summary>
+        /// <summary>
+        /// 整数的加、减、乘是**精确**的；除法只在**整除**时与整数结果相同。
+        /// <para>
+        /// ⚠️ 第一版这里断言"整数除法两边应当相等"，那是**错的**：
+        /// `(Fix64)x / (Fix64)y` 会**保留小数**（-1000/3 = -333.333…），
+        /// 而 `(Fix64)(x / y)` 是整数除法（-333）。**它们本来就不该相等** ——
+        /// Fix64 的除法**比整数除法更精确**，不是不同。
+        /// </para>
+        /// </summary>
         [Test]
         public void SmallIntegerArithmetic_IsExact()
         {
             Random rng = new Random(20260925);
+            int divisibleSamples = 0;
+            double worstUlp = 0.0;
 
             for (int i = 0; i < 20000; i++)
             {
@@ -398,9 +428,31 @@ namespace NBC.Tests.EditMode
 
                 Assert.AreEqual((Fix64)(x + y), (Fix64)x + (Fix64)y, "整数加法应当精确");
                 Assert.AreEqual((Fix64)(x * y), (Fix64)x * (Fix64)y, "整数乘法应当精确");
-                Assert.AreEqual((Fix64)(x / y), (Fix64)x / (Fix64)y,
-                    "整数除法应当精确（两边都是向零截断）");
+
+                if (x % y == 0)
+                {
+                    // 整除时：Fix64 的结果应当**恰好**等于整数结果
+                    Assert.AreEqual((Fix64)(x / y), (Fix64)x / (Fix64)y,
+                        "整除时 Fix64 除法应当精确：(" + x + " / " + y + ")");
+                    divisibleSamples++;
+                }
+                else
+                {
+                    // 除不尽时：应当逼近**精确有理数**（误差 ≤ 1 个 ULP），而不是整数商
+                    double exact = (double)x / (double)y;
+                    double actual = ((Fix64)x / (Fix64)y).ToDouble();
+                    double ulp = Math.Abs(actual - exact) * Fix64.OneRaw;
+
+                    if (ulp > worstUlp)
+                    {
+                        worstUlp = ulp;
+                    }
+                }
             }
+
+            Assert.Greater(divisibleSamples, 0, "随机样本里应当有整除的情况（否则这条没测到）");
+            Assert.LessOrEqual(worstUlp, 1.0 + 1e-9,
+                "除不尽时应当逼近精确有理数，最大误差 " + worstUlp + " 个 ULP");
         }
 
         // ====================================================================

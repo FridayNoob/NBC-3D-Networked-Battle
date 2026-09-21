@@ -201,11 +201,22 @@ namespace NBC.Shared
             return (double)m_raw / OneRaw;
         }
 
-        /// <summary>转成整数（**向零截断**，不是四舍五入）。</summary>
+        /// <summary>
+        /// 转成整数（**向零截断**，不是四舍五入、也不是向下取整）。
+        /// <para>
+        /// ⚠️ 这里踩过一次坑：第一版写的是 `m_raw >> 32` —— 但 C# 的 `>>` 对负数是**算术右移**，
+        /// 也就是**朝负无穷**取整。于是 `(-1.5).ToInt()` 得到 **-2**，而契约是 -1。
+        /// 改成 `m_raw / OneRaw`：C# 的整数除法就是**向零截断**，正是要的语义。
+        /// </para>
+        /// <para>
+        /// 和 `Floor` 的区别：`Floor(-1.5) == -2`（朝负无穷），`ToInt()` 给 -1（朝零）。
+        /// **两个都要有，别混用。**
+        /// </para>
+        /// </summary>
         /// <returns>整数值（已饱和到 int 范围）。</returns>
         public int ToInt()
         {
-            long value = m_raw >> FractionalBits;
+            long value = m_raw / OneRaw;
 
             if (value > int.MaxValue)
             {
@@ -220,11 +231,14 @@ namespace NBC.Shared
             return (int)value;
         }
 
-        /// <summary>转成长整数（**向零截断**）。</summary>
+        /// <summary>
+        /// 转成长整数（**向零截断**）。
+        /// <para>⚠️ 与 <see cref="ToInt"/> 同一个坑：**不是**算术右移。</para>
+        /// </summary>
         /// <returns>长整数值。</returns>
         public long ToLong()
         {
-            return m_raw >> FractionalBits;
+            return m_raw / OneRaw;
         }
 
         // ====================================================================
