@@ -398,13 +398,34 @@ namespace NBC.Tests.EditMode
         }
 
         [Test]
-        public void InputActionId_EqualityIsByIndex()
+        public void InputActionId_HasValueSemantics()
         {
-            InputActionId again = InputActionId.Declare(0, "Skill1");
-            Assert.IsTrue(m_skill1 == again);
-            Assert.IsTrue(m_skill1.Equals((object)again));
-            Assert.AreEqual(m_skill1.GetHashCode(), again.GetHashCode());
+            // ⚠️ 早先这条写成了 `InputActionId.Declare(0, ...)` 再来一次想造"同索引的另一个值" ——
+            //    结果被 `Declare` 的重复索引检查拦下了（**那是对的**：两个动作抢同一索引，
+            //    位掩码就无法区分它们）。所以"同索引的两个值"在设计上就**造不出来**，
+            //    正确的测法是**拷贝**（值类型语义），而不是重新声明。
+            InputActionId copy = m_skill1;
+
+            Assert.IsTrue(m_skill1 == copy, "值类型拷贝应当相等");
+            Assert.IsTrue(m_skill1.Equals((object)copy));
+            Assert.AreEqual(m_skill1.GetHashCode(), copy.GetHashCode());
+
             Assert.IsTrue(m_skill1 != m_skill2);
+            Assert.IsFalse(m_skill1.Equals((object)m_skill2));
+            Assert.AreNotEqual(m_skill1.GetHashCode(), m_skill2.GetHashCode());
+        }
+
+        [Test]
+        public void DefaultInputActionId_HasIndexZero_SoItCannotBeUsedAsANullSentinel()
+        {
+            // `default(InputActionId).Index` 是 0 —— 于是它**恰好等于"索引 0 的那个动作"**。
+            // 这条测试把这个坑钉住：**不要用 default 表示"没有动作"**，
+            // 否则"没按任何技能"会被误判成"按了技能1"。
+            InputActionId none = default(InputActionId);
+
+            Assert.AreEqual(0, none.Index);
+            Assert.IsTrue(none == m_skill1,
+                "default 等于索引 0 的动作 —— 所以它不能当'空值'用；要判断'有没有'得用别的办法");
         }
 
         // ====================================================================
