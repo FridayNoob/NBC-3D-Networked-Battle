@@ -69,6 +69,9 @@ namespace NBC.Tests.PlayMode
         /// <summary>测试资源里写死的内容，用来断言"拿到的是真东西"。</summary>
         private const string ExpectedText = "NBC-ASSET-SMOKE-TEST-OK";
 
+        /// <summary>本用例是否装过加载器（TearDown 据此决定要不要收尾，并且**必须**收尾成功）。</summary>
+        private bool m_providerInstalled;
+
         /// <summary>Unity 工程根目录（`Application.dataPath` 的上一级）。</summary>
         private static string ProjectRoot
         {
@@ -92,14 +95,43 @@ namespace NBC.Tests.PlayMode
         [TearDown]
         public void TearDown()
         {
-            SingletonRegistry.ResetAll();
+            // ================================================================
+            //  ⚠️ 顺序至关重要：收尾必须在 ResetAll **之前**
+            // ================================================================
+            //  ShutdownInstalled() 的工作方式是"**通过 AssetManager 单例**去找当前的加载器"。
+            //  如果先把单例重置了，它就找不到了 —— 于是**静默返回 false、什么都不做**，
+            //  YooAsset 的全局包会一直留着，下一个用例初始化时就撞上：
+            //      Resource package 'DefaultPackage' is already initialized.
+            //
+            //  这个坑 2026-09-20 真实踩到过（两条用例因此失败）。
+            //  所以这里除了排对顺序，还**加了一条断言**：装过就必须收得掉 ——
+            //  **不许再出现"静默什么都没做"**。
+            if (m_providerInstalled)
+            {
+                Assert.IsTrue(
+                    YooAssetProvider.ShutdownInstalled(),
+                    "TearDown 没能收尾加载器。最常见原因：顺序写反了 —— " +
+                    "必须在 SingletonRegistry.ResetAll() **之前**调用 ShutdownInstalled()。");
+            }
 
-            // YooAsset 的全局状态也要收掉，否则这个用例第二次跑会撞上"包已存在/已初始化"。
-            // ⚠️ 这里【刻意】不写 `using YooAsset;` 去调 `YooAssets.Destroy()`：
-            //   · Unity 的 asmdef 引用**不传递** —— 本测试引用了适配层，也看不到适配层引用的 YooAsset，
-            //     直接写就会 CS0246（本项目真的踩过这一次）；
-            //   · 更重要的是**边界**：只有适配层该接触 YooAsset。测试也一样，走我们自己的 API。
-            YooAssetProvider.ShutdownInstalled();
+            SingletonRegistry.ResetAll();
+            m_providerInstalled = false;
+        }
+
+        /// <summary>
+        /// 装加载器并记录"装过"。
+        /// <para>
+        /// 刻意不写 `using YooAsset;` 去调 `YooAssets.Destroy()`：
+        /// ① Unity 的 asmdef 引用**不传递** —— 本测试引用了适配层，也看不到适配层引用的 YooAsset，
+        ///    直接写会 `CS0246`（本项目真的踩过）；
+        /// ② 更重要的是**边界**：只有适配层该接触 YooAsset，测试也一样，走我们自己的 API。
+        /// </para>
+        /// </summary>
+        private YooAssetProvider InstallProvider()
+        {
+            YooAssetProvider provider = YooAssetProvider.Install(PackageName, SimulatePackageRoot);
+            m_providerInstalled = true;
+            return provider;
         }
 
         [UnityTest]
@@ -118,7 +150,7 @@ namespace NBC.Tests.PlayMode
             AssetManager manager = AssetManager.Instance;
 
             // —— 装适配层。注意这一步就把 packageRoot 交给它了 ——
-            YooAssetProvider provider = YooAssetProvider.Install(PackageName, SimulatePackageRoot);
+            YooAssetProvider provider = InstallProvider();
 
             // —— 初始化 ——
             Task init = manager.InitializeAsync(AssetRuntimeMode.EditorSimulate);
@@ -135,7 +167,7 @@ namespace NBC.Tests.PlayMode
 
             SingletonRegistry.ResetAll();
             AssetManager manager = AssetManager.Instance;
-            YooAssetProvider.Install(PackageName, SimulatePackageRoot);
+            InstallProvider();
 
             yield return WaitForTask(manager.InitializeAsync(AssetRuntimeMode.EditorSimulate), "初始化");
 
@@ -175,7 +207,7 @@ namespace NBC.Tests.PlayMode
 
             SingletonRegistry.ResetAll();
             AssetManager manager = AssetManager.Instance;
-            YooAssetProvider.Install(PackageName, SimulatePackageRoot);
+            InstallProvider();
 
             yield return WaitForTask(manager.InitializeAsync(AssetRuntimeMode.EditorSimulate), "初始化");
 
