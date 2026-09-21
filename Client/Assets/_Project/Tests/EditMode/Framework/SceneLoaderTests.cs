@@ -26,6 +26,7 @@
 // ============================================================================
 
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NBC.Framework;
 using NBC.Framework.Asset;
@@ -33,6 +34,7 @@ using NBC.Framework.Scenes;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace NBC.Tests.EditMode
 {
@@ -106,7 +108,12 @@ namespace NBC.Tests.EditMode
             m_loader.Load("Scene_A");
             FakeSceneOperation op = m_provider.SceneOperations[0];
 
-            // 4 个不同的进度值 -> 应当广播 4 次（外加首次的 0）
+            // ⚠️ 先推一帧：此时进度还是 0，会广播出「第 1 条」。
+            //    早先漏了这一帧，于是第一次广播的进度是 0.25 而不是 0，
+            //    断言"5 条"自然就成了 4 条 —— **是我的测试写错了，不是产品代码**。
+            m_loader.Tick(0.016f);
+
+            // 4 个不同的进度值 -> 各自广播一次（加上刚才的 0，共 5 次）
             float[] steps = { 0.25f, 0.5f, 0.75f, 0.9f };
             for (int i = 0; i < steps.Length; i++)
             {
@@ -200,6 +207,10 @@ namespace NBC.Tests.EditMode
             m_loader.Tick(1f);
             Assert.IsFalse(request.IsDone, "还没到超时时间");
 
+            // 超时是**真问题**，所以 SceneLoader 会打一条 LogError。
+            // Unity Test Runner 默认把"未预期的 LogError"判为失败 —— 所以这里先声明期望。
+            LogAssert.Expect(LogType.Error, new Regex("场景加载超时"));
+
             m_loader.Tick(4.5f);      // 累计 5.5 秒 > 5 秒
 
             Assert.IsTrue(request.IsDone);
@@ -214,6 +225,8 @@ namespace NBC.Tests.EditMode
         {
             // 这条很重要：一个"永远加载不完"的场景如果不卸载，会一直占着内存。
             m_loader.Load("Scene_Hang", LoadSceneMode.Single, 5f);
+
+            LogAssert.Expect(LogType.Error, new Regex("场景加载超时"));
 
             m_loader.Tick(6f);
 

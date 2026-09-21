@@ -238,6 +238,10 @@ namespace NBC.Framework.Scenes
 
             request.Succeeded = false;
             request.Error = request.Handle.Error;
+
+            // 这里**刻意不打 LogError**：加载失败的原因底层（YooAsset）已经报过了，
+            // 再报一遍只是噪音。失败通过事件交给调用方决定怎么处理。
+            // 对比：超时是 **SceneLoader 自己判定**的（底层不会报），所以那条必须打日志。
             EventCenter.Instance.Trigger(
                 SceneEvents.LoadFailed, new SceneFailureInfo(request.Location, request.Error));
         }
