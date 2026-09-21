@@ -62,7 +62,21 @@ namespace NBC.Framework.UI
         [SerializeField]
         private Transform m_system;
 
-        /// <summary>层的名字，**只用于报错和日志**。</summary>
+        /// <summary>
+        /// 层的名字，用于报错和日志。
+        /// <para>
+        /// ⚠️ **未知层直接抛异常，不返回"Unknown(99)"这种兜底字符串。**
+        /// 这条是被测试抓出来的：第一版我在这里写了
+        /// <c>default: return "Unknown(" + (int)layer + ")";</c> ——
+        /// 一个**看起来很正常**的兜底。但同一个测试里我断言三处（`Bind` / `Get` / `GetLayerName`）
+        /// 遇到野值都该抛异常，只有这里不抛，于是红了。
+        /// </para>
+        /// <para>
+        /// 兜底字符串正是本项目最讨厌的那类**静默行为**：它悄悄把一个"不可能的输入"
+        /// 变成一个"看着没问题的字符串"，然后这个假名字会一路流进日志，
+        /// 让人以为层真的叫 "Unknown(99)"。**野值只可能来自写错的代码，那就当场炸。**
+        /// </para>
+        /// </summary>
         /// <param name="layer">层。</param>
         /// <returns>名字。</returns>
         public static string GetLayerName(UILayer layer)
@@ -73,7 +87,13 @@ namespace NBC.Framework.UI
                 case UILayer.Mid: return "Mid";
                 case UILayer.Top: return "Top";
                 case UILayer.System: return "System";
-                default: return "Unknown(" + (int)layer + ")";
+
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(layer), layer,
+                        "[UILayers] 未知的层。只可能是 " +
+                        "Bot(0) / Mid(1) / Top(2) / System(3) —— " +
+                        "传进来一个野值说明某处算错了下标。");
             }
         }
 
@@ -96,8 +116,25 @@ namespace NBC.Framework.UI
         }
 
         /// <summary>
-        /// 试着取某一层的节点。**配置有问题时也返回 false**（不抛异常），
+        /// 试着取某一层的节点。**配置有问题时返回 false**（不抛异常），
         /// 供调用方自己决定怎么处理。
+        /// <para>
+        /// ⚠️ **注意区分两种"不行"**：
+        /// </para>
+        /// <list type="bullet">
+        /// <item>
+        /// <description>
+        /// **层是合法的、只是没配好**（空格子 / 拖了别人的节点）→ 返回 <c>false</c>。
+        /// 这是**配置问题**，调用方可能想收集全部问题一起报，所以不能在这里就炸。
+        /// </description>
+        /// </item>
+        /// <item>
+        /// <description>
+        /// **传进来的层根本不存在**（比如 <c>(UILayer)99</c>）→ **抛异常**。
+        /// 这是**编程错误**，沉默地返回 false 只会让 bug 藏得更深。
+        /// </description>
+        /// </item>
+        /// </list>
         /// </summary>
         /// <param name="layer">层。</param>
         /// <param name="layerRoot">取到的节点；失败时是 null。</param>

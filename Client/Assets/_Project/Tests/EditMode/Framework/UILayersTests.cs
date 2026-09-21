@@ -209,9 +209,43 @@ namespace NBC.Tests.EditMode
         {
             UILayer bogus = (UILayer)99;
 
-            Assert.Throws<ArgumentOutOfRangeException>(() => m_layers.Bind(bogus, m_bot));
-            Assert.Throws<ArgumentOutOfRangeException>(() => m_layers.Get(bogus));
-            Assert.Throws<ArgumentOutOfRangeException>(() => UILayers.GetLayerName(bogus));
+            Assert.Throws<ArgumentOutOfRangeException>(() => m_layers.Bind(bogus, m_bot),
+                "Bind 遇到野值应当抛异常");
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => m_layers.Get(bogus),
+                "Get 遇到野值应当抛异常");
+
+            // ⚠️ 这一条曾经是红的：第一版 `GetLayerName` 里写了个兜底
+            // `return "Unknown(99)"`，把这个野值悄悄变成一个看着正常的字符串。
+            // 兜底字符串正是本项目最讨厌的静默行为 —— 假名字会一路流进日志。
+            Assert.Throws<ArgumentOutOfRangeException>(() => UILayers.GetLayerName(bogus),
+                "GetLayerName 遇到野值也必须抛异常，不能返回兜底字符串");
+        }
+
+        /// <summary>
+        /// **区分两种"不行"**，这是这一组里最该记住的一条：
+        /// <list type="bullet">
+        /// <item><description>层是合法的、只是**没配好** → `TryGet` 返回 false（配置问题，不炸）</description></item>
+        /// <item><description>层**根本不存在** → 抛异常（编程错误，必须炸）</description></item>
+        /// </list>
+        /// </summary>
+        [Test]
+        public void TryGet_DistinguishesUnconfiguredLayerFromNonexistentLayer()
+        {
+            m_layers.Bind(UILayer.Mid, null);
+
+            // ⚠️ out 参数写在 lambda 里时，编译器不认它是"确定赋值"（CS0165），
+            // 所以下面两个变量必须先初始化。
+            Transform configured = null;
+            Transform bogus = null;
+
+            Assert.DoesNotThrow(
+                () => { m_layers.TryGet(UILayer.Mid, out configured); },
+                "层是合法的、只是没填 —— 这是配置问题，TryGet 不该抛异常");
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => { m_layers.TryGet((UILayer)99, out bogus); },
+                "层根本不存在 —— 这是编程错误，必须响亮地报出来");
         }
 
         // ====================================================================
