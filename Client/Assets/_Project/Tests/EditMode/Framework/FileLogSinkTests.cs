@@ -129,6 +129,32 @@ namespace NBC.Tests.EditMode
         //  二、滚动
         // ====================================================================
 
+        /// <summary>
+        /// **当前文件必须一直存在** —— 即使最后一次写刚好触发了滚动。
+        /// <para>
+        /// ⚠️ 这条是首跑失败后补上的：原实现在**写之后**检查长度，
+        /// 于是"最后一次写触发滚动"会把当前文件改名归档、却不留新的当前文件 ——
+        /// 那一刻正在 tail 日志的人会看到"文件突然不见了"。
+        /// 改成**写之前**检查之后，"当前文件永远存在"才成立。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void CurrentFile_AlwaysExists_EvenWhenLastWriteTriggersRotation()
+        {
+            using (FileLogSink sink = new FileLogSink(m_dir, "nbc.log", maxFileBytes: 100, maxFileCount: 3))
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    sink.Write(new LogEntry(LogLevel.Info, LogChannel.General,
+                        "这条够长足以触发滚动 " + i, DateTime.Now));
+                }
+
+                Assert.Greater(sink.RotationCount, 0, "应当滚动过（否则这条没测到东西）");
+                Assert.IsTrue(File.Exists(Path.Combine(m_dir, "nbc.log")),
+                    "当前文件必须一直存在，不能因为滚动而消失");
+            }
+        }
+
         /// <summary>超过单文件上限就滚动，并把旧文件改名保留。</summary>
         [Test]
         public void Rotation_HappensWhenFileGrowsTooLarge()
