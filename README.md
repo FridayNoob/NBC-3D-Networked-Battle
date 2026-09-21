@@ -11,7 +11,7 @@
 | 网络 | 自研 TCP（**Google.Protobuf** 序列化）+ 三种同步模式 |
 | 热更 | **xLua** + **YooAsset**（底层 AssetBundle） |
 | 平台 | PC（Windows） |
-| 当前阶段 | 🚧 **M1 · 框架与基础设施（进行中）** —— M0 已收关（2026-09-20，18/18）；M1 已完成 A1~A4 + B2，见下方「M1 进度」 |
+| 当前阶段 | 🚧 **M1 · 框架与基础设施（进行中）** —— M0 已收关（2026-09-20，18/18）；M1 已完成 **A1~A5、A7、A8** 与 **B2/B3**，见下方「M1 进度」 |
 
 ---
 
@@ -48,7 +48,11 @@
 | **A2** | 对象池（`ObjectPool<T>` / `GameObjectPool`） | FW-04 `List.RemoveAt(0)` 是 O(n)、FW-05 无上限无回收、P-04 `Clear` 名不副实、P-10 补货对象不设父、P-11 public 容器 | EditMode 20 + PlayMode 11（含 O(1) 对比实测：**快 21.1 倍**） |
 | **A3** | 事件中心（`EventCenter` + 强类型 `EventId`） | FW-06 string key 拼错静默不触发、FW-07 同 key 异类型 NRE、P-16 未注册事件无反馈、P-18 派发中增删监听语义不确定 | EditMode 26 |
 | **A4** | 公共 Mono 宿主（`MonoManager`） | P-13 宿主一帧未受保护窗口、P-05 订阅不退订 | PlayMode 18 |
+| **A5** | 场景加载（`SceneLoader`） | FW-11 用 `yield return ao.progress`（一个 `float`）**当等待** —— 它根本不是等待指令 | EditMode 13 |
+| **A7** | 输入（`InputManager` / `IInputSource`） | P-14 每帧对 4 个写死的键调 8 次 `GetKey` 并无条件发事件、事件名硬编码中文 | EditMode 28 |
+| **A8** | 音频（`AudioManager`） | FW-09 音效对象不复用（每次 `AddComponent` 播完 `Destroy`）、宿主未 `DontDestroyOnLoad` → 切场景后 `MissingReferenceException`、`Update` 里 `isPlaying` 无防御 | EditMode 41 + PlayMode 6 |
 | **B2** | 资源层（`AssetManager` + `YooAssetProvider`） | FW-08 基于 `Resources` 无法热更、且**没有任何释放入口** | EditMode 21（用假加载器确定性测试） |
+| **B3** | YooAsset 初始化与运行模式 | 同上（运行期验证） | PlayMode 41（**编辑器模拟模式下真的加载到资源并断言了内容**） |
 | **A11** | 分层方向的机械校验 | FW-12 框架与业务耦合 | EditMode 5（含**阳性对照**，防止断言假绿） |
 
 **几条值得一提的工程细节**：
@@ -57,6 +61,8 @@
 - **框架侧不认识 YooAsset**：`NBC.Framework` 的 `references` 为**空**（有一条测试机械保证），适配层独立成 `NBC.Framework.YooAsset` 程序集 —— 换资源方案只需删这一个程序集。
 - **引用计数逻辑放在框架侧**，于是可以用假加载器在 EditMode 里**确定性地**测掉，不需要 YooAsset、不需要打包。
 - **一条用实验定下来的测试划分**：EditMode 下连 `Awake` 都不会被调用（5 对照实验实测，连基线都是 0），所以 MonoBehaviour 生命周期一律放 PlayMode 测。
+- **一套"把不可控环境变成可注入参数"的手法**（A5/A7/A8 反复用）：超时靠 `Tick(deltaTime)` 注入时间、输入靠注入假 `IInputSource`、音频靠注入 `IAudioPlaybackProbe`。好处是**连"探针被问了几次"都能断言**，而不只是断言最终结果。
+- **编译闸门抓到的两类真问题**：① `UnityEngine.Input` **不在** `CoreModule`（在 `InputLegacyModule`）；② `AudioSource`/`AudioClip` **不在** `CoreModule`（在 `AudioModule`）。**规律：Unity 引擎按模块拆程序集，闸门是"显式列引用"，少一个就 `CS0246`。**
 
 > 完整的"现象 → 根因 → 改法 → 验证"记录、以及对原框架 12 条缺陷的**逐行审计**（含 18 条清单之外的新发现），见 [`Docs/06-框架改造记录.md`](Docs/06-框架改造记录.md)。
 
@@ -72,6 +78,14 @@
 │  └─ Assets/
 │     ├─ _Project/             #   自研框架与业务代码
 │     │  ├─ Framework/         #     框架底座（**零外部依赖**，可整包导出复用）
+│     │  │  ├─ Core/           #       单例与注册表（A1）
+│     │  │  ├─ Pool/           #       对象池与池统计（A2）
+│     │  │  ├─ Event/          #       事件中心 + 强类型 EventId（A3）
+│     │  │  ├─ Mono/           #       公共 Mono 宿主与定时器（A4）
+│     │  │  ├─ Asset/          #       资源接缝 IAssetProvider / AssetHandle（B2）
+│     │  │  ├─ Scenes/         #       场景加载（A5）
+│     │  │  ├─ Input/          #       采集与命令分离（A7）
+│     │  │  └─ Audio/          #       音频池 + 音量分组（A8）
 │     │  ├─ Framework.YooAsset/#     ★ YooAsset 适配层（全工程唯一引用 YooAsset 的地方）
 │     │  ├─ Game/              #     业务逻辑（Model / View / Controller / Service）
 │     │  ├─ Configs/           #     生成的 ScriptableObject 配置资产
@@ -183,6 +197,7 @@ Asset Store **Commercial License（按席位授权）**，**许可不允许再�
 | [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md) | M0 逐步操作手册 |
 | [`Docs/11-环境配置说明.md`](Docs/11-环境配置说明.md) | 环境速查、protoc 生成、**不开 Unity 也能核对 Unity API 的编译闸门** |
 | [`Docs/16-M1开工清单.md`](Docs/16-M1开工清单.md) | M1 任务拆分 / 验收 V1~V13 / **手动验证操作单** / 工具说明（Test Runner 是什么） |
+| [`Docs/教学/README.md`](Docs/教学/README.md) | ★ **模块教学留档**：每个模块收关后讲一遍并留成一篇（`A7-输入管理.md`…），供随时复习 —— 见 `Docs/00` §15.3.1 |
 | [`ClientStaging/README.md`](ClientStaging/README.md) | 客户端暂存文件的搬运说明 + D17 验证流程 |
 | `DeepSeekOutput/` | 开发过程知识点总结（含踩坑记录与新概念复习） |
 
