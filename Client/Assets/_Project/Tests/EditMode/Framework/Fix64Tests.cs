@@ -260,12 +260,18 @@ namespace NBC.Tests.EditMode
         }
 
         /// <summary>
-        /// 开方精度：**绝对**误差不超过 2^-16（整数平方根截断后左移 16 位的理论界）。
+        /// 开方精度。
+        /// <para>
+        /// ⚠️ **这条断言的界被收紧过**：`Sqrt` 最初只有"整数平方根 + 左移 16 位"，
+        /// 绝对误差的理论界是 2^-16 ≈ 1.526e-5。
+        /// 后来加了**一次牛顿迭代**，实测误差降到 1e-9 量级 ——
+        /// 加它的理由是 `FixMath.Asin/Acos` 走 `sqrt(1 - v²)`，开方误差会直接变成角度误差。
+        /// 所以这里改成断言更紧的界；**不是为了让测试过，而是因为实现真的变好了**。
+        /// </para>
         /// </summary>
         [Test]
-        public void Sqrt_AbsoluteErrorWithinTheoreticalBound()
+        public void Sqrt_AbsoluteErrorIsTight()
         {
-            const double bound = 1.0 / 65536.0;   // 2^-16
             double worst = 0.0;
 
             for (int i = 1; i <= 20000; i++)
@@ -287,8 +293,8 @@ namespace NBC.Tests.EditMode
                 }
             }
 
-            Assert.LessOrEqual(worst, bound + 1e-12,
-                "开方绝对误差应当不超过理论界 2^-16，实测最大的一个是 " + worst);
+            Assert.LessOrEqual(worst, 1e-8,
+                "加了牛顿迭代之后，开方绝对误差应当到 1e-9 量级，实测最大的一个是 " + worst);
         }
 
         // ====================================================================

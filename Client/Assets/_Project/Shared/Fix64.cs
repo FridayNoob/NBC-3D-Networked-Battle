@@ -639,12 +639,18 @@ namespace NBC.Shared
         /// <summary>
         /// 平方根（负数抛异常）。
         /// <para>
-        /// 做法：`sqrt(x_raw / S) = sqrt(x_raw) / 2^16` ⇒ **对原始值开整数平方根，再左移 16 位**。
-        /// 这样不需要 128 位中间结果（`x_raw &lt;&lt; 32` 会溢出）。
+        /// 两步：
+        /// ① **初值**：对原始值开整数平方根，再左移 16 位
+        ///    （因为 `sqrt(x_raw / S) = sqrt(x_raw) / 2^16`）。
+        ///    这样不需要 128 位中间结果（`x_raw &lt;&lt; 32` 会溢出）。
+        ///    此时绝对误差约 `2^-16`。
+        /// ② **一次牛顿迭代** `y' = (y + x/y) / 2` —— 牛顿法**误差平方级收敛**，
+        ///    一步就把误差从 `2^-16` 压到接近 Fix64 自身的分辨率。
         /// </para>
         /// <para>
-        /// ⚠️ 精度：整数平方根截断后再移位，绝对误差约 `2^-16`。
-        /// 对"归一化方向向量"这类用途足够；需要更高精度可以再做牛顿迭代。
+        /// ⚠️ 加第 ② 步是有**真实理由**的：`FixMath.Asin/Acos` 走 `sqrt(1 - v²)`，
+        /// 开方误差会直接变成角度误差（实测 1.4e-5 弧度）。
+        /// 代价是每次开方多一次乘法 + 一次除法 —— 对"每帧几个实体"的量级可以忽略。
         /// </para>
         /// </summary>
         /// <param name="value">值。</param>
@@ -662,7 +668,13 @@ namespace NBC.Shared
                 return Zero;
             }
 
-            return new Fix64((long)(Isqrt((ulong)value.m_raw) << 16));
+            // ① 初值：整数平方根 + 左移 16 位
+            Fix64 estimate = new Fix64((long)(Isqrt((ulong)value.m_raw) << 16));
+
+            // ② 一次牛顿迭代。value 与 estimate 都非负，所以可以直接右移一位当除以 2。
+            Fix64 refined = new Fix64((estimate + value / estimate).RawValue >> 1);
+
+            return refined;
         }
 
         // ====================================================================

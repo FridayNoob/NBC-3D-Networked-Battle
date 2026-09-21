@@ -94,9 +94,15 @@ namespace NBC.Tests.EditMode
             Assert.IsTrue(result.Z.IsZero, "Z 分量必须是 0");
         }
 
-        /// <summary>归一化后的长度接近 1（精度受 `Sqrt` 的 2^-16 限制）。</summary>
+        /// <summary>
+        /// 归一化后的长度接近 1。
+        /// <para>
+        /// ⚠️ 精度**取决于 `Fix64.Sqrt`**：最初只有整数平方根，误差 2^-16（约 1.5e-5）；
+        /// 加了牛顿迭代之后降到 1e-9 量级。这里的界按后者定。
+        /// </para>
+        /// </summary>
         [Test]
-        public void Normalized_HasUnitLengthWithinSqrtBound()
+        public void Normalized_HasUnitLength()
         {
             Random rng = new Random(20260928);
             double worst = 0.0;
@@ -122,8 +128,8 @@ namespace NBC.Tests.EditMode
                 }
             }
 
-            // Sqrt 的绝对误差界是 2^-16；归一化后 |v| = 1，所以长度误差也在这个量级
-            Assert.Less(worst, 1e-4, "归一化后长度误差应当很小，实测最大 " + worst);
+            // Sqrt 加了牛顿迭代之后精度到 1e-9 量级，所以这里可以要求得很紧
+            Assert.Less(worst, 1e-8, "归一化后长度误差应当很小，实测最大 " + worst);
         }
 
         /// <summary>长度与 double 对拍（相对误差）。</summary>
