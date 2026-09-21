@@ -2,13 +2,41 @@
 
   <!-- ========================================================================
        NBC.Shared - 客户端与服务端【共享】的程序集
+       项目：3D联网战斗Demo
+
        ⚠️ 关键约束（需求文档 §4.2 R5、§6.4 DET-08）：
          · 必须是 netstandard2.1 - Unity 2022.3 能引用，.NET 8 也能引用
          · 绝不能改成 net8.0，否则 Unity 无法引用，双端共享逻辑就断了
          · 本程序集用于：协议定义、定点数学、战斗核心逻辑、AI 决策（帧同步需要）
        ⚠️ 依赖约束（需求文档 §4.2 R1、DET-02）：
          · 本程序集【禁止】引用 UnityEngine（帧同步确定性的硬前提）
-         · M1 阶段会改为 asmdef 镜像 + 单元测试机械校验
+         · 已由 `Assets\_Project\Shared\NBC.Shared.asmdef` 的 `noEngineReferences: true` 机械保证
+
+       ========================================================================
+       ★ 2026-09-21（M1-D1）改为「一份源码，服务端引用它」
+       ========================================================================
+       共享逻辑的**唯一源码位置**是 Unity 侧：
+           Client\Assets\_Project\Shared\
+       本工程**不再自己存放 .cs**，而是把它们 `<Compile Include>` 进来。
+       Unity 侧由 `NBC.Shared.asmdef` 编译同一批文件。
+
+       为什么这么做：帧同步最怕"两端逻辑不一致"，而两份拷贝一定会漂移。
+       **只有一份代码，改一处两边都变。**
+
+       ⚠️ 代价（如实记录）：**服务端构建现在依赖客户端目录**。
+          这是刻意的取舍：宁可多一个路径耦合，也不要逻辑漂移。
+          CI（F3）里请把 `Client\Assets\_Project\Shared` 一起 checkout 出来。
+
+       ========================================================================
+       ★ 为什么把 LangVersion 钉成 9.0（这条是 D1 顺手抓出来的真隐患）
+       ========================================================================
+       改之前，本工程用的是 SDK 默认 LangVersion —— 它**允许 C# 10 语法**，
+       而 **Unity 2022.3 只支持 C# 9**。
+       于是服务端**可以**写出"服务端编得过、Unity 编不过"的共享代码，而且**没有任何东西会拦住它**。
+       （改动前 `SharedInfo.cs` 恰好用了 C# 10 的文件作用域命名空间 —— 真实存在的一处隐患。）
+
+       钉成 9.0 之后：**"服务端编得过"这件事本身就代表"Unity 也能编过"。**
+       这与编译闸门 `Server\_api-probe\ApiProbe.csproj` 的 `<LangVersion>9.0</LangVersion>` 是同一个理由。
        ======================================================================== -->
 
   <PropertyGroup>
@@ -16,9 +44,26 @@
     <RootNamespace>NBC.Shared</RootNamespace>
     <AssemblyName>NBC.Shared</AssemblyName>
 
-    <!-- 明确禁用引擎引用：本程序集只能依赖 BCL -->
-    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <!-- ⚠️ 与 Unity 2022.3 对齐。不要改大 —— 见上面的说明。 -->
+    <LangVersion>9.0</LangVersion>
+
+    <!--
+      ⚠️ 必须关掉隐式 using —— 钉 LangVersion 9.0 之后才暴露出来的问题：
+      SDK 默认开启 ImplicitUsings，它会**自动生成**一个带 `global using` 的 .cs 文件，
+      而 `global using` 是 **C# 10** 特性 → 报 error CS8773 一堆。
+      更重要的是：**Unity 根本没有隐式 using**，共享代码本来就必须写全 using。
+      所以关掉它不是"为了绕过报错"，而是两边环境本来就该一致。
+    -->
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- 不再自动包含本目录下的 .cs（本工程已经不存放源码了） -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ★ 唯一源码：Unity 侧 -->
+    <Compile Include="..\..\Client\Assets\_Project\Shared\**\*.cs" />
+  </ItemGroup>
 
   <!-- ========================================================================
        第三方依赖（M0 阶段先不引入，避免首次 build 就卡在还原）

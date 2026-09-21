@@ -4,6 +4,7 @@
     "references": [
         "NBC.Framework",
         "NBC.Framework.UI",
+        "NBC.Shared",
         "NBC.Game",
         "NBC.Model",
         "UnityEngine.TestRunner",

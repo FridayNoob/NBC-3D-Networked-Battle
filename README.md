@@ -90,6 +90,7 @@
 │     │  │  └─ Audio/          #       音频池 + 音量分组（A8）
 │     │  ├─ Framework.YooAsset/#     ★ YooAsset 适配层（全工程唯一引用 YooAsset 的地方）
 │     │  ├─ Framework.UI/      #     ★ UI 模块（全工程唯一引用 UGUI 的地方，A9）
+│     │  ├─ Shared/            #     ★ 双端共享逻辑的唯一源码（服务端 Compile Include 引用它，D1）
 │     │  ├─ Game/              #     业务逻辑（Model / View / Controller / Service）
 │     │  ├─ Configs/           #     生成的 ScriptableObject 配置资产
 │     │  ├─ Protocol/          #     protoc 生成的协议 C#（命名空间 NBC.Protocol，入库）
