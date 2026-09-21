@@ -63,10 +63,21 @@ namespace NBC.Tests.EditMode
             m_controller = new LoadingMaskController(m_ui);
         }
 
-        /// <summary>清理。</summary>
+        /// <summary>
+        /// 清理。
+        /// <para>
+        /// ⚠️ **必须先 <see cref="DrainPendingLoads"/>，再销毁管理器。**
+        /// 用例若停在"遮罩还在加载"的状态，`UIManager.DisposeInstance()` 会通过失败回调
+        /// 报出"这次加载被取消" —— 那是**刻意的产品行为**（不报的话 `await` 的调用方会永远挂着，
+        /// 有专门一条用例守它）。但那条 Error 日志会让 TearDown 判"未预期的日志"失败。
+        /// **那不是被测行为，只是测试自己没把场景收干净。**
+        /// </para>
+        /// </summary>
         [TearDown]
         public void TearDown()
         {
+            DrainPendingLoads();
+
             if (m_controller != null)
             {
                 m_controller.Dispose();
@@ -88,6 +99,15 @@ namespace NBC.Tests.EditMode
 
             m_created.Clear();
             SingletonRegistry.ResetAll();
+        }
+
+        /// <summary>
+        /// 把还挂着的加载"喂完"，让测试干净退场。
+        /// <para>已经发完/没发出的请求都不会被碰（内部有 `IsDone` 与存在性判断）。</para>
+        /// </summary>
+        private void DrainPendingLoads()
+        {
+            CompleteMask();
         }
 
         // ====================================================================
@@ -288,6 +308,10 @@ namespace NBC.Tests.EditMode
 
             m_controller.Attach();
             TriggerProgress(0.5f, "Level1");
+
+            // ⚠️ 先喂 Canvas —— 遮罩的加载请求要等 Canvas 就绪**之后**才会发出来。
+            //    （第一版漏了这一步，`OperationFor` 找不到请求，测试红在 Assert.Fail 上。）
+            CompleteCanvas();
 
             // 故意喂一个 ProbePanel（不是 LoadingMaskPanel）
             GameObject wrong = Track(new GameObject("LoadingMaskPrefab", typeof(RectTransform)));

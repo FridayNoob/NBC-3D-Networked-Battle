@@ -949,7 +949,10 @@ namespace NBC.Framework.UI
                 return;
             }
 
-            Debug.LogError("[UIManager] " + error.Message);
+            // ⚠️ **不要在这里再加 "[UIManager]" 前缀。**
+            //    本类抛出的消息**自己已经带了来源标识**，再加一次就会变成
+            //    "[UIManager] [UIManager] 管理器已销毁……" 这种叠词（实际上出现过一次）。
+            Debug.LogError(error.Message);
         }
 
         // ====================================================================
@@ -1027,6 +1030,13 @@ namespace NBC.Framework.UI
         /// <summary>
         /// 销毁时把所有面板、Canvas、素材句柄**一起清干净**。
         /// <para>⚠️ 面板必须**真正销毁**，否则单例没了、对象还挂在场景里 —— 那就是泄漏。</para>
+        /// <para>
+        /// ⚠️ **还有未完成的加载时，会通过失败回调把"这次加载被取消"报出来 —— 这是刻意的。**
+        /// 不报的话，还在 `await` 的调用方会**永远挂着**（有专门一条用例守它：
+        /// `Dispose_CancelsPendingLoadsInsteadOfHanging`）。
+        /// 代价是：如果调用方在加载途中直接销毁管理器，Console 里会多一条 error。
+        /// **不想看到它，就在销毁之前先取消自己的请求**（例如先 `HideNow()` / 退订）。
+        /// </para>
         /// </summary>
         protected override void OnDispose()
         {
