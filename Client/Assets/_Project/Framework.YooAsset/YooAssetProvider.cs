@@ -52,6 +52,9 @@ namespace NBC.Framework.Asset.Adapter
         /// <summary>编辑器模拟模式用的模拟清单目录。</summary>
         private readonly string m_editorSimulatePackageRoot;
 
+        /// <summary>加载包裹清单的超时时间（秒）。</summary>
+        private const int ManifestLoadTimeoutSeconds = 60;
+
         /// <summary>YooAsset 的包对象。</summary>
         private ResourcePackage m_package;
 
@@ -98,7 +101,18 @@ namespace NBC.Framework.Asset.Adapter
         }
 
         /// <summary>
-        /// 初始化：全局初始化 YooAsset → 建包（或取已有包）→ 按模式初始化包。
+        /// 初始化。**v3 是三段式**，缺任何一段都不能加载资源：
+        /// <list type="number">
+        /// <item>`InitializePackageAsync` —— 只**建文件系统**（其内部步骤表就是 SetPlayMode → CheckOptions → CreateCore → InitFileSystem → Done，**没有加载清单**）</item>
+        /// <item>`RequestPackageVersionAsync` —— 请求包裹版本（EditorSimulate 下就是读 `{包名}.version`）</item>
+        /// <item>`LoadPackageManifestAsync` —— **这一步才会 `SetActiveManifest`**（`LoadPackageManifestOperation.cs:91` 是全局唯一的调用点）</item>
+        /// </list>
+        /// <para>
+        /// ⚠️ **这里是 B3 踩得最久的一个坑**：我以为 v3 的 `InitializePackageAsync` 等价于 v2 的 `InitializeAsync`
+        /// （v2 一步到位）。实际上它**只建文件系统**，于是 `InitializeStatus` 报 `Succeeded`、
+        /// 但 `ActiveManifest` 仍是 null —— 加载时报 `Active package manifest not found`
+        /// （`ResourcePackage.cs:1002`）。**只做第一段时，连报错都看不出缺了哪一段。**
+        /// </para>
         /// </summary>
         /// <param name="mode">运行模式。</param>
         public async Task InitializeAsync(AssetRuntimeMode mode)
@@ -113,40 +127,60 @@ namespace NBC.Framework.Asset.Adapter
             {
                 m_package = existing;
 
-                // ⚠️ **幂等**：已经初始化成功的包直接复用，**绝不重复初始化**。
-                //
-                // 为什么必须这样（2026-09-20 实测教训）：
-                //  `ResourcePackage.InitializePackageAsync` 在 `_initializeOp != null` 时会直接抛
-                //  `already initialized`（ResourcePackage.cs:100-101）。
-                //  更麻烦的是——**先 `YooAssets.Destroy()` 再重新初始化这条路在 v3 里不可靠**：
-                //  实测会得到 `InitializeStatus == Succeeded` 但 `ActiveManifest == null`，
-                //  于是加载时报 `Active package manifest not found`（ResourcePackage.cs:1002），
-                //  而且日志里能看到 `DownloadSchedulerOperation has been aborted`（被 Destroy 打断）。
-                //
-                //  与其去绕开资源库的这条路径，不如**按真实用法来**：
-                //  **一个进程只初始化一次资源系统**。引导代码写错重复调用时，这里也应当是安全的。
-                if (existing.InitializeStatus == EOperationStatus.Succeeded)
-                {
-                    IsInitialized = true;
-                    return;
-                }
+                // **幂等**：`InitializePackageAsync` 在 `_initializeOp != null` 时会抛 `already initialized`
+                // （ResourcePackage.cs:100-101）。所以已经初始化过的包绝不再初始化第二遍
+                // —— 引导流程被调两次时这里必须是安全的。
             }
             else
             {
                 m_package = YooAssets.CreatePackage(m_packageName);
             }
 
-            InitializePackageOptions options = BuildOptions(mode);
+            // —— 第 1 段：文件系统（已初始化过的包跳过）——
+            if (m_package.InitializeStatus != EOperationStatus.Succeeded)
+            {
+                InitializePackageOptions options = BuildOptions(mode);
 
-            // `InitializePackageOperation` 继承自 `AsyncOperationBase`，而后者的
-            // `GetAwaiter()` 返回公开的 `OperationAwaiter` 结构 —— 所以可以直接 await。
-            InitializePackageOperation operation = m_package.InitializePackageAsync(options);
-            await operation;
+                // `InitializePackageOperation` 继承自 `AsyncOperationBase`，而后者的
+                // `GetAwaiter()` 返回公开的 `OperationAwaiter` 结构 —— 所以可以直接 await。
+                InitializePackageOperation initOperation = m_package.InitializePackageAsync(options);
+                await initOperation;
 
-            if (operation.Status != EOperationStatus.Succeeded)
+                if (initOperation.Status != EOperationStatus.Succeeded)
+                {
+                    throw new InvalidOperationException(
+                        "[YooAssetProvider] 包【" + m_packageName + "】文件系统初始化失败：" + initOperation.Error);
+                }
+            }
+
+            // —— 已经有活动清单就直接用（`PackageValid` = `ActiveManifest != null`，ResourcePackage.cs:32）——
+            if (m_package.PackageValid)
+            {
+                IsInitialized = true;
+                return;
+            }
+
+            // —— 第 2 段：请求包裹版本 ——
+            RequestPackageVersionOperation versionOperation = m_package.RequestPackageVersionAsync();
+            await versionOperation;
+
+            if (versionOperation.Status != EOperationStatus.Succeeded)
             {
                 throw new InvalidOperationException(
-                    "[YooAssetProvider] 包【" + m_packageName + "】初始化失败：" + operation.Error);
+                    "[YooAssetProvider] 包【" + m_packageName + "】请求版本失败：" + versionOperation.Error +
+                    "（EditorSimulate 模式下请确认模拟清单目录里有 {包名}.version 文件）");
+            }
+
+            // —— 第 3 段：加载清单 —— 这一步才会装上"活动清单" ——
+            LoadPackageManifestOperation manifestOperation = m_package.LoadPackageManifestAsync(
+                new LoadPackageManifestOptions(versionOperation.PackageVersion, ManifestLoadTimeoutSeconds));
+            await manifestOperation;
+
+            if (manifestOperation.Status != EOperationStatus.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    "[YooAssetProvider] 包【" + m_packageName + "】加载清单失败（版本 " +
+                    versionOperation.PackageVersion + "）：" + manifestOperation.Error);
             }
 
             IsInitialized = true;
