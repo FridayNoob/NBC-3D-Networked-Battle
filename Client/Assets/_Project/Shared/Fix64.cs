@@ -44,7 +44,7 @@ namespace NBC.Shared
     /// <summary>
     /// 确定性定点数（Q32.32）。**位级别可复现**，用于帧同步逻辑。
     /// </summary>
-    public readonly struct Fix64 : IEquatable<Fix64>, IComparable<Fix64>
+    public readonly struct Fix64 : IEquatable<Fix64>, IComparable<Fix64>, IComparable
     {
         /// <summary>小数位数（32 位小数、32 位整数部分）。</summary>
         public const int FractionalBits = 32;
@@ -439,6 +439,32 @@ namespace NBC.Shared
             }
 
             return m_raw > other.m_raw ? 1 : 0;
+        }
+
+        /// <summary>
+        /// 非泛型比较（排序、非泛型集合、以及**测试框架的 `Assert.Greater`** 都要它）。
+        /// <para>
+        /// ⚠️ 只实现 `IComparable&lt;T&gt;` 是不够的：NUnit 的 `Assert.Greater(a, b)` 走的是
+        /// **非泛型** `IComparable` 那个重载；缺了它就会去匹配 `(int, int)` 的重载，
+        /// 然后报"无法从 Fix64 转换为 int"。这个缺口是被测试的编译错误逼出来的 ——
+        /// **编译错误也是一种有效的检查手段**。
+        /// </para>
+        /// </summary>
+        /// <param name="obj">另一个对象。</param>
+        /// <returns>比较结果。</returns>
+        public int CompareTo(object obj)
+        {
+            if (obj == null)
+            {
+                return 1;   // 与 .NET 惯例一致：任何实例都大于 null
+            }
+
+            if (!(obj is Fix64))
+            {
+                throw new ArgumentException("[Fix64] 只能和 Fix64 比较。", nameof(obj));
+            }
+
+            return CompareTo((Fix64)obj);
         }
 
         // ====================================================================
