@@ -151,6 +151,67 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  源码级网关检查：只有适配层可以 using YooAsset
+        //  —— 补的是**编译闸门的盲区**（2026-09-20 被真实错误逼出来的）
+        // ====================================================================
+
+        /// <summary>
+        /// 除了适配层目录，任何源码都不得 `using YooAsset;`。
+        /// <para>
+        /// **为什么需要这条**：编译闸门（`Server\_api-probe`）把**所有源码编进同一个程序集**，
+        /// 所以它验证得了"C# 写得对不对"，**验证不了"程序集接得对不对"**。
+        /// 真实踩到的例子：`YooAssetAdapterSmokeTests` 里写了 `using YooAsset;` 去调 `YooAssets.Destroy()`，
+        /// 闸门绿灯通过，Unity 里却报 `CS0246` —— 因为 **Unity 的 asmdef 引用不传递**：
+        /// 测试引用了 `NBC.Framework.YooAsset`，仍然看不到适配层引用的 `YooAsset`。
+        /// </para>
+        /// <para>
+        /// ⚠️ **它的局限（诚实标注）**：只查 `using` 指令这一行，且跳过 `//` 注释行。
+        /// 完全限定名（`YooAsset.AssetHandle`）绕过它查不出来。
+        /// 它是一条"网关检查"，与程序集级断言（`GameAssembly_MustNotReferenceYooAsset`）**互补**，不是替代。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void OnlyAdapterSource_MayImportYooAssetNamespace()
+        {
+            string projectDir = Path.Combine(AssetsRoot, "_Project");
+            string adapterDir = Path.Combine(projectDir, "Framework.YooAsset");
+
+            Assert.IsTrue(Directory.Exists(adapterDir), "找不到适配层目录：" + adapterDir);
+
+            List<string> offenders = new List<string>();
+            string[] files = Directory.GetFiles(projectDir, "*.cs", SearchOption.AllDirectories);
+
+            for (int i = 0; i < files.Length; i++)
+            {
+                if (files[i].StartsWith(adapterDir, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;   // 适配层就是那个"唯一允许"的地方
+                }
+
+                string[] lines = File.ReadAllLines(files[i]);
+                for (int line = 0; line < lines.Length; line++)
+                {
+                    string trimmed = lines[line].TrimStart();
+                    if (trimmed.StartsWith("//"))
+                    {
+                        continue;   // 注释里提到 YooAsset 是允许的（文档说明需要）
+                    }
+
+                    if (Regex.IsMatch(trimmed, @"^using\s+YooAsset\s*;"))
+                    {
+                        offenders.Add(files[i].Substring(projectDir.Length + 1) + ":" + (line + 1));
+                    }
+                }
+            }
+
+            CollectionAssert.IsEmpty(
+                offenders,
+                "只有 NBC.Framework.YooAsset 可以 using YooAsset。越界文件：" +
+                string.Join(", ", offenders.ToArray()) +
+                "。业务/测试代码请走框架的 AssetManager / 适配层公开 API。");
+        }
+
+        // ====================================================================
         //  解析实现（不依赖 UnityEditor / 第三方 JSON 库，纯 BCL）
         //  —— 这样它也能被 Server\_api-probe 的编译闸门覆盖到
         // ====================================================================

@@ -179,6 +179,55 @@ namespace NBC.Framework.Asset.Adapter
             operation.Completed += OnBackgroundOperationCompleted;
         }
 
+        /// <summary>
+        /// 收尾：卸下本包，并关掉 YooAsset 的全局状态。
+        /// <para>
+        /// 用途：**测试之间的隔离**、以及进程退出前的清理。
+        /// 调过之后 <see cref="IsInitialized"/> 变回 false，再加载会抛带指引的异常。
+        /// </para>
+        /// <para>
+        /// ⚠️ `YooAssets.Destroy()` 是**全局**的：它会把所有包一起关掉。
+        /// 本项目 M1 只有一个包，所以这样没问题；将来有多包时要改成按包收尾。
+        /// </para>
+        /// </summary>
+        public void Shutdown()
+        {
+            m_package = null;
+            IsInitialized = false;
+
+            if (YooAssets.IsInitialized)
+            {
+                YooAssets.Destroy();
+            }
+        }
+
+        /// <summary>
+        /// 把**当前装在 `AssetManager` 上的**加载器收尾掉（如果有）。
+        /// <para>
+        /// 这个静态入口是为"调用方不想、也不应该引用 YooAsset 类型"而存在的：
+        /// 例如测试的 TearDown 需要重置全局状态，但它不该因此去 `using YooAsset;`
+        /// —— 那既破坏"只有适配层接触 YooAsset"的边界，**而且根本编译不过**
+        /// （Unity 的 asmdef 引用**不传递**：测试引用了适配层，也看不到适配层引用的 YooAsset）。
+        /// </para>
+        /// </summary>
+        /// <returns>真的收尾了才返回 true。</returns>
+        public static bool ShutdownInstalled()
+        {
+            if (!AssetManager.HasInstance)
+            {
+                return false;
+            }
+
+            YooAssetProvider provider = AssetManager.Instance.Provider as YooAssetProvider;
+            if (provider == null)
+            {
+                return false;
+            }
+
+            provider.Shutdown();
+            return true;
+        }
+
         // ====================================================================
         //  内部
         // ====================================================================

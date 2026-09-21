@@ -71,6 +71,19 @@ namespace NBC.Framework.Asset
             get { return m_provider != null; }
         }
 
+        /// <summary>
+        /// 当前装上的底层加载器（只读）。
+        /// <para>
+        /// 给两类调用方用：① 需要**特定加载器**的能力时（例如 YooAsset 适配层的收尾）；
+        /// ② 引导流程里做健康检查。
+        /// 业务层不需要它 —— 业务只跟 <see cref="AssetManager"/> 打交道。
+        /// </para>
+        /// </summary>
+        public IAssetProvider Provider
+        {
+            get { return m_provider; }
+        }
+
         /// <summary>是否已完成初始化。</summary>
         public bool IsInitialized
         {

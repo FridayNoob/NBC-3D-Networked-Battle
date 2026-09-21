@@ -44,7 +44,6 @@ using NBC.Framework.Asset.Adapter;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using YooAsset;
 
 namespace NBC.Tests.PlayMode
 {
@@ -95,11 +94,12 @@ namespace NBC.Tests.PlayMode
         {
             SingletonRegistry.ResetAll();
 
-            // YooAsset 的全局状态也要收掉，否则这个用例第二次跑会撞上"包已存在/已初始化"
-            if (YooAssets.IsInitialized)
-            {
-                YooAssets.Destroy();
-            }
+            // YooAsset 的全局状态也要收掉，否则这个用例第二次跑会撞上"包已存在/已初始化"。
+            // ⚠️ 这里【刻意】不写 `using YooAsset;` 去调 `YooAssets.Destroy()`：
+            //   · Unity 的 asmdef 引用**不传递** —— 本测试引用了适配层，也看不到适配层引用的 YooAsset，
+            //     直接写就会 CS0246（本项目真的踩过这一次）；
+            //   · 更重要的是**边界**：只有适配层该接触 YooAsset。测试也一样，走我们自己的 API。
+            YooAssetProvider.ShutdownInstalled();
         }
 
         [UnityTest]
