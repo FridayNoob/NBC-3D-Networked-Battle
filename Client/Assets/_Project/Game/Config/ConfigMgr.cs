@@ -217,32 +217,6 @@ namespace NBC.Game.Config
                 return;
             }
 
-            int remaining = tableNames.Count;
-            string firstFailure = null;
-
-            for (int i = 0; i < tableNames.Count; i++)
-            {
-                Preload(tableNames[i], null, reason =>
-                {
-                    if (firstFailure == null)
-                    {
-                        firstFailure = reason;
-                    }
-
-                    remaining--;
-
-                    if (remaining == 0 && onFailed != null)
-                    {
-                        onFailed(firstFailure);
-                    }
-                });
-
-                // 成功也要计数；上面的 lambda 只处理失败，所以这里单独挂一个成功的
-                Preload(tableNames[i], null, null);
-            }
-
-            // ⚠️ 上面那种"两次 Preload"的写法只能保证失败被数到，
-            //    所以这里换一个更直白的实现：逐张串行回调。
             // 逐张串行；任一张失败就停（那条错误已经通过 onFailed 交出去了）
             PreloadSequential(tableNames, 0, onDone, onFailed);
         }
@@ -293,7 +267,8 @@ namespace NBC.Game.Config
                 return (T)(object)cached;
             }
 
-            throw new InvalidOperationException(MissingTableMessage(tableName, typeof(T).FullName));
+            throw new InvalidOperationException(
+                MissingTableMessage(tableName, typeof(T).Name, typeof(T).FullName));
         }
 
         /// <summary>试着取一张已加载的表（**不抛异常**）。</summary>
@@ -423,11 +398,14 @@ namespace NBC.Game.Config
         }
 
         /// <summary>缺表时的报错：**哪张表 + 可能原因 + 怎么解决**（CFG-R4）。</summary>
-        private static string MissingTableMessage(string tableName, string typeName)
+        /// <param name="tableName">表名。</param>
+        /// <param name="typeName">类型的**简单名**（写进"该怎么改"的代码片段里）。</param>
+        /// <param name="fullTypeName">类型的完整名（消歧义用，可能带命名空间 / 嵌套）。</param>
+        private static string MissingTableMessage(string tableName, string typeName, string fullTypeName)
         {
             StringBuilder builder = new StringBuilder();
 
-            builder.Append("[ConfigMgr] 表「").Append(tableName).Append("」还没加载（").Append(typeName).Append("）。\n");
+            builder.Append("[ConfigMgr] 表「").Append(tableName).Append("」还没加载（").Append(fullTypeName).Append("）。\n");
             builder.Append("已加载的表：");
 
             if (Instance.m_loaded.Count == 0)
@@ -451,7 +429,12 @@ namespace NBC.Game.Config
             }
 
             builder.Append("\n最常见的两个原因：\n");
-            builder.Append("  ① **忘了预加载** —— 在启动流程里调用 ConfigMgr.Instance.Preload<").Append(typeName).Append(">()\n");
+
+            // ⚠️ 代码片段里用**简单名**（`Preload<HeroConfig>()`）而不是 FullName：
+            //    FullName 对嵌套类型是 `Outer+Nested`，既难看又不能直接粘进代码。
+            //    （这条是测试当场抓出来的：我原先用了 FullName，消息里出现了 `+HeroConfig`。）
+            builder.Append("  ① **忘了预加载** —— 在启动流程里调用 ConfigMgr.Instance.Preload<")
+                   .Append(typeName).Append(">()\n");
             builder.Append("  ② 预加载失败了但没接失败回调（那种情况 Console 里会有一条 LogError）\n");
             builder.Append("查表用法：ConfigMgr.Instance.Get<").Append(typeName).Append(">().Get(id)");
 
