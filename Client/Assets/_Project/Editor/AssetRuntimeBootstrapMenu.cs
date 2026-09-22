@@ -25,6 +25,13 @@
 //
 //  ⚠️ 地址来自 `Docs\17` 的配置表产物：生成物里 HeroConfig 的地址是 `HeroConfig`
 //     （`AddressByFileName` 规则）；若你的收集配置改了地址规则，把下面的常量一起改。
+//
+//  ⚠️ 2026-09-22 实测记录（两个都由负责人跑出来的日志暴露）：
+//     ① 只调 `InitializeAsync` 会报"还没有装上底层加载器" —— 必须先经**组合根**装配
+//        （`NBC.Boot.AssetBootstrapper`），这一步当时的菜单漏了；
+//     ② 用 `LoadAsset<GameObject>` 取 ScriptableObject 会**静默失败**
+//        （YooAsset 打一条 LogError 然后返回 null 资产），而我的判断只看了句柄非 null
+//        → 打出"✅ 取到句柄（Asset = null）"这种**假成功**。两处都已修。
 // ============================================================================
 
 using System;
@@ -102,17 +109,30 @@ namespace NBC.EditorTools
 
                 Debug.Log("[资源冒烟] ✅ 装配 + 初始化成功：" + mode);
 
-                // 再走一步真加载：光"初始化成功"证明不了资源真的能取到
-                AssetHandle<GameObject> handle = AssetManager.Instance.LoadAsset<GameObject>(ProbeLocation);
+                // 再走一步真加载：光"初始化成功"证明不了资源真的能取到。
+                //
+                // ⚠️ 这里**必须用 ScriptableObject**（不是 GameObject）：
+                //    配置表产物 `HeroConfig.asset` 是 ScriptableObject。
+                //    我第一版写的是 `LoadAsset<GameObject>` —— 类型不匹配时
+                //    YooAsset **不抛异常**，而是打一条 `Failed to load asset…` 并**返回 null 资产**，
+                //    于是探针打出"✅ 取到句柄（Asset = null）"这种**看起来成功的假成功**。
+                AssetHandle<ScriptableObject> handle =
+                    AssetManager.Instance.LoadAsset<ScriptableObject>(ProbeLocation);
 
-                if (handle == null)
+                // ⚠️ **"拿到句柄"不等于"加载成功"** —— 句柄非 null 但 `Asset` 是 null 就是失败。
+                //    这条是我自己踩的：第一版只判了 handle == null，于是把失败报成了成功。
+                //    本项目一直在防的"看起来正常的假值/假成功"，这次出在我自己的探针里。
+                if (handle == null || handle.Asset == null)
                 {
-                    Debug.LogWarning("[资源冒烟] 加载 " + ProbeLocation + " 返回了 null 句柄。");
+                    Debug.LogError(
+                        "[资源冒烟] ❌ 加载 " + ProbeLocation + " 失败：句柄非 null 但资产是 null。\n" +
+                        "最常见的原因是**类型不对**（例如用 GameObject 去取一个 ScriptableObject），\n" +
+                        "Console 里应当另有一条 'Failed to load asset: …' 说明实际类型。");
                     return;
                 }
 
-                Debug.Log("[资源冒烟] ✅ 取到句柄：" + ProbeLocation +
-                          "（Asset = " + (handle.Asset == null ? "null" : handle.Asset.name) + "）");
+                Debug.Log("[资源冒烟] ✅ 取到资产：" + ProbeLocation +
+                          "（实际类型 = " + handle.Asset.GetType().FullName + "）");
 
                 handle.Dispose();
                 Debug.Log("[资源冒烟] 完成。若这一步是通过的，说明 **" + mode + " 这条路是通的**。");
