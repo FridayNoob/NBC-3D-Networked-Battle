@@ -861,16 +861,17 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>
-        /// **生成代码的注释密度规则**（2026-09-22 由负责人明确，同日加强）：
+        /// **生成代码的注释规则**（2026-09-22 由负责人定，**同日改过一次**）：
         /// <para>
-        /// 只有三处**必定**有注释 ——
-        /// ① **文件开头**、② **变量名后**（行尾，**字段 / 局部变量 / for 计数器都算**）、
-        /// ③ **类名 / 方法名前**；**其他地方非必要不加注释**。
+        /// 最终版：**成员变量（字段）在声明处必须加注释**；
+        /// **其他变量看实际情况加**（局部变量、for 计数器不强制）；
+        /// 此外只有 **文件开头** 与 **类名 / 方法名前** 必定有注释，**其他地方非必要不加注释**。
         /// </para>
         /// <para>
-        /// ⚠️ 加强版的理由（负责人原话）：**"每个变量名在声明处都要加上注释，不然我看不懂"** ——
-        /// 早先只给字段加了注释，局部变量（`string[] parts` / `int i` 这类）没有，
-        /// 而读代码的人恰恰会在那里卡住。**方法参数**不逐个标（由方法注释承担）。
+        /// ⚠️ 中途一版要求"每个变量名都加注释"，实测下来局部变量会写出一堆
+        /// "照抄代码本身"的废话（`string[] lines = ... // 按行拆开`），
+        /// 于是负责人当天收紧为"成员变量必加、其他看情况"。**这条改动的方向值得记：
+        /// 注释要加在"读的人会卡住"的地方，而不是"有变量的地方"。**
         /// </para>
         /// </summary>
         private static void CodeGen_CommentDensityRule()
@@ -881,20 +882,18 @@ namespace NBC.ConfigKit.SelfTest
             ExportReport report = Export(source);
             Check(report.Succeeded, "应当成功：\n" + Render(report.Diagnostics));
 
-            AssertCommentRule(FileContent(report, "Config_Hero.cs"), "Config_Hero.cs", expectLocalVariables: false);
-            AssertCommentRule(FileContent(report, "HeroConfig.cs"), "HeroConfig.cs", expectLocalVariables: true);
+            AssertCommentRule(FileContent(report, "Config_Hero.cs"), "Config_Hero.cs");
+            AssertCommentRule(FileContent(report, "HeroConfig.cs"), "HeroConfig.cs");
         }
 
         /// <summary>逐行检查生成代码的注释规则。</summary>
         /// <param name="code">生成代码。</param>
         /// <param name="fileName">文件名（报错用）。</param>
-        /// <param name="expectLocalVariables">这个文件里应当有局部变量（用于正对照）。</param>
-        private static void AssertCommentRule(string code, string fileName, bool expectLocalVariables)
+        private static void AssertCommentRule(string code, string fileName)
         {
             string[] lines = code.Replace("\r\n", "\n").Split('\n');
             bool sawNamespace = false;
-            int declarations = 0;
-            int localDeclarations = 0;
+            int memberCount = 0;
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -934,47 +933,47 @@ namespace NBC.ConfigKit.SelfTest
                         "规则：注释只允许在 文件头 / 变量名后 / 类名方法名前");
                 }
 
-                // ② 变量声明必须带**行尾注释** —— 字段、局部变量、for 计数器都算
-                //    （2026-09-22 负责人加强：不只是字段，"每个变量名在声明处都要加注释"）
-                if (IsVariableDeclaration(trimmed))
+                // ② **成员变量**必须带行尾注释；**局部变量看实际情况加**（不强制）
+                if (IsMemberVariable(trimmed))
                 {
-                    declarations++;
-
-                    if (IsLocalVariableDeclaration(trimmed))
-                    {
-                        localDeclarations++;
-                    }
-
+                    memberCount++;
                     Check(line.Contains("//", StringComparison.Ordinal),
-                        $"{fileName} 第 {i + 1} 行的变量声明「{trimmed}」没有行尾注释 —— " +
-                        "规则：每个变量名在声明处都要加注释");
+                        $"{fileName} 第 {i + 1} 行的成员变量「{trimmed}」没有行尾注释 —— " +
+                        "规则：每个成员变量在声明处都要加注释");
                 }
             }
 
-            // ⚠️ 正对照分两种，缺一不可：
-            //    只断言"扫到过字段"是不够的 —— 如果**局部变量的判据坏了**，
-            //    测试照样全绿，而负责人恰恰是在局部变量那里看不懂代码。
-            Check(declarations > 0, $"{fileName} 里一个变量声明都没扫到，检查可能没在工作");
-
-            if (expectLocalVariables)
-            {
-                Check(localDeclarations > 0,
-                    $"{fileName} 里应当有局部变量（string[] / int / for 计数器…），但一个都没扫到 —— " +
-                    "说明**局部变量的判据没在工作**（字段的判据正常不代表这条正常）");
-            }
+            // 正对照：确实扫到了成员变量（否则"全部通过"可能只是没扫到东西）
+            Check(memberCount > 0, $"{fileName} 里一个成员变量都没扫到，检查可能没在工作");
         }
 
-        /// <summary>是不是"局部变量 / for 计数器"（相对于字段而言）。</summary>
-        /// <param name="trimmed">去掉缩进的行。</param>
-        /// <returns>是局部变量吗。</returns>
-        private static bool IsLocalVariableDeclaration(string trimmed)
+        /// <summary>
+        /// 是不是"成员变量"（字段）。
+        /// <para>
+        /// ⚠️ 规则在 2026-09-22 当天改过一次，最终版是：
+        /// **成员变量必加注释；其他变量（局部变量 / for 计数器）看实际情况加。**
+        /// 所以这里**只认字段**，不再把局部变量当成"必须有注释"的对象。
+        /// </para>
+        /// <para>
+        /// ⚠️ 必须先剥掉行尾注释再判断 —— 字段以注释结尾，直接 `EndsWith(";")` 会永远为假
+        /// （自测的正对照当场抓到过这一点）。
+        /// </para>
+        /// </summary>
+        private static bool IsMemberVariable(string trimmed)
         {
             int comment = trimmed.IndexOf("//", StringComparison.Ordinal);
             string code = (comment >= 0 ? trimmed.Substring(0, comment) : trimmed).TrimEnd();
 
-            return !code.StartsWith("public ", StringComparison.Ordinal) &&
-                   !code.StartsWith("private ", StringComparison.Ordinal) &&
-                   !code.StartsWith("internal ", StringComparison.Ordinal);
+            if (!code.StartsWith("public ", StringComparison.Ordinal) &&
+                !code.StartsWith("private ", StringComparison.Ordinal) &&
+                !code.StartsWith("internal ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return code.EndsWith(";", StringComparison.Ordinal) &&
+                   !code.Contains("(", StringComparison.Ordinal) &&
+                   !code.Contains(" class ", StringComparison.Ordinal);
         }
 
         /// <summary>
