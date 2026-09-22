@@ -21,11 +21,24 @@
 //     堵法：先断言**扫到了足够多的文件**（顺带核对文件名清单）。
 //  ② **命中注释**：本项目已经栽过 **6 次**（"机械检查命中注释"）。
 //     堵法：先剥注释再匹配，并且用**阳性对照**证明"违规真的会被抓到"。
+//
+//  ---------------------------------------------------------------------------
+//  ⚠️ 这个文件本身也是一条教训：**阳性对照第一次跑就是红的**（2026-09-22）
+//  ---------------------------------------------------------------------------
+//  负责人跑 Unity 得到"488 绿 1 红"，红的就是本文件的阳性对照：
+//  样例写的是小写 `quest`，而匹配用的是**大小写敏感**的 `Contains("Quest")`。
+//
+//  ⚠️ 关键认识：**红的不是"检查器坏了"，而是"检查器有个洞"**。
+//     真实检查（`ConditionSources_ContainNoBusinessWords`）在改之前一直是**绿的**，
+//     但它漏得掉 `questId` / `questRuntime` 这类驼峰写法 —— 而那正是
+//     "通用层沾上业务词"最常见的形态。
+//     如果当时把样例改成大写去迁就检查器，就等于**用一个假绿盖住一个真洞**。
+//  ✅ 正解：把匹配改成**大小写不敏感**，并让真实检查与阳性对照**走同一个函数**
+//     （两处各写一份匹配逻辑，迟早会不一致）。
 // ============================================================================
 
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -72,13 +85,14 @@ namespace NBC.Tests.EditMode
                 {
                     string code = StripComment(lines[line]);
 
-                    for (int w = 0; w < ForbiddenWords.Length; w++)
+                    // ⚠️ 走同一个 `HasForbiddenWord`（**大小写不敏感**），
+                    //    不要在这里另写一份 `Contains` —— 两处规则不一致，
+                    //    就会出现"阳性对照通过、真实检查有洞"这种最难发现的情况。
+                    //    （第一版正是这样：真实检查用 Contains，漏掉 `questId` 这类驼峰写法。）
+                    if (HasForbiddenWord(code))
                     {
-                        if (code.Contains(ForbiddenWords[w]))
-                        {
-                            offenders.Add(Path.GetFileName(files[i]) + ":" + (line + 1) +
-                                          "  [" + ForbiddenWords[w] + "]  " + code.Trim());
-                        }
+                        offenders.Add(Path.GetFileName(files[i]) + ":" + (line + 1) +
+                                      "  " + code.Trim());
                     }
                 }
             }
@@ -124,14 +138,33 @@ namespace NBC.Tests.EditMode
 
         /// <summary>
         /// **阳性对照**：故意拿一段含业务词的代码喂给同一套规则，必须被判为违规。
-        /// <para>没有这一条的话，"正则写错了"会让上面那条断言**永远通过**。</para>
+        /// <para>没有这一条的话，"正则/匹配写错了"会让上面那条断言**永远通过**。</para>
+        /// <para>
+        /// ⚠️ **这条对照第一次跑的时候是红的**（2026-09-22，负责人跑 Unity 报 488 绿 1 红），
+        /// 原因很值得记：样例写的是小写 `quest`，而匹配用的是**大小写敏感**的 `Contains("Quest")`。
+        /// 也就是说 —— **红的不是"检查器坏了"，而是"检查器有个洞"**：
+        /// 共享层里写个 `questId` / `questRuntime` 变量照样能溜过去，
+        /// 而那正是这条检查要防的东西。
+        /// 正解是**把检查器改成大小写不敏感**（而不是把样例改成大写迁就它）。
+        /// </para>
         /// </summary>
         [Test]
         public void Checker_ActuallyDetectsBusinessWords()
         {
-            Assert.IsTrue(HasForbiddenWord("if (quest != null) { }"), "含 Quest 的代码应当被检出");
+            // 大写形态
+            Assert.IsTrue(HasForbiddenWord("if (Quest != null) { }"), "含 Quest 的代码应当被检出");
             Assert.IsTrue(HasForbiddenWord("AchievementRuntime.OnUnlocked();"), "含 Achievement 应当被检出");
+
+            // ⚠️ 小写 / 驼峰形态（**第一版漏掉的就是这一类**：`questId`、`achievementOf`）
+            Assert.IsTrue(HasForbiddenWord("if (quest != null) { }"),
+                "小写 quest 也应当被检出（大小写不敏感）");
+            Assert.IsTrue(HasForbiddenWord("int questId = 0;"),
+                "驼峰 questId 也应当被检出 —— 这正是\"通用层沾上业务词\"的典型写法");
+            Assert.IsTrue(HasForbiddenWord("AchievementConfig asset;"), "驼峰 Achievement 也应当被检出");
+
+            // 正常代码不该被误报
             Assert.IsFalse(HasForbiddenWord("public readonly struct ConditionDef"), "正常代码不该被误报");
+            Assert.IsFalse(HasForbiddenWord("progress.Current >= def.RequiredCount"), "正常代码不该被误报");
 
             // ⚠️ 注释里的词**不算违规**（本文件顶部的说明里就有这两个词）
             Assert.IsFalse(HasForbiddenWord(StripComment("// QuestRuntime 需要 ConditionTracker")),
@@ -142,14 +175,18 @@ namespace NBC.Tests.EditMode
         //  辅助
         // ====================================================================
 
-        /// <summary>这一行（去掉注释后）含不含违禁词。</summary>
+        /// <summary>这一行（去掉注释后）含不含违禁词（**大小写不敏感**）。</summary>
         /// <param name="code">代码行。</param>
         /// <returns>含就返回 true。</returns>
         private static bool HasForbiddenWord(string code)
         {
             for (int i = 0; i < ForbiddenWords.Length; i++)
             {
-                if (code.Contains(ForbiddenWords[i]))
+                // ⚠️ **必须大小写不敏感**：第一版用的是 `Contains(word)`（大小写敏感），
+                //    于是 `questId` / `questRuntime` 这类驼峰写法会**溜过去** ——
+                //    而那恰恰是"通用层沾上业务词"最常见的形态。
+                //    这个洞是**阳性对照自己红了**才暴露的（见 Checker_ActuallyDetectsBusinessWords）。
+                if (code.IndexOf(ForbiddenWords[i], System.StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     return true;
                 }

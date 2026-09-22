@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 28843371adc4c9243b917a73b1d94bde, type: 3}
+  m_Name: QuestConfig
+  m_EditorClassIdentifier: 
+  rows:
+  - id: 3001
+    name: "\u521D\u6B21\u72E9\u730E"
+    desc: "\u51FB\u6740 3 \u53EA\u91CE\u72FC\uFF0C\u5E76\u5E26\u56DE 2 \u5F20\u72FC\u76AE"
+    conditionIds: a10f0000a20f0000
+    rewardId: 5001
+  - id: 3002
+    name: "\u8349\u836F\u91C7\u96C6"
+    desc: "\u5E2E\u836F\u5E08\u91C7\u96C6 2 \u4EFD\u8349\u836F"
+    conditionIds: a30f0000
+    rewardId: 5002
+  - id: 3003
+    name: "\u68EE\u6797\u6DF1\u5904"
+    desc: "\u62B5\u8FBE\u5E7D\u6697\u68EE\u6797\u5E76\u51FB\u6740\u72FC\u738B"
+    conditionIds: a40f0000a50f0000
+    rewardId: 5003

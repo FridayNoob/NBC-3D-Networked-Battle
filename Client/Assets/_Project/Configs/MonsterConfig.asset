@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2682b5ef2562d6e44b93e8213d856b37, type: 3}
+  m_Name: MonsterConfig
+  m_EditorClassIdentifier: 
+  rows:
+  - id: 6001
+    name: "\u91CE\u72FC"
+    hp: 300
+    attack: 20
+    skillIds: d3070000
+  - id: 6002
+    name: "\u68EE\u6797\u8718\u86DB"
+    hp: 200
+    attack: 15
+    skillIds: d2070000d3070000
+  - id: 6003
+    name: "\u72FC\u738B"
+    hp: 2000
+    attack: 60
+    skillIds: d1070000d2070000
