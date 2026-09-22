@@ -161,71 +161,83 @@ namespace NBC.Tests.EditMode
         /// <summary>
         /// **平均值会掩盖卡顿，最差值不会** —— 这是这一组里最该记住的一条。
         /// <para>
-        /// ⚠️ 这条测试的期望值是**算出来的，不是估的**（第一版我拍了个 `> 55`，
-        /// 结果实际是 50.7 —— 因为 200ms 卡顿在**1 秒窗口**里要掉掉约 9 FPS）。
+        /// ⚠️ 这条测试的期望值是**算出来的**（用 <see cref="WindowFpsWithOneHitch"/>），
+        /// **不是写死的阈值**。第一版我拍了个 `&gt; 55`，实际是 50.7；
+        /// 第二版我从表格里抄了个 `&gt; 59`，实际是 58.92 —— **连着错两次**。
+        /// 结论不是"下次算仔细点"，而是"**断言里根本不该出现拍出来的数字**"。
         /// </para>
         /// <para>
-        /// 算术：5 秒窗口（300 帧）= 299 帧 × 1/60 + 1 帧 × 0.2s = 4.983 + 0.2 = 5.183s
-        /// ⇒ FPS = 300 / 5.183 ≈ 57.9。**平均只掉了 2 FPS**，但那一帧实实在在是 200ms。
-        /// </para>
-        /// <para>
-        /// 📌 窗口越短，单次卡顿越掩盖不住：
-        /// 同样的 200ms 卡顿，在 **1 秒窗口**里会让 FPS 掉到 50.7，在 **5 秒窗口**里只掉到 57.9。
-        /// 所以"看平均"永远只能看出持续性的问题，**突发卡顿必须看最差帧**。
+        /// 算术：5 秒窗口（300 帧）= 299 帧 × 1/60 + 1 帧 × 0.2s = 5.183s ⇒ FPS ≈ 57.88。
+        /// **平均只掉了 2 FPS**，但那一帧实实在在是 200ms。
         /// </para>
         /// </summary>
         [Test]
         public void WorstFrame_ExposesHitchesThatAverageHides()
         {
-            // 5 秒窗口：让"平均"有机会掩盖一次突发卡顿
-            FpsCounter counter = new FpsCounter(windowFrames: 300);
+            const int windowFrames = 300;   // 5 秒窗口：让"平均"有机会掩盖一次突发卡顿
 
-            for (int i = 0; i < 299; i++)
+            FpsCounter counter = new FpsCounter(windowFrames);
+
+            for (int i = 0; i < windowFrames - 1; i++)
             {
                 counter.AddFrame(SixtyFpsFrame);
             }
 
             counter.AddFrame(0.2f);   // 一帧卡了 200ms
 
-            // 算出来的期望：300 / (299/60 + 0.2) ≈ 57.9
-            Assert.Greater(counter.Fps, 57f, "5 秒窗口下，一次 200ms 卡顿只让平均掉约 2 FPS");
-            Assert.Less(counter.Fps, 60f, "但确实掉了一点，不是完全没影响");
+            // ① 实现必须与"算术平均"这个模型一致（不是猜一个阈值，是算出来比对）
+            Assert.AreEqual(WindowFpsWithOneHitch(windowFrames, 0.2f), counter.Fps, 0.05,
+                "滑动窗口算的就是这些帧的算术平均 —— 与模型不符说明实现错了");
 
+            // ② 意图：5 秒窗口下这次卡顿只让平均偏离不到 3 FPS。
+            //    ⚠️ 这里写的是"**主张 + 余量**"（模型值是 2.12，留了 40% 余量），
+            //       而不是"猜一个期望值"—— 后者的教训见类注释。
+            Assert.Less(60.0 - counter.Fps, 3.0, "平均只掉了一点点");
+
+            // ③ 但最差帧必须如实报出来 —— 这正是"平均掩盖卡顿"的对照
             Assert.AreEqual(200f, counter.WorstFrameMilliseconds, 0.1f,
                 "⚠️ 最差帧必须如实报出那次卡顿 —— 光看平均值你会以为一切正常");
         }
 
         /// <summary>
-        /// **窗口长短本身就是一个取舍**，这条把它钉住：
-        /// 窗口短 → 反应快但数字抖；窗口长 → 数字稳但**会把突发卡顿抹平**。
+        /// **窗口长短本身就是一个取舍**：窗口短 → 反应快但数字抖；
+        /// 窗口长 → 数字稳但**会把突发卡顿抹平**。
         /// <para>
-        /// 所以"该用多长的窗口"没有标准答案 —— 但**必须同时看最差帧**，
-        /// 否则长窗口下你会以为一切正常。
+        /// ⚠️ 这条**一个猜出来的期望值都不用** —— 全部用"模型算出来的值"
+        /// 和"两个窗口之间的比值关系"来表达。
         /// </para>
         /// </summary>
         [Test]
         public void WindowLength_TradesResponsivenessAgainstHitchVisibility()
         {
-            // 同一个 200ms 卡顿，分别放进 60 帧窗口和 600 帧窗口
-            float shortWindowFps = FpsWithOneHitch(windowFrames: 60);
-            float longWindowFps = FpsWithOneHitch(windowFrames: 600);
+            const int shortWindow = 60;     // ≈ 1 秒
+            const int longWindow = 600;     // ≈ 10 秒
 
-            // 60 帧 ≈ 1 秒：卡顿占掉 1/6 的时间 → 掉到约 50.7
-            Assert.AreEqual(50.7f, shortWindowFps, 0.2f);
+            float shortFps = MeasureOneHitch(shortWindow);
+            float longFps = MeasureOneHitch(longWindow);
 
-            // 600 帧 ≈ 10 秒：卡顿只占 2% → 平均几乎看不出来
-            Assert.Greater(longWindowFps, 59f, "长窗口下平均值几乎看不出这次卡顿");
+            // ① 实现与模型一致
+            Assert.AreEqual(WindowFpsWithOneHitch(shortWindow, 0.2f), shortFps, 0.05,
+                "短窗口的算法与模型不符");
+            Assert.AreEqual(WindowFpsWithOneHitch(longWindow, 0.2f), longFps, 0.05,
+                "长窗口的算法与模型不符");
 
-            Assert.Less(shortWindowFps, longWindowFps,
-                "窗口越短，单次卡顿在平均里占比越大、越藏不住");
+            // ② 关系：窗口越长，同一次卡顿对平均的影响越小
+            Assert.Less(shortFps, longFps, "窗口越短，单次卡顿在平均里占比越大、越藏不住");
+
+            // ③ 意图用**比值**表达：长窗口的偏离应当远小于短窗口
+            //    （实测约 9.3 : 1.1 ≈ 8.6 倍，这里要求 > 5 倍，留了余量）
+            double shortDeviation = 60.0 - shortFps;
+            double longDeviation = 60.0 - longFps;
+
+            Assert.Greater(shortDeviation / longDeviation, 5.0,
+                "长窗口的偏离应当远小于短窗口。实测 short=" + shortFps + " long=" + longFps);
         }
 
-        /// <summary>
-        /// 造一个"满是 60 FPS 的帧 + 最后卡一帧 200ms"的序列，返回平均 FPS。
-        /// </summary>
+        /// <summary>喂满一个窗口（最后卡一帧 200ms），返回平均 FPS。</summary>
         /// <param name="windowFrames">窗口帧数。</param>
         /// <returns>平均 FPS。</returns>
-        private static float FpsWithOneHitch(int windowFrames)
+        private static float MeasureOneHitch(int windowFrames)
         {
             FpsCounter counter = new FpsCounter(windowFrames);
 
@@ -237,6 +249,23 @@ namespace NBC.Tests.EditMode
             counter.AddFrame(0.2f);
 
             return counter.Fps;
+        }
+
+        /// <summary>
+        /// 一个滑动窗口在"全是 60 FPS 的帧 + 最后一帧卡顿"下的**算术平均**。
+        /// <para>
+        /// 这是**独立于实现的模型**（就是"帧数 ÷ 总耗时"），
+        /// 用它当期望值，比拍一个阈值可靠得多。
+        /// </para>
+        /// </summary>
+        /// <param name="windowFrames">窗口帧数。</param>
+        /// <param name="hitchSeconds">最后一帧的耗时（秒）。</param>
+        /// <returns>期望的平均 FPS。</returns>
+        private static double WindowFpsWithOneHitch(int windowFrames, float hitchSeconds)
+        {
+            double sum = (windowFrames - 1) * (double)SixtyFpsFrame + hitchSeconds;
+
+            return windowFrames / sum;
         }
 
         /// <summary>`Reset` 之后回到初始状态。</summary>
