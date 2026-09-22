@@ -1057,46 +1057,65 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>
-        /// **只有** `ConfigKit.Sources.Xlsx` 允许引第三方依赖。
+        /// **生产代码（`src/`）里只有 `ConfigKit.Sources.Xlsx` 允许引第三方依赖。**
         /// <para>
         /// 这条守卫守的是"接缝优先"的核心收益：**最难搞的依赖被隔离在一个叶子里** ——
         /// 所以 NPOI 没还原时，Core / Delimited / Cli / 自测**照常构建、照常能跑**。
         /// 一旦有人往别的工程顺手加个包，这条就红。
         /// </para>
+        /// <para>
+        /// ⚠️ **`tests/` 下的探针不受这条限制**，而且必须有例外：
+        /// `ConfigKit.XlsxProbe` 的职责就是"**用 NPOI 造一个真 .xlsx** 来喂适配器"，
+        /// 没有 NPOI 它就不是探针了。规则要写准 —— 上一版写成"全仓库恰好一个"，
+        /// 探针一加进来就红（守卫抓的是真事，但判据太粗）。
+        /// </para>
         /// </summary>
         private static void OnlyXlsxMayUseThirdParty()
         {
             const string allowed = "ConfigKit.Sources.Xlsx";
+            const string allowedProbe = "ConfigKit.XlsxProbe";
+
             List<string> projects = FindAllProjects();
-            List<string> withPackages = new List<string>();
-            List<string> offenders = new List<string>();
+            List<string> srcProjects = new List<string>();
+            List<string> srcWithPackages = new List<string>();
+            List<string> testWithPackages = new List<string>();
 
             for (int i = 0; i < projects.Count; i++)
             {
                 string code = StripXmlComments(File.ReadAllText(projects[i], Encoding.UTF8));
-
-                if (!Regex.IsMatch(code, "<PackageReference\\s+Include=", RegexOptions.IgnoreCase))
-                {
-                    continue;
-                }
-
+                bool hasPackage = Regex.IsMatch(code, "<PackageReference\\s+Include=", RegexOptions.IgnoreCase);
                 string name = Path.GetFileNameWithoutExtension(projects[i]);
-                withPackages.Add(name);
+                bool isSrc = projects[i].IndexOf("\\src\\", StringComparison.OrdinalIgnoreCase) >= 0;
 
-                if (name != allowed)
+                if (isSrc)
                 {
-                    offenders.Add(name);
+                    srcProjects.Add(name);
+
+                    if (hasPackage)
+                    {
+                        srcWithPackages.Add(name);
+                    }
+                }
+                else if (hasPackage)
+                {
+                    testWithPackages.Add(name);
                 }
             }
 
-            // ⚠️ 正对照：先确认"扫到了工程、也扫到了 Xlsx 那一个"。
+            // ⚠️ 正对照：先确认"扫到了生产工程、也扫到了 Xlsx 那一个"。
             //    否则"恰好一个引第三方"可能只是"一个都没扫到"这种假绿。
-            Check(projects.Count >= 5, $"只扫到 {projects.Count} 个工程，明显不对（是不是路径找错了）");
-            Check(withPackages.Contains(allowed),
-                $"没扫到 {allowed} 的第三方依赖 —— 守卫可能压根没工作。扫到的：{string.Join(", ", withPackages)}");
-            CheckEqual(1, withPackages.Count,
-                $"应当**恰好一个**工程引第三方，实际 {withPackages.Count} 个：{string.Join(", ", withPackages)}");
-            Check(offenders.Count == 0, $"这些工程不该引第三方：{string.Join(", ", offenders)}");
+            Check(srcProjects.Count >= 4, $"只扫到 {srcProjects.Count} 个生产工程，明显不对（是不是路径找错了）");
+            Check(srcWithPackages.Contains(allowed),
+                $"没扫到 {allowed} 的第三方依赖 —— 守卫可能压根没工作。扫到的：{string.Join(", ", srcWithPackages)}");
+
+            CheckEqual(1, srcWithPackages.Count,
+                $"生产代码里只允许 {allowed} 引第三方，实际 {srcWithPackages.Count} 个：{string.Join(", ", srcWithPackages)}");
+
+            for (int i = 0; i < testWithPackages.Count; i++)
+            {
+                Check(testWithPackages[i] == allowedProbe,
+                    $"{testWithPackages[i]} 不该引第三方（只有负责造 xlsx 的探针 {allowedProbe} 可以）");
+            }
         }
 
         /// <summary>把诊断全部渲染出来（测试失败时给人看）。</summary>

@@ -70,7 +70,7 @@ namespace NBC.ConfigKit.Cli
                 new CSharpConfigEmitter(),
                 new EmitOptions { Namespace = options.Namespace });
 
-            ITableSource source = new DelimitedTableSource(options.SourceDirectory);
+            ITableSource source = CreateSource(options);
 
             ExportReport report = pipeline.Run(source);
 
@@ -107,6 +107,42 @@ namespace NBC.ConfigKit.Cli
             return 0;
         }
 
+        /// <summary>
+        /// 按 format 参数选来源；auto（默认）看目录里有什么。
+        /// <para>
+        /// ⚠️ 这就是"接缝①"在命令行上的样子：**加一种来源只改这一处**，
+        /// 读表/校验/生成一行都不用动。
+        /// </para>
+        /// </summary>
+        private static ITableSource CreateSource(Options options)
+        {
+            string format = options.Format ?? "auto";
+
+            if (format == "csv")
+            {
+                return new DelimitedTableSource(options.SourceDirectory, DelimiterKind.Comma);
+            }
+
+            if (format == "tsv")
+            {
+                return new DelimitedTableSource(options.SourceDirectory, DelimiterKind.Tab);
+            }
+
+            if (format == "xlsx")
+            {
+                return new XlsxTableSource(options.SourceDirectory);
+            }
+
+            // auto：目录里有 .xlsx 就用 xlsx，否则按分隔符文本
+            if (Directory.Exists(options.SourceDirectory) &&
+                Directory.GetFiles(options.SourceDirectory, "*.xlsx").Length > 0)
+            {
+                return new XlsxTableSource(options.SourceDirectory);
+            }
+
+            return new DelimitedTableSource(options.SourceDirectory, DelimiterKind.Comma);
+        }
+
         /// <summary>统一换行成 LF（跨平台 + diff 稳定）。</summary>
         private static string NormalizeNewLines(string text)
         {
@@ -116,13 +152,16 @@ namespace NBC.ConfigKit.Cli
         /// <summary>命令行参数。</summary>
         private sealed class Options
         {
-            public const string Usage = @"ConfigKit —— Excel/CSV 配置表工具
+            public const string Usage = @"ConfigKit —— 配置表工具（.xlsx / .csv / .tsv → 强类型 C#）
 
 用法：
-  ConfigKit.Cli --source <表目录> [--out <生成目录>] [--ns <命名空间>] [--check]
+  ConfigKit.Cli --source <表目录> [--out <生成目录>] [--format <auto|xlsx|csv|tsv>] [--ns <命名空间>] [--check]
 
 参数：
-  --source <目录>     必填。放 .csv / .tsv 的目录（**文件名 = 表名**）
+  --source <目录>     必填。表所在目录
+                        · .xlsx：**一个 sheet = 一张表**（表名 = sheet 名）
+                        · .csv/.tsv：**文件名 = 表名**
+  --format <格式>     auto（默认，看目录里有什么）/ xlsx / csv / tsv
   --out <目录>        生成目录。默认 Assets/_Project/Game/Config/Generated
   --ns <命名空间>     生成代码的命名空间。默认 NBC.Game.Config
   --check             只校验，不写文件
@@ -133,11 +172,14 @@ namespace NBC.ConfigKit.Cli
 
 说明：
   · 约定与校验规则见 Docs\17-配置表规范.md
-  · `.xlsx` 来源需要先还原 NPOI：dotnet restore Tools\ConfigKit\ConfigKit.sln";
+  · ⚠️ `.csv` 里**含逗号的格子必须用双引号包起来**（如 ""range(1,10)""、""2001,2002""）——
+    否则会被逗号拆成两格。`.xlsx` 没有这个问题
+  · 需要一张格式正确的示例表：ConfigKit.XlsxProbe.exe --emit <目录>";
 
             public string SourceDirectory = string.Empty;
             public string OutputDirectory = "Assets/_Project/Game/Config/Generated";
             public string Namespace = "NBC.Game.Config";
+            public string Format;
             public bool CheckOnly;
             public bool ShowHelp;
 
@@ -183,6 +225,22 @@ namespace NBC.ConfigKit.Cli
                             if (!TryNext(args, ref i, out options.Namespace))
                             {
                                 error = "--ns 后面要跟一个命名空间";
+                                return false;
+                            }
+
+                            continue;
+
+                        case "--format":
+                            if (!TryNext(args, ref i, out options.Format))
+                            {
+                                error = "--format 后面要跟 auto / xlsx / csv / tsv";
+                                return false;
+                            }
+
+                            if (options.Format != "auto" && options.Format != "xlsx" &&
+                                options.Format != "csv" && options.Format != "tsv")
+                            {
+                                error = "不认识的格式 " + options.Format + "（只支持 auto / xlsx / csv / tsv）";
                                 return false;
                             }
 

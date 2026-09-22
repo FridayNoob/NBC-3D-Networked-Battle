@@ -48,6 +48,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using NPOI.SS.UserModel;
 using NPOI.SS.Util;
@@ -193,7 +194,7 @@ namespace NBC.ConfigKit.Sources
                 for (int c = 0; c < columnCount; c++)
                 {
                     ICell cell = row == null ? null : row.GetCell(c);   // ⑧
-                    string text = cell == null ? string.Empty : formatter.FormatCellValue(cell);
+                    string text = cell == null ? string.Empty : TextOf(cell, formatter);
                     RawCellFlags flags = RawCellFlags.None;
 
                     if (IsFormula(cell))
@@ -219,6 +220,40 @@ namespace NBC.ConfigKit.Sources
         private static bool IsFormula(ICell cell)
         {
             return cell != null && cell.CellType == CellType.Formula;
+        }
+
+        /// <summary>
+        /// 取一个格子的文本。
+        /// <para>
+        /// ⚠️ **数值格走"数值"路径，不走 `DataFormatter`**（这一条是被 XlsxProbe 逼出来的）：
+        /// `DataFormatter` 按**单元格的显示格式**转文本 —— 策划把 `hp` 列格式设成 `0.00` 时，
+        /// 值 `1200` 会变成 `"1200.00"`，于是 `int` 解析失败，
+        /// 报一个**看起来像工具 bug** 的错（其实是格式问题）。
+        /// 配置表里的数字是**数值**，不是"显示成什么样"，所以这里取数值本身。
+        /// </para>
+        /// <para>代价如实记下：Excel 里**日期**也是 Numeric，会得到序列号（如 `45000`）
+        /// 而不是日期文本。本规范的类型系统里没有日期（`Docs\17` §四），所以不构成问题。</para>
+        /// </summary>
+        private static string TextOf(ICell cell, DataFormatter formatter)
+        {
+            if (cell.CellType == CellType.Numeric)
+            {
+                double value = cell.NumericCellValue;
+
+                // 整数值 → 给整数文本（`1200.0` 要变成 `1200`，不能是 `1200`）
+                if (value == Math.Floor(value) && !double.IsInfinity(value) && Math.Abs(value) < 9.2e18)
+                {
+                    return ((long)value).ToString(CultureInfo.InvariantCulture);
+                }
+
+                return value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            // 字符串 / 布尔（TRUE|FALSE）/ 公式 / 错误值 / 空格
+            // ⚠️ 公式格的文本**实测**可能是**公式原文**（如 `1+1`）而不是缓存值
+            //    （NPOI 写出的公式没有缓存结果时就是这样）。两种都会被上层按
+            //    CFG0016 拦下，所以**不影响结果** —— 但注释别写成"一定是缓存值"。
+            return formatter.FormatCellValue(cell);
         }
 
         /// <summary>把所有合并区域里的格子收进一个集合（⑪⑫）。</summary>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.XlsxProbe —— xlsx 适配器的【可复现验证探针】
+       ⚠️ 它【故意】不在零依赖的 SelfTest 里：SelfTest 要能在"没还原 NPOI"时照跑，
+          而本工程**必须**有 NPOI（它要用 NPOI **造**一个真 .xlsx 来喂适配器）。
+          这与 Server\_api-probe / _unity-ref-probe 是同一个套路：
+          **能让你自己重跑一遍、亲眼看到结果，比只看文档结论有价值。**
+       ⚠️ 它是【宿主】，放开到 net8.0 + C# 12
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>NBC.ConfigKit.XlsxProbe</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.XlsxProbe</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 探针用 NPOI **造** 文件；适配器工程用它**读**文件 -->
+    <PackageReference Include="NPOI" Version="2.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ConfigKit.Core\ConfigKit.Core.csproj" />
+    <ProjectReference Include="..\..\src\ConfigKit.Sources.Xlsx\ConfigKit.Sources.Xlsx.csproj" />
+  </ItemGroup>
+
+</Project>

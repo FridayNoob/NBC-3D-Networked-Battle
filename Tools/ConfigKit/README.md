@@ -166,24 +166,110 @@ dotnet run --project Tools/ConfigKit/tests/ConfigKit.SelfTest
 dotnet restore Tools\ConfigKit\ConfigKit.sln
 ```
 
-⚠️ **还原之前**：`ConfigKit.Sources.Xlsx` 这个**一个**工程构建不了（`NU1301`），
-**其余全部照常**（Core / Delimited / Cli / 自测都验过）。所以：
+⚠️ **还原之前**：`ConfigKit.Sources.Xlsx` 构建不了（`NU1301`）。
+**还原之后**（2026-09-22 已完成）：全部可构建，xlsx 路径可用。
 
 | 命令 | 还原前 | 还原后 |
 | --- | --- | --- |
 | `dotnet build ...\ConfigKit.SelfTest\...csproj` | ✅ | ✅ |
-| `dotnet build ...\ConfigKit.Cli\...csproj` | ✅ | ✅ |
+| `dotnet build ...\ConfigKit.Cli\...csproj` | ✅ | ✅（见下） |
 | `dotnet build Tools\ConfigKit\ConfigKit.sln` | ❌（含 Xlsx） | ✅ |
 | `dotnet build ...\ConfigKit.Sources.Xlsx\...csproj` | ❌ NU1301 | ✅ |
 
-> 📌 **这就是"接缝优先"的直接回报**：最难搞的依赖被隔离在一个**叶子**里，
-> 所以"没还原 NPOI"这件事**不会阻塞其他任何工作**。
-> 这条由自测里的架构守卫机械保证（`只有 Sources.Xlsx 允许引第三方`）。
+> ⚠️ **一个诚实的更正**：还原之后 `ConfigKit.Cli` 会**间接**依赖 NPOI ——
+> 因为它是**组合根**（唯一"允许认识所有适配器"的地方），`--format xlsx` 就在它里面。
+> 所以"没还原 NPOI 时 Cli 也能构建"这句话**只在加 xlsx 之前成立**。
+> **Core / Delimited / SelfTest 仍然零依赖**（SelfTest 40 条不碰 NPOI 也能跑）。
 
-⚠️ `XlsxTableSource.cs` 是**在 NPOI 还没还原时写的**，所以它**尚未被编译器验证**。
-为了让那一次编译尽量一次过，文件头里逐条列了它用到的 **12 个 NPOI 成员**
-（`ICell.CellType`、`DataFormatter.FormatCellValue`、`NumMergedRegions` …）。
-还原之后若有个别 API 出入，**改动只会落在那一个文件里**。
+### ⚠️ NPOI 2.8.0 的 license：**这条要你决定**（我没有替你接受）
+
+构建时会有一条警告：
+
+```
+warning : NPOI: You must accept the OSMF EULA license to use NPOI.
+          Add <AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense> to your project file.
+```
+
+| | |
+| --- | --- |
+| **它是什么** | NPOI 2.8.0 引入了 **OSMF**（一个 OOXML 相关组件），它带**自己的 EULA**，要求使用方显式接受 |
+| **它挡住什么了** | **什么都没挡**。实测 `NPOI.targets` 里只是一个 `<Warning>` 任务（`AcceptNPOIOSMFLicense` 默认 `false` 就发警告），**不影响构建、不影响运行** |
+| **为什么我没替你加** | `Docs\05-依赖清单.md` 里 T1 选 NPOI 的**全部理由就是许可宽松**（Apache-2.0，为此还否掉了 EPPlus）。**接受一个 EULA 是负责人的决定，不是我的** |
+| **你要做的** | 要么读一遍 OSMF 的 EULA 后同意，然后在那两个 csproj 里加 `<AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense>`；要么就让它继续警告 |
+
+### 📌 实测：NPOI 2.8.0 拉进来 **27 个包**（含原生库）
+
+`project.assets.json` 实测的传递依赖（值得记进 `Docs\05`）：
+
+```
+NPOI 2.8.0
+├── BouncyCastle.Cryptography 2.6.2      ├── ExtendedNumerics.BigDecimal …
+├── Enums.NET 5.0.0                      ├── MathNet.Numerics.Signed 5.0.0
+├── SharpZipLib 1.4.2                    ├── Microsoft.IO.RecyclableMemoryStream 3.0.1
+├── ZString 2.6.0                        ├── System.Security.Cryptography.Pkcs / Xml / Cng …
+└── **SkiaSharp 3.119.2 + NativeAssets（Win32 / macOS / Linux）** ← 原生二进制
+```
+
+📌 **这条实测正好证明当初的架构选择是对的**：`Docs\05` §T1 的备注里写过
+"若在 Unity 侧使用遇到依赖问题，备选方案是把 Excel 读取放到 .NET 控制台工具里"——
+现在有了硬数据：**把 NPOI 放进 Unity 意味着把 27 个包（含 SkiaSharp 原生库）搬进
+`Assets/Plugins`**，还得处理各平台原生库的导入设置。
+而方案 A（.NET 工具 + Unity 只读产物）**一个包都不用进 Unity**。
+
+---
+
+## 六之二、xlsx 路径怎么跑（2026-09-22 起可用）
+
+```powershell
+# 先构建（Cli 现在间接依赖 NPOI）
+dotnet build Tools\ConfigKit\src\ConfigKit.Cli\ConfigKit.Cli.csproj -m:1
+
+# ① 造一张「格式完全合规」的示例表（顺便也是探针的测试夹具）
+Tools\ConfigKit\tests\ConfigKit.XlsxProbe\bin\Debug\net8.0\NBC.ConfigKit.XlsxProbe.exe `
+    --emit .dsh-tmp\xlsx-demo
+
+# ② 跑真 xlsx（--format auto 会自己识别目录里有没有 .xlsx）
+Tools\ConfigKit\src\ConfigKit.Cli\bin\Debug\net8.0\NBC.ConfigKit.Cli.exe `
+    --source .dsh-tmp\xlsx-demo --out Client\Assets\_Project\Game\Config\Generated --check
+```
+
+**xlsx 与 csv 的差别（一张表）**：
+
+| | `.xlsx` | `.csv` / `.tsv` |
+| --- | --- | --- |
+| 表名来自 | **sheet 名**（一个 sheet = 一张表） | **文件名** |
+| 一个文件几张表 | 多张 | 一张 |
+| 含逗号的格子 | 没问题（单元格就是单元格） | **必须加双引号** |
+| 公式 / 合并单元格 | **能检测到**并报 CFG0016 | 不存在这两种情况 |
+| 锁文件 `~$…` | 跳过（实测验证） | 不适用 |
+
+### xlsx 适配器的可复现探针
+
+```
+Tools\ConfigKit\tests\ConfigKit.XlsxProbe\bin\Debug\net8.0\NBC.ConfigKit.XlsxProbe.exe
+```
+
+它**用 NPOI 造真文件**来喂适配器，验 9 件事：多 sheet → 多表、**数值显示格式不影响解析**、
+公式/合并 → CFG0016、锁文件跳过（**带正对照**）、报错定位是 Excel 真实行号 + 字母列号、
+整批有错不产出。**退出码 0 = 全绿。**
+
+---
+
+## 七、进度
+
+| 步骤 | 状态 |
+| --- | --- |
+| 骨架 + 统一构建属性（netstandard2.1 / C# 9 约束） | ✅ 2026-09-22 |
+| `ConfigKit.Core`：诊断 / 位置 / 表模型 / 表头解析 / 校验引擎 / 策略 | ✅ |
+| `ConfigKit.Sources.Delimited`（CSV / TSV） | ✅ |
+| `ConfigKit.SelfTest`（自测运行器 + 架构守卫） | ✅ **40 条全绿**（零依赖） |
+| `ConfigKit.Core` 代码生成（`Config_*.cs` + `<表>Config.cs`） | ✅ |
+| `ConfigKit.Cli`（命令行 + 退出码 0/1/2 + `--format`） | ✅ |
+| `ConfigKit.Sources.Xlsx`（NPOI） | ✅ **9 条探针全绿**（真 xlsx 读写） |
+| `ConfigKit.XlsxProbe`（可复现验证探针 + 示例表生成） | ✅ |
+| `ITableEmitter` 的 JSON 实现 | ⏳ |
+| Unity 侧薄导入器（读生成物 → 建 `.asset`） | ⏳ **下一步** |
+| 3 张种子表（`Hero`/`Skill`/`Level`） | ⏳ |
 
 ---
 

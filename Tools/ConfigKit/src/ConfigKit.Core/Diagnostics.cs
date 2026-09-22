@@ -313,15 +313,31 @@ namespace NBC.ConfigKit
         }
 
         /// <summary>
-        /// 按"位置"排序（文件 → 表 → 行 → 列），方便人从上往下改。
-        /// <para>用**稳定排序**：同一格的错误保持产生顺序（否则每次跑输出顺序会变，没法 Diff）。</para>
+        /// 按"位置"排序（文件 → 表 → 行 → 列），**就地改动本集合**。
+        /// <para>⚠️ 用**稳定排序**：同一格的错误保持产生顺序（否则每次跑输出顺序会变，没法 Diff）。</para>
+        /// <para>⚠️ 只在你**拥有**这个集合时调用它。要"看一眼排好序的"请用
+        /// <see cref="SortedByLocation"/> —— 报告类代码**不该改数据**。</para>
         /// </summary>
         public void SortByLocation()
         {
+            m_items.Sort(CompareByLocation);
+        }
+
+        /// <summary>
+        /// 按位置排序后的**副本**（不改动本集合）。
+        /// <para>
+        /// ⚠️ 这个方法是被 XlsxProbe 逼出来的：报告渲染原先调的是 <see cref="SortByLocation"/>，
+        /// 于是"调用方一边 `foreach` 遍历 `Items`、一边调 `Render`"会当场抛
+        /// `Collection was modified`。**一个"输出报告"的方法去改输入数据是设计错误** ——
+        /// 它让 Render 变成非幂等的，还给了调用方一个很难查的雷。
+        /// </para>
+        /// </summary>
+        /// <returns>排好序的副本。</returns>
+        public IReadOnlyList<Diagnostic> SortedByLocation()
+        {
             List<Diagnostic> sorted = new List<Diagnostic>(m_items);
             sorted.Sort(CompareByLocation);
-            m_items.Clear();
-            m_items.AddRange(sorted);
+            return sorted;
         }
 
         /// <summary>稳定比较：位置相同则保持原顺序。</summary>

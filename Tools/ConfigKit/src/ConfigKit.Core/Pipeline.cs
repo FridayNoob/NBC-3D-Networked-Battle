@@ -123,11 +123,14 @@ namespace NBC.ConfigKit
             {
                 builder.AppendLine();
                 builder.AppendLine("--- 问题 ---");
-                Diagnostics.SortByLocation();
 
-                for (int i = 0; i < Diagnostics.Items.Count; i++)
+                // ⚠️ 用**副本**排序：报告方法不改数据（踩过：就地排序会让调用方
+                //    一边遍历 Items 一边调 Render 时抛 Collection was modified）
+                IReadOnlyList<Diagnostic> sorted = Diagnostics.SortedByLocation();
+
+                for (int i = 0; i < sorted.Count; i++)
                 {
-                    builder.AppendLine(actual.Format(Diagnostics.Items[i]));
+                    builder.AppendLine(actual.Format(sorted[i]));
                 }
             }
 

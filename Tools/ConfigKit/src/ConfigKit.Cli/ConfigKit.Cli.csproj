@@ -18,8 +18,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- ⚠️ Cli 是「组合根」（composition root）：唯一"允许认识所有适配器"的地方。
+         代价如实记下：从此 Cli 会**间接**依赖 NPOI，所以"没还原 NPOI 时 Cli 也能构建"
+         这句话不再成立（Core / Delimited / SelfTest 仍然成立，它们零依赖）。
+         换来的是：source 参数可以直接指向一个 .xlsx 目录。 -->
     <ProjectReference Include="..\ConfigKit.Core\ConfigKit.Core.csproj" />
     <ProjectReference Include="..\ConfigKit.Sources.Delimited\ConfigKit.Sources.Delimited.csproj" />
+    <ProjectReference Include="..\ConfigKit.Sources.Xlsx\ConfigKit.Sources.Xlsx.csproj" />
   </ItemGroup>
 
 </Project>
