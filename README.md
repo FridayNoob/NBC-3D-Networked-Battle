@@ -56,6 +56,7 @@
 | **A10** | 通用状态机（`StateMachine` / `HierarchicalStateMachine`） | 新写 FW-M14（原框架没有）：**纯 C# 零 UnityEngine 依赖**（帧同步前提）、帧驱动、分层约束 | EditMode 42（含 FSM-09 机械检查：不许出现 `MonoBehaviour` 或协程或 `Time.deltaTime`） |
 | **D1** | 双端共享层（`NBC.Shared`） | 新写：**唯一源码在 Unity 侧**，服务端 `Compile Include` 引用它。⭐ 顺带消掉一个真隐患：服务端原本允许 C# 10 而 Unity 只到 C# 9 | EditMode 8（机械保证：asmdef 设置、不许有 `UnityEngine`、服务端目录不许存 .cs、`LangVersion` 必须 9.0） |
 | **D2** | 确定性定点数学（`Fix64` / `FixVector3` / `FixMath`） | 新写 FW-M16：**Q32.32 定点 + CORDIC 三角**，位级别可复现。⭐ 附**数值对拍探针**（随机几百万组与 `double` 对拍，量出误差） | EditMode 65（含 4 条机械守卫：不许有 BCL 数学调用 / 浮点只许在转换边界 / 不许有 `UnityEngine`） |
+| **E2** | 日志系统（`LogSystem`） | 新写 FW-M11：**分级 + 频道开关 + 文件落盘（滚动）+ 环形缓冲** | EditMode 36 |
 | **B3** | YooAsset 初始化与运行模式 | 同上（运行期验证） | PlayMode 41（**编辑器模拟模式下真的加载到资源并断言了内容**） |
 | **A11** | 分层方向的机械校验 | FW-12 框架与业务耦合 | EditMode 5（含**阳性对照**，防止断言假绿） |
 
