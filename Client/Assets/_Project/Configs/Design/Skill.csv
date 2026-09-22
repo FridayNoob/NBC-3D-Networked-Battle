@@ -1,0 +1,7 @@
+id,name,damage,damageType,hitFrames
+编号,名称,伤害（点）,伤害类型,命中帧
+int,string,int,enum:EDamageType,int[]
+key,"len(1,16)","range(1,99999)",,
+2001,火球,100,Fire,"3,5"
+2002,冰箭,80,Ice,"4,8"
+2003,穿心箭,120,Physical,"6,12"

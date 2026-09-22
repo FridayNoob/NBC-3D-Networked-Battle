@@ -1,3 +1,4 @@
-id	name	hp	moveSpeed	skillIds
-1001	剑士	1200	5000	2001,2002
-1002	法师	800	4800	2002
+id	name	hp	moveSpeed	critRatePerTenThousand	camDist	skillIds
+1001	剑士	1200	5000	1500	8.5	2001,2002
+1002	法师	800	4800	500	9.0	2003
+1003	弓手	900	5200	2500	7.5	2002,2003

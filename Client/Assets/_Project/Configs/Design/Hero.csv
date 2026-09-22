@@ -1,0 +1,7 @@
+id,name,hp,moveSpeed,critRatePerTenThousand,camDist,skillIds
+编号,名称,生命值（点）,移动速度（毫米/秒）,暴击率（万分比）,相机距离（米）,技能列表
+int,string,int,int,int,float,ref:Skill[]
+key,"len(1,16)","range(1,999999)","min(0)","range(0,10000)",view,
+1001,剑士,1200,5000,1500,8.5,"2001,2002"
+1002,法师,800,4800,500,9.0,2003
+1003,弓手,900,5200,2500,7.5,"2002,2003"

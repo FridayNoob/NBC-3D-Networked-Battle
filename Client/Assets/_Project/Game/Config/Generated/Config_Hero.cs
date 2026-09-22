@@ -12,8 +12,10 @@ namespace NBC.Game.Config
     {
         public int id;  // 编号（int）
         public string name;  // 名称（string）
-        public int hp;  // 生命值（int）
+        public int hp;  // 生命值（点）（int）
         public int moveSpeed;  // 移动速度（毫米/秒）（int）
+        public int critRatePerTenThousand;  // 暴击率（万分比）（int）
+        public float camDist;  // 相机距离（米）（float）
         public int[] skillIds;  // 技能列表（ref:Skill[]）
     }
 }

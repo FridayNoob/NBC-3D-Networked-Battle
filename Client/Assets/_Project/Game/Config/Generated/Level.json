@@ -1,0 +1,9 @@
+{
+  "table": "Level",
+  "fields": ["id", "sceneName", "displayName", "monsterWaves", "timeLimitSeconds", "bossSkillId"],
+  "rows": [
+    { "id": 1, "sceneName": "Level_01", "displayName": "新手村", "monsterWaves": 3, "timeLimitSeconds": 300, "bossSkillId": 0 },
+    { "id": 2, "sceneName": "Level_02", "displayName": "幽暗森林", "monsterWaves": 5, "timeLimitSeconds": 600, "bossSkillId": 2001 },
+    { "id": 3, "sceneName": "Level_03", "displayName": "火焰峡谷", "monsterWaves": 8, "timeLimitSeconds": 900, "bossSkillId": 2003 }
+  ]
+}

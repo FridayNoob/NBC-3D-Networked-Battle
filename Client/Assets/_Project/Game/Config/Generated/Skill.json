@@ -1,8 +1,9 @@
 {
   "table": "Skill",
-  "fields": ["id", "name", "damage"],
+  "fields": ["id", "name", "damage", "damageType", "hitFrames"],
   "rows": [
-    { "id": 2001, "name": "火球", "damage": 100 },
-    { "id": 2002, "name": "冰箭", "damage": 80 }
+    { "id": 2001, "name": "火球", "damage": 100, "damageType": "Fire", "hitFrames": [ 3, 5 ] },
+    { "id": 2002, "name": "冰箭", "damage": 80, "damageType": "Ice", "hitFrames": [ 4, 8 ] },
+    { "id": 2003, "name": "穿心箭", "damage": 120, "damageType": "Physical", "hitFrames": [ 6, 12 ] }
   ]
 }

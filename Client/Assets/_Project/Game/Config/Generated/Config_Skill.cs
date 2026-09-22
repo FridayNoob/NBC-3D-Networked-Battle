@@ -12,6 +12,8 @@ namespace NBC.Game.Config
     {
         public int id;  // 编号（int）
         public string name;  // 名称（string）
-        public int damage;  // 伤害（int）
+        public int damage;  // 伤害（点）（int）
+        public EDamageType damageType;  // 伤害类型（enum:EDamageType）
+        public int[] hitFrames;  // 命中帧（int[]）
     }
 }

@@ -1,0 +1,4 @@
+id	sceneName	displayName	monsterWaves	timeLimitSeconds	bossSkillId
+1	Level_01	新手村	3	300	
+2	Level_02	幽暗森林	5	600	2001
+3	Level_03	火焰峡谷	8	900	2003

@@ -1,0 +1,7 @@
+id,sceneName,displayName,monsterWaves,timeLimitSeconds,bossSkillId
+编号,场景名(唯一),显示名(给玩家看),怪物波数,时限（秒）,首领技能（可空）
+int,string,string,int,int,ref:Skill?
+key,"len(1,32);unique","len(1,16)","range(1,20)","min(0)",
+1,Level_01,新手村,3,300,
+2,Level_02,幽暗森林,5,600,2001
+3,Level_03,火焰峡谷,8,900,2003

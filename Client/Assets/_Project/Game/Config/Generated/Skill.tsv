@@ -1,3 +1,4 @@
-id	name	damage
-2001	火球	100
-2002	冰箭	80
+id	name	damage	damageType	hitFrames
+2001	火球	100	Fire	3,5
+2002	冰箭	80	Ice	4,8
+2003	穿心箭	120	Physical	6,12

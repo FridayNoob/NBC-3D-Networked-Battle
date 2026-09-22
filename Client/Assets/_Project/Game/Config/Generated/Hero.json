@@ -1,8 +1,9 @@
 {
   "table": "Hero",
-  "fields": ["id", "name", "hp", "moveSpeed", "skillIds"],
+  "fields": ["id", "name", "hp", "moveSpeed", "critRatePerTenThousand", "camDist", "skillIds"],
   "rows": [
-    { "id": 1001, "name": "剑士", "hp": 1200, "moveSpeed": 5000, "skillIds": [ 2001, 2002 ] },
-    { "id": 1002, "name": "法师", "hp": 800, "moveSpeed": 4800, "skillIds": [ 2002 ] }
+    { "id": 1001, "name": "剑士", "hp": 1200, "moveSpeed": 5000, "critRatePerTenThousand": 1500, "camDist": 8.5, "skillIds": [ 2001, 2002 ] },
+    { "id": 1002, "name": "法师", "hp": 800, "moveSpeed": 4800, "critRatePerTenThousand": 500, "camDist": 9.0, "skillIds": [ 2003 ] },
+    { "id": 1003, "name": "弓手", "hp": 900, "moveSpeed": 5200, "critRatePerTenThousand": 2500, "camDist": 7.5, "skillIds": [ 2002, 2003 ] }
   ]
 }

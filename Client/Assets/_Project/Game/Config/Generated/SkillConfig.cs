@@ -91,6 +91,8 @@ namespace NBC.Game.Config
                 row.id = ParseInt(Cell(cells, header, "id"));
                 row.name = Unescape(Cell(cells, header, "name"));
                 row.damage = ParseInt(Cell(cells, header, "damage"));
+                row.damageType = (EDamageType)System.Enum.Parse(typeof(EDamageType), Cell(cells, header, "damageType"), true);
+                row.hitFrames = ParseIntArray(Cell(cells, header, "hitFrames"));
 
                 rows.Add(row);
             }
