@@ -146,13 +146,17 @@ namespace NBC.ConfigKit.Cli
         /// <summary>
         /// 按 <c>--emitter</c> 选产物。
         /// <para>
-        /// 默认 <c>both</c>：**C# 类型 + TSV 数据**。两个都要 ——
-        /// C# 类型让工程编译得过，TSV 让 Unity 侧的导入器把数据灌进 SO。
+        /// 默认 <c>all</c>：**C# 类型 + TSV + JSON**。
         /// </para>
+        /// <list type="bullet">
+        /// <item><description><b>C# 类型</b>：让工程编译得过（含 <c>LoadFromTsv</c>）</description></item>
+        /// <item><description><b>TSV</b>：**Unity 导入器读它**建 `.asset`（原因见 TsvConfigEmitter 文件头）</description></item>
+        /// <item><description><b>JSON</b>：给外部工具 / 别的语言 / 人看，也可扩展嵌套结构</description></item>
+        /// </list>
         /// </summary>
         private static ITableEmitter CreateEmitter(Options options)
         {
-            switch (options.Emitter ?? "both")
+            switch (options.Emitter ?? "all")
             {
                 case "csharp":
                     return new CSharpConfigEmitter();
@@ -160,8 +164,12 @@ namespace NBC.ConfigKit.Cli
                 case "tsv":
                     return new TsvConfigEmitter();
 
+                case "json":
+                    return new JsonConfigEmitter();
+
                 default:
-                    return new CompositeEmitter(new CSharpConfigEmitter(), new TsvConfigEmitter());
+                    return new CompositeEmitter(
+                        new CSharpConfigEmitter(), new TsvConfigEmitter(), new JsonConfigEmitter());
             }
         }
 
@@ -217,9 +225,11 @@ namespace NBC.ConfigKit.Cli
                         · .xlsx：**一个 sheet = 一张表**（表名 = sheet 名）
                         · .csv/.tsv：**文件名 = 表名**
   --format <格式>     auto（默认，看目录里有什么）/ xlsx / csv / tsv
-  --emitter <产物>    both（默认：C# 类型 + TSV 数据）/ csharp / tsv
+  --emitter <产物>    all（默认：C# 类型 + TSV + JSON）/ csharp / tsv / json
                       · C# 类型：Config_<表>.cs + <表>Config.cs（含 LoadFromTsv）
-                      · TSV 数据：<表>.tsv —— Unity 侧导入器读它建 .asset
+                      · TSV 数据：<表>.tsv —— **Unity 侧导入器读它建 .asset**
+                      · JSON    ：<表>.json —— 给外部工具 / 别的语言 / 人看（嵌套结构也能装）
+                      三种边界各用什么格式，见 Tools\ConfigKit\README.md §九
   --out <目录>        生成目录。默认 Assets/_Project/Game/Config/Generated
   --ns <命名空间>     生成代码的命名空间。默认 NBC.Game.Config
   --check             只校验，不写文件
@@ -308,14 +318,15 @@ namespace NBC.ConfigKit.Cli
                         case "--emitter":
                             if (!TryNext(args, ref i, out options.Emitter))
                             {
-                                error = "--emitter 后面要跟 both / csharp / tsv";
+                                error = "--emitter 后面要跟 all / csharp / tsv / json";
                                 return false;
                             }
 
-                            if (options.Emitter != "both" && options.Emitter != "csharp" &&
-                                options.Emitter != "tsv")
+                            if (options.Emitter != "all" && options.Emitter != "csharp" &&
+                                options.Emitter != "tsv" && options.Emitter != "json")
                             {
-                                error = "不认识的产物 " + options.Emitter + "（只支持 both / csharp / tsv）";
+                                error = "不认识的产物 " + options.Emitter +
+                                        "（只支持 all / csharp / tsv / json）";
                                 return false;
                             }
 

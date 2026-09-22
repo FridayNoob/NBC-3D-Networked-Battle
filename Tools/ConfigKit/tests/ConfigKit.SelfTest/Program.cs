@@ -90,6 +90,12 @@ namespace NBC.ConfigKit.SelfTest
             Run("TSV：表头是字段名，一行一条数据", Tsv_HeaderAndRows);
             Run("TSV：单元格里的制表符/换行要转义（否则整行静默错位）", Tsv_EscapesTabsAndNewlines);
 
+            // ---- JSON 产物 ----
+            Run("JSON：合法（**用 System.Text.Json 反过来解析**，不是我说了算）", Json_IsParsableByJsonParser);
+            Run("JSON：字段名当键 + 枚举写成员名 + 数组是数组", Json_ShapeAndValues);
+            Run("JSON：转义（引号/反斜杠/换行/控制字符）", Json_Escapes);
+            Run("三份产物对「可空 ref」给同一个答案（C# = TSV = JSON）", Emitters_AgreeOnNullableRef);
+
             // ---- 可空支持范围（被 Unity 序列化限制逼出来的）----
             Run("可空值类型 int? → CFG0019（Unity 序列化不支持可空值类型）", NullableValueType_IsRejected);
             Run("可空 ref / string → 允许", NullableRefAndString_AreAccepted);
@@ -849,6 +855,137 @@ namespace NBC.ConfigKit.SelfTest
 
             // 数据行必须仍然是 2 格（制表符被转义，没有把行拆散）
             CheckEqual("1\t第一行\\t带制表符", lines[1], "制表符要转义成 \\t，否则整行错位");
+        }
+
+        // ====================================================================
+        //  JSON 产物
+        // ====================================================================
+
+        private static string EmitJsonOf(InMemoryTableSource source, string tableName)
+        {
+            ExportReport report = new ExportPipeline(
+                ConfigPolicy.CreateDefault(), new JsonConfigEmitter()).Run(source);
+
+            Check(report.Succeeded, "应当成功：\n" + Render(report.Diagnostics));
+            return FileContent(report, tableName + ".json");
+        }
+
+        /// <summary>
+        /// **手写的 JSON 必须能被真解析器吃下去。**
+        /// <para>
+        /// ⚠️ 这条是"验证器思路"的直接应用：**别让"我觉得格式对"当判据**。
+        /// .NET 8 自带 `System.Text.Json`，用它解析一遍 ——
+        /// 转义漏了、逗号多写了、括号不配平，都会当场抛。
+        /// （这也解决了"我手写 JSON 而不引第三方库"的可信度问题：**写可以手写，验必须用真解析器**。）
+        /// </para>
+        /// </summary>
+        private static void Json_IsParsableByJsonParser()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", ValidHeroRows(), "Hero.csv");
+
+            string json = EmitJsonOf(source, "Hero");
+
+            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(json);
+
+            CheckEqual("Hero", document.RootElement.GetProperty("table").GetString(), "table");
+            CheckEqual(8, document.RootElement.GetProperty("fields").GetArrayLength(), "fields");
+            CheckEqual(2, document.RootElement.GetProperty("rows").GetArrayLength(), "rows");
+
+            System.Text.Json.JsonElement first = document.RootElement.GetProperty("rows")[0];
+            CheckEqual(1001, first.GetProperty("id").GetInt32(), "id");
+            CheckEqual("剑士", first.GetProperty("name").GetString(), "name（中文原样，不转 \\u）");
+            CheckEqual(1200, first.GetProperty("hp").GetInt32(), "hp");
+            CheckEqual(2, first.GetProperty("skillIds").GetArrayLength(), "数组是 JSON 数组");
+            CheckEqual(2001, first.GetProperty("skillIds")[0].GetInt32(), "数组元素");
+        }
+
+        private static void Json_ShapeAndValues()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("T", Grid(
+                "id|rate|flag|kind|ids|refId",
+                "编号|比例|开关|类型|列表|引用",
+                "int|float|bool|enum:EDamage|int[]|ref:Buff?",
+                "key|view|",
+                "1|1.5|1|Fire|3,4|"),
+                "T.csv");
+
+            // Buff 表（让 ref 能解析；虽然这里留空，但类型仍要存在才不报"表不存在"）
+            InMemoryTableSource withBuff = source;
+            withBuff.AddTable("Buff", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|",
+                "3001|灼烧"), "Buff.csv");
+
+            string json = FileContent(new ExportPipeline(
+                ConfigPolicy.CreateDefault(), new JsonConfigEmitter()).Run(withBuff), "T.json");
+
+            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(json);
+            System.Text.Json.JsonElement row = document.RootElement.GetProperty("rows")[0];
+
+            CheckEqual(1.5, row.GetProperty("rate").GetDouble(), "float 是 JSON 数字");
+            Check(row.GetProperty("flag").GetBoolean(), "bool 是 true/false");
+            CheckEqual("Fire", row.GetProperty("kind").GetString(), "枚举写**成员名**（人可读）");
+            CheckEqual(2, row.GetProperty("ids").GetArrayLength(), "int[] 是数组");
+            CheckEqual(0, row.GetProperty("refId").GetInt32(),
+                "可空 ref 留空 → **0**（与 C# 的 int + 加载器一致，不是 null）");
+        }
+
+        private static void Json_Escapes()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("T", Grid(
+                "id|note",
+                "编号|备注",
+                "int|string",
+                "key|",
+                "1|他说\"你好\"\\还有\t制表符"),
+                "T.csv");
+
+            string json = EmitJsonOf(source, "T");
+
+            // 先让真解析器确认合法，再确认还原出来的值**一个字符不差**
+            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(json);
+            string note = document.RootElement.GetProperty("rows")[0].GetProperty("note").GetString();
+
+            CheckEqual("他说\"你好\"\\还有\t制表符", note, "转义后原样还原");
+        }
+
+        /// <summary>
+        /// **三份产物必须对同一张表给出同一个答案。**
+        /// <para>
+        /// 否则换一份产物读就会得到不同的值 —— 那是**静默不一致**。
+        /// 这条守的是"可空 ref 的三个表现"：C# 是 `int`、TSV 是空串、JSON 是 `0`。
+        /// </para>
+        /// </summary>
+        private static void Emitters_AgreeOnNullableRef()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", ValidHeroRows(), "Hero.csv");
+
+            // C#：字段类型必须是 `int` 而不是 `int?`（Unity 不支持可空值类型）
+            ExportReport csharp = new ExportPipeline(
+                ConfigPolicy.CreateDefault(), new CSharpConfigEmitter()).Run(source);
+            CheckContains(FileContent(csharp, "Config_Hero.cs"), "public int buffId;", "C# 侧");
+            CheckContains(FileContent(csharp, "HeroConfig.cs"),
+                "ParseInt(Cell(cells, header, \"buffId\"))", "加载器把空串解析成 0");
+
+            // TSV：留空
+            ExportReport tsv = new ExportPipeline(
+                ConfigPolicy.CreateDefault(), new TsvConfigEmitter()).Run(source);
+            string[] lines = FileContent(tsv, "Hero.tsv").Split('\n');
+            CheckEqual("", lines[2].Split('\t')[7], "TSV 侧：第 2 条数据的 buffId 是空串");
+
+            // JSON：0（不是 null）
+            ExportReport json = new ExportPipeline(
+                ConfigPolicy.CreateDefault(), new JsonConfigEmitter()).Run(source);
+            using System.Text.Json.JsonDocument document =
+                System.Text.Json.JsonDocument.Parse(FileContent(json, "Hero.json"));
+            CheckEqual(0, document.RootElement.GetProperty("rows")[1].GetProperty("buffId").GetInt32(),
+                "JSON 侧：0");
         }
 
         // ====================================================================
