@@ -1,16 +1,12 @@
 {
-    "name": "NBC.Editor",
-    "rootNamespace": "NBC.EditorTools",
+    "name": "NBC.Boot",
+    "rootNamespace": "NBC.Boot",
     "references": [
         "NBC.Framework",
-        "NBC.Framework.UI",
-        "NBC.Game",
-        "NBC.Model",
-        "NBC.Boot"
+        "NBC.Framework.YooAsset",
+        "NBC.Game"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

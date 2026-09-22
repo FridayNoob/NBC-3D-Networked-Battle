@@ -29,6 +29,7 @@
 
 using System;
 using System.Threading.Tasks;
+using NBC.Boot;
 using NBC.Framework.Asset;
 using UnityEditor;
 using UnityEngine;
@@ -40,6 +41,16 @@ namespace NBC.EditorTools
     {
         /// <summary>冒烟用的资源地址（配置表产物；见 ConfigKit 生成的 HeroConfig.asset）。</summary>
         private const string ProbeLocation = "HeroConfig";
+
+        /// <summary>YooAsset 的包名（必须与收集配置里的一致；实测当前为 `DefaultPackage`）。</summary>
+        private const string PackageName = AssetBootstrapper.DefaultPackageName;
+
+        /// <summary>
+        /// 编辑器模拟模式要用的模拟清单目录。
+        /// <para>⚠️ 只有 `EditorSimulate` 模式需要它；`Offline` 模式传空即可（读的是 StreamingAssets）。
+        /// 若你要跑 `EditorSimulate` 冒烟，把这里改成模拟构建的输出目录（B3 操作单里有说明）。</para>
+        /// </summary>
+        private const string SimulatePackageRoot = "";
 
         /// <summary>用编辑器模拟模式初始化（日常开发：免打包，改资源即时生效）。</summary>
         [MenuItem("Tools/NBC/资源/① EditorSimulate 模式（日常开发）")]
@@ -81,11 +92,15 @@ namespace NBC.EditorTools
         {
             try
             {
-                Debug.Log("[资源冒烟] 开始初始化：" + mode);
+                Debug.Log("[资源冒烟] 开始装配 + 初始化：" + mode);
 
-                await AssetManager.Instance.InitializeAsync(mode);
+                // ⚠️ 这一步**必须走组合根**（`NBC.Boot`）：
+                //    `AssetManager` 只是门面，它需要有人先把 `IAssetProvider` 装上去。
+                //    我第一版直接调 `AssetManager.InitializeAsync` —— 于是报
+                //    "还没有装上底层加载器"，而且那个报错**看起来像配置问题，其实是少了一层架构**。
+                await AssetBootstrapper.InstallAsync(mode, PackageName, SimulatePackageRoot);
 
-                Debug.Log("[资源冒烟] ✅ 初始化成功：" + mode);
+                Debug.Log("[资源冒烟] ✅ 装配 + 初始化成功：" + mode);
 
                 // 再走一步真加载：光"初始化成功"证明不了资源真的能取到
                 AssetHandle<GameObject> handle = AssetManager.Instance.LoadAsset<GameObject>(ProbeLocation);
