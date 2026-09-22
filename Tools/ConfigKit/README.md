@@ -344,7 +344,7 @@ dotnet run --project Tools\ConfigKit\tests\ConfigKit.SelfTest\ConfigKit.SelfTest
 # ② 导出（CSV/TSV 来源，零依赖）
 dotnet build Tools\ConfigKit\src\ConfigKit.Cli\ConfigKit.Cli.csproj -m:1
 Tools\ConfigKit\src\ConfigKit.Cli\bin\Debug\net8.0\NBC.ConfigKit.Cli.exe `
-    --source Client\Assets\_Project\Configs\Design --out Client\Assets\_Project\Game\Config\Generated
+    --source Configs\Design --out Client\Assets\_Project\Game\Config\Generated
 
 # ③ 只校验不落盘（CI / 改表后先跑一遍）
 ... --source <目录> --check
