@@ -70,6 +70,26 @@ namespace NBC.Framework.UI
         /// <summary>默认的文字刷新间隔（秒）—— 4 Hz，见文件头说明。</summary>
         public const float DefaultRefreshInterval = 0.25f;
 
+        /// <summary>
+        /// 文字刷新间隔（秒）。**在 Inspector 里可直接调**（调试时想看快一点就设 0.1）。
+        /// <para>
+        /// ⚠️ **必须是"字段"才能出现在 Inspector 里。**
+        /// Unity 只序列化**字段**：`public` 字段，或带 `[SerializeField]` 的私有字段。
+        /// **属性（property）永远不进 Inspector** —— 它是方法，不是数据。
+        /// （这条踩过：我曾在操作单里写"在 Inspector 里改 Refresh Interval"，
+        /// 而当时它是个属性，Inspector 里根本找不到。）
+        /// </para>
+        /// <para>
+        /// ⚠️ 另一个 Unity 老坑：**一旦在预制体 / 场景里存过值，改下面这个初始值不会再影响它** ——
+        /// 序列化数据会盖掉字段初始值。想让已有实例回到新默认值，得在 Inspector 里点 **Reset**，
+        /// 或者把组件删掉重挂。`DefaultRefreshInterval` 这个常量只是**新建组件时的初值**。
+        /// </para>
+        /// </summary>
+        [SerializeField]
+        [Tooltip("文字刷新间隔（秒）。0.25 = 4 Hz；0 = 每帧都刷（不建议，看板会自己造 GC）。")]
+        [Min(0f)]
+        private float m_refreshInterval = DefaultRefreshInterval;
+
         private Text m_fpsText;
         private Text m_drawCallText;
         private Text m_gcAllocText;
@@ -79,7 +99,6 @@ namespace NBC.Framework.UI
         private PerfSampler m_sampler;
         private bool m_ownsSampler;
 
-        private float m_refreshInterval = DefaultRefreshInterval;
         private float m_accumulated;
         private bool m_driving;
 
@@ -95,7 +114,10 @@ namespace NBC.Framework.UI
             get { return m_sampler; }
         }
 
-        /// <summary>文字刷新间隔（秒）。设成 0 表示每帧都刷（**不建议**，见文件头）。</summary>
+        /// <summary>
+        /// 文字刷新间隔（秒）。设成 0 表示每帧都刷（**不建议**，见文件头）。
+        /// <para>它就是上面那个序列化字段的门面，所以**运行时改它 = 改 Inspector 里那一格**（当次运行内有效）。</para>
+        /// </summary>
         public float RefreshInterval
         {
             get { return m_refreshInterval; }

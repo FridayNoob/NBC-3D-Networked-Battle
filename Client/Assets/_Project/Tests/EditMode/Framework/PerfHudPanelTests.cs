@@ -190,6 +190,31 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual(before + 1, m_panel.RefreshCount);
         }
 
+        /// <summary>
+        /// 没配过时，刷新间隔应当等于代码里的默认值。
+        /// <para>
+        /// ⚠️ 这条守的是"默认值"这件事本身：`m_refreshInterval` 现在是**序列化字段**
+        /// （为了能在 Inspector 里调），而它的初值来自 `DefaultRefreshInterval` 常量。
+        /// 两个数一旦不同步，就会出现"新挂的组件刷新速度和老的不一样"这种鬼故事。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void DefaultRefreshInterval_IsUsedWhenNothingConfigured()
+        {
+            GameObject bare = new GameObject("BareHud", typeof(RectTransform));
+            PerfHudPanel barePanel = bare.AddComponent<PerfHudPanel>();
+
+            try
+            {
+                Assert.AreEqual(PerfHudPanel.DefaultRefreshInterval, barePanel.RefreshInterval,
+                    "新建的看板应当用代码里的默认刷新间隔");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(bare);
+            }
+        }
+
         /// <summary>刷新间隔不能被设成负数（那会让判断反过来）。</summary>
         [Test]
         public void NegativeInterval_IsClampedToZero()
