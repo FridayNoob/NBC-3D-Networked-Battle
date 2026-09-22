@@ -166,17 +166,43 @@ dotnet run --project Tools/ConfigKit/tests/ConfigKit.SelfTest
 
 ---
 
-## 六、怎么用（M1 计划）
+## 六、怎么用
+
+### ⚠️ 本环境的一条硬规矩：`dotnet run` 必须配 `--no-build`
+
+2026-09-22 实测：**`dotnet run` 带隐式构建会失败**（它要去捕获构建过程的 stdio，
+在沙箱里被挡），而报错是误导性的 `生成失败。请修复生成错误并重新运行。`（构建其实没问题）。
+所以本仓库里一律**先 build、再 `--no-build`**，或者**直接跑生成的 exe**：
 
 ```powershell
-# 1) 自测（零依赖，随时可跑）
-dotnet run --project Tools\ConfigKit\tests\ConfigKit.SelfTest
+# ① 自测（零依赖，随时可跑）
+dotnet build Tools\ConfigKit\tests\ConfigKit.SelfTest\ConfigKit.SelfTest.csproj -m:1
+dotnet run --project Tools\ConfigKit\tests\ConfigKit.SelfTest\ConfigKit.SelfTest.csproj --no-build
 
-# 2) 导出（CSV/TSV 来源，零依赖）
-dotnet run --project Tools\ConfigKit\src\ConfigKit.Cli -- --source <目录> --out <生成目录>
+# ② 导出（CSV/TSV 来源，零依赖）
+dotnet build Tools\ConfigKit\src\ConfigKit.Cli\ConfigKit.Cli.csproj -m:1
+Tools\ConfigKit\src\ConfigKit.Cli\bin\Debug\net8.0\NBC.ConfigKit.Cli.exe `
+    --source Client\Assets\_Project\Configs\Design --out Client\Assets\_Project\Game\Config\Generated
 
-# 3) 生成 SO 资产：Unity 侧菜单（薄导入器，读 ② 产出的 JSON）
+# ③ 只校验不落盘（CI / 改表后先跑一遍）
+... --source <目录> --check
 ```
+
+**退出码**：`0` 成功 / `2` **表里有错（未产出任何文件）** / `1` 用法或环境错误。
+
+### ⚠️ CSV 的一条约定：**含逗号的格子必须用双引号包起来**
+
+这条是端到端测试当场抓出来的：规则行写成 `key,range(1,10)` 时，
+CSV 会把它拆成 `range(1` 和 `10)` 两格 —— 于是报"不认识的规则"。
+工具现在会**额外给一句提示**（"看起来像被逗号拆开了"），但正解是加引号：
+
+| 内容 | 在 `.csv` 里必须写成 |
+| --- | --- |
+| `range(1,999999)` / `len(1,16)` | `"range(1,999999)"` / `"len(1,16)"` |
+| 数组 `2001,2002` | `"2001,2002"` |
+| 备注里带逗号的文本 | `"他说，你好"` |
+
+（`.xlsx` 来源**没有这个问题** —— 单元格就是单元格。这也是 NPOI 还原后值得切过去的原因之一。）
 
 ---
 
@@ -185,12 +211,14 @@ dotnet run --project Tools\ConfigKit\src\ConfigKit.Cli -- --source <目录> --ou
 | 步骤 | 状态 |
 | --- | --- |
 | 骨架 + 统一构建属性（netstandard2.1 / C# 9 约束） | ✅ 2026-09-22 |
-| `ConfigKit.Core`：诊断 / 位置 / 表模型 / 表头解析 / 校验引擎 / 策略 | ⏳ 进行中 |
-| `ConfigKit.Sources.Delimited`（CSV / TSV） | ⏳ |
-| `ConfigKit.SelfTest`（自测运行器 + 架构守卫） | ⏳ |
-| `ConfigKit.Sources.Xlsx`（NPOI，需你先还原） | ⏳ 待还原 |
-| `ConfigKit.Cli` | ⏳ |
-| Unity 侧薄导入器（读 JSON → 建 `.asset`） | ⏳ |
+| `ConfigKit.Core`：诊断 / 位置 / 表模型 / 表头解析 / 校验引擎 / 策略 | ✅ |
+| `ConfigKit.Sources.Delimited`（CSV / TSV） | ✅ |
+| `ConfigKit.SelfTest`（自测运行器 + 架构守卫） | ✅ **39 条全绿** |
+| `ConfigKit.Core` 代码生成（`Config_*.cs` + `<表>Config.cs`） | ✅ |
+| `ConfigKit.Cli`（命令行 + 退出码 0/1/2） | ✅ |
+| `ConfigKit.Sources.Xlsx`（NPOI，**需你先还原**） | ⏳ 待还原 |
+| Unity 侧薄导入器（读生成物 → 建 `.asset`） | ⏳ |
+| `ITableEmitter` 的 JSON 实现 | ⏳ |
 
 ---
 

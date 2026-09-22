@@ -638,6 +638,16 @@ namespace NBC.ConfigKit
 
                 if (error != null)
                 {
+                    // ⚠️ 一个高频且很难自己看出来的原因：来源是 **CSV** 时，
+                    //    `range(1,10)` 这种**含逗号**的格子会被当成两格拆开。
+                    //    报错本身是对的，但不给这条提示的话，人只会去怀疑"规则名拼错了"。
+                    if (rule.Name.IndexOf('(') >= 0)
+                    {
+                        error += "。\n    ⚠️ 提示：这一格看起来像被**逗号拆开**了。" +
+                                 "如果来源是 .csv，**含逗号的格子必须用双引号包起来**：" +
+                                 "\"range(1,10)\"、\"2001,2002\"";
+                    }
+
                     diagnostics.Error(DiagnosticCodes.UnknownRule,
                         table.LocationOf(ruleRow.Get(column.Index, 0), column.Name),
                         error,

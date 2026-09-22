@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.Cli —— 薄宿主：解析命令行 → 跑流水线 → 落盘 → 退出码
+       ⚠️ 它是【宿主】，所以放开到 net8.0 + C# 12（不打算进 Unity）
+       ⚠️ 它【只做】三件事：参数、写文件、退出码。
+          "读/解析/校验/生成"全在 Core 里，所以那些逻辑不靠这个进程也能测。
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>NBC.ConfigKit.Cli</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.Cli</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ConfigKit.Core\ConfigKit.Core.csproj" />
+    <ProjectReference Include="..\ConfigKit.Sources.Delimited\ConfigKit.Sources.Delimited.csproj" />
+  </ItemGroup>
+
+</Project>
