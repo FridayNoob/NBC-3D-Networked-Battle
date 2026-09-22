@@ -53,8 +53,25 @@ namespace NBC.Framework.Log
         private readonly string m_fileName;
         private readonly long m_maxFileBytes;
         private readonly int m_maxFileCount;
+        private readonly Encoding m_encoding = new UTF8Encoding(false);
 
         private StreamWriter m_writer;
+
+        /// <summary>
+        /// **自己记的**已写入字节数。
+        /// <para>
+        /// ⚠️ 为什么不用 `m_writer.BaseStream.Length`：`StreamWriter` 是**带缓冲**的，
+        /// 写进去的内容要等缓冲满（默认 1 KB）才落到流上 ——
+        /// 也就是说 `BaseStream.Length` **落后于**实际写入量。
+        /// </para>
+        /// <para>
+        /// 这个坑是测试暴露出来的，而且暴露的方式很典型：
+        /// **第一版实现（写完再检查）其实也不可靠，只是恰好走运** ——
+        /// 20 条日志刚好跨过一次缓冲 flush，于是它"看起来能工作"。
+        /// 改成"写之前检查"之后侥幸没了，问题才现形（`RotationCount` 一直是 0）。
+        /// </para>
+        /// </summary>
+        private long m_writtenBytes;
 
         /// <summary>构造（**不立刻建文件**，第一条日志时才建）。</summary>
         /// <param name="directory">目录（不存在会自动创建）。</param>
@@ -111,13 +128,19 @@ namespace NBC.Framework.Log
             //    放在写之前，"**当前文件永远存在**"就成了一条简单的不变式。
             //    （这个顺序问题是首跑测试 `Rotation_HappensWhenFileGrowsTooLarge` 抓出来的：
             //      它断言滚动之后 `nbc.log` 仍然在，而当时的实现让它不在。）
-            if (m_writer.BaseStream.Length >= m_maxFileBytes)
+            //
+            // ⚠️ 判断用的是**自己记的字节数**，不是 `BaseStream.Length` ——
+            //    后者被 `StreamWriter` 的缓冲拖着走，见 `m_writtenBytes` 的说明。
+            if (m_writtenBytes >= m_maxFileBytes)
             {
                 Rotate();
                 EnsureOpen();
             }
 
-            m_writer.WriteLine(entry.ToString());
+            string line = entry.ToString();
+
+            m_writer.WriteLine(line);
+            m_writtenBytes += m_encoding.GetByteCount(line) + NewlineByteCount;
         }
 
         /// <summary>刷缓冲。</summary>
@@ -157,7 +180,12 @@ namespace NBC.Framework.Log
                 CurrentFilePath, FileMode.Append, FileAccess.Write, FileShare.Read);
 
             // UTF-8 **不带 BOM**：和本项目所有文本文件一致
-            m_writer = new StreamWriter(stream, new UTF8Encoding(false));
+            m_writer = new StreamWriter(stream, m_encoding);
+
+            // ⚠️ 从**已有文件的真实长度**起步。
+            //    否则"追加到一个本来就很大的日志文件"会一直不滚动 ——
+            //    因为自己记的计数从 0 开始，永远追不上上限。
+            m_writtenBytes = stream.Length;
         }
 
         /// <summary>关闭文件。</summary>
@@ -202,7 +230,16 @@ namespace NBC.Framework.Log
                 }
             }
 
+            // ⚠️ 计数归零：新文件从 0 开始，否则下一次写会立刻又触发滚动（无限滚动）
+            m_writtenBytes = 0;
+
             RotationCount++;
+        }
+
+        /// <summary>换行符占几个字节（`WriteLine` 用的是平台换行）。</summary>
+        private static int NewlineByteCount
+        {
+            get { return Environment.NewLine.Length; }
         }
 
         /// <summary>第 index 个文件的路径（0 是当前文件）。</summary>
