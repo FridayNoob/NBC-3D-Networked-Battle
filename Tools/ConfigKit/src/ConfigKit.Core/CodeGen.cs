@@ -195,7 +195,7 @@ namespace NBC.ConfigKit
                 builder.AppendLine("                return;");
                 builder.AppendLine("            }");
                 builder.AppendLine();
-                builder.AppendLine("            for (int i = 0; i < rows.Count; i++)");
+                builder.AppendLine("            for (int i = 0; i < rows.Count; i++)  // 逐行建索引");
                 builder.AppendLine("            {");
                 builder.Append("                m_index[rows[i].").Append(key.Name).AppendLine("] = rows[i];");
                 builder.AppendLine("            }");
@@ -204,7 +204,7 @@ namespace NBC.ConfigKit
                 builder.AppendLine("        /// <summary>按主键取一行；取不到抛异常。</summary>");
                 builder.Append("        public ").Append(rowType).AppendLine(" Get(int id)");
                 builder.AppendLine("        {");
-                builder.Append("            ").Append(rowType).AppendLine(" row;");
+                builder.Append("            ").Append(rowType).AppendLine(" row;  // 找到的那一行");
                 builder.AppendLine();
                 builder.AppendLine("            if (m_index == null)");
                 builder.AppendLine("            {");
@@ -254,18 +254,18 @@ namespace NBC.ConfigKit
             builder.AppendLine("                return;");
             builder.AppendLine("            }");
             builder.AppendLine();
-            builder.AppendLine("            string[] lines = text.Replace(\"\\r\\n\", \"\\n\").Replace('\\r', '\\n').Split('\\n');");
-            builder.AppendLine("            string[] header = lines[0].Split('\\t');");
+            builder.AppendLine("            string[] lines = text.Replace(\"\\r\\n\", \"\\n\").Replace('\\r', '\\n').Split('\\n');  // 按行拆开");
+            builder.AppendLine("            string[] header = lines[0].Split('\\t');  // 第一行是字段名");
             builder.AppendLine();
-            builder.AppendLine("            for (int i = 1; i < lines.Length; i++)");
+            builder.AppendLine("            for (int i = 1; i < lines.Length; i++)  // 从第 2 行开始（第 1 行是字段名）");
             builder.AppendLine("            {");
             builder.AppendLine("                if (lines[i].Length == 0)");
             builder.AppendLine("                {");
             builder.AppendLine("                    continue;");
             builder.AppendLine("                }");
             builder.AppendLine();
-            builder.AppendLine("                string[] cells = lines[i].Split('\\t');");
-            builder.Append("                ").Append(rowType).AppendLine(" row = new " + rowType + "();");
+            builder.AppendLine("                string[] cells = lines[i].Split('\\t');  // 这一行的所有格子");
+            builder.Append("                ").Append(rowType).AppendLine(" row = new " + rowType + "();  // 正在装配的这一行");
 
             for (int c = 0; c < schema.Columns.Count; c++)
             {
@@ -328,7 +328,7 @@ namespace NBC.ConfigKit
             builder.AppendLine("        /// <summary>按字段名取单元格（按名字对列，所以调换列顺序不会错位）。</summary>");
             builder.AppendLine("        private static string Cell(string[] cells, string[] header, string name)");
             builder.AppendLine("        {");
-            builder.AppendLine("            for (int i = 0; i < header.Length; i++)");
+            builder.AppendLine("            for (int i = 0; i < header.Length; i++)  // 逐列找");
             builder.AppendLine("            {");
             builder.AppendLine("                if (header[i] == name)");
             builder.AppendLine("                {");
@@ -342,21 +342,21 @@ namespace NBC.ConfigKit
             builder.AppendLine("        /// <summary>解析 int（失败给 0）。</summary>");
             builder.AppendLine("        private static int ParseInt(string text)");
             builder.AppendLine("        {");
-            builder.AppendLine("            int value;");
+            builder.AppendLine("            int value;  // 解析结果（解析失败时是 0）");
             builder.AppendLine("            return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0;");
             builder.AppendLine("        }");
             builder.AppendLine();
             builder.AppendLine("        /// <summary>解析 long（失败给 0）。</summary>");
             builder.AppendLine("        private static long ParseLong(string text)");
             builder.AppendLine("        {");
-            builder.AppendLine("            long value;");
+            builder.AppendLine("            long value;  // 解析结果（解析失败时是 0）");
             builder.AppendLine("            return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0L;");
             builder.AppendLine("        }");
             builder.AppendLine();
             builder.AppendLine("        /// <summary>解析 float（失败给 0）。</summary>");
             builder.AppendLine("        private static float ParseFloat(string text)");
             builder.AppendLine("        {");
-            builder.AppendLine("            float value;");
+            builder.AppendLine("            float value;  // 解析结果（解析失败时是 0）");
             builder.AppendLine("            return float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0f;");
             builder.AppendLine("        }");
             builder.AppendLine();
@@ -374,10 +374,10 @@ namespace NBC.ConfigKit
             builder.AppendLine("                return new int[0];");
             builder.AppendLine("            }");
             builder.AppendLine();
-            builder.AppendLine("            string[] parts = text.Split(',');");
-            builder.AppendLine("            int[] result = new int[parts.Length];");
+            builder.AppendLine("            string[] parts = text.Split(',');  // 逗号分隔的各项");
+            builder.AppendLine("            int[] result = new int[parts.Length];  // 结果数组");
             builder.AppendLine();
-            builder.AppendLine("            for (int i = 0; i < parts.Length; i++)");
+            builder.AppendLine("            for (int i = 0; i < parts.Length; i++)  // 逐项解析");
             builder.AppendLine("            {");
             builder.AppendLine("                result[i] = ParseInt(parts[i].Trim());");
             builder.AppendLine("            }");
@@ -393,9 +393,9 @@ namespace NBC.ConfigKit
             builder.AppendLine("                return text;");
             builder.AppendLine("            }");
             builder.AppendLine();
-            builder.AppendLine("            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);");
+            builder.AppendLine("            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);  // 还原结果");
             builder.AppendLine();
-            builder.AppendLine("            for (int i = 0; i < text.Length; i++)");
+            builder.AppendLine("            for (int i = 0; i < text.Length; i++)  // 逐个字符扫描");
             builder.AppendLine("            {");
             builder.AppendLine("                if (text[i] != '\\\\' || i + 1 >= text.Length)");
             builder.AppendLine("                {");

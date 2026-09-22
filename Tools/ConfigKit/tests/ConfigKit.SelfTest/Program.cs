@@ -861,15 +861,16 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>
-        /// **生成代码的注释密度规则**（2026-09-22 由负责人明确）：
+        /// **生成代码的注释密度规则**（2026-09-22 由负责人明确，同日加强）：
         /// <para>
         /// 只有三处**必定**有注释 ——
-        /// ① **文件开头**、② **变量名后**（行尾）、③ **类名 / 方法名前**；
-        /// **其他地方非必要不加注释。**
+        /// ① **文件开头**、② **变量名后**（行尾，**字段 / 局部变量 / for 计数器都算**）、
+        /// ③ **类名 / 方法名前**；**其他地方非必要不加注释**。
         /// </para>
         /// <para>
-        /// 这条做成机械检查，因为它太容易被"顺手多写一句"破坏，
-        /// 而生成物的注释一旦膨胀，每次导出的 diff 都变脏、也没人读。
+        /// ⚠️ 加强版的理由（负责人原话）：**"每个变量名在声明处都要加上注释，不然我看不懂"** ——
+        /// 早先只给字段加了注释，局部变量（`string[] parts` / `int i` 这类）没有，
+        /// 而读代码的人恰恰会在那里卡住。**方法参数**不逐个标（由方法注释承担）。
         /// </para>
         /// </summary>
         private static void CodeGen_CommentDensityRule()
@@ -880,16 +881,20 @@ namespace NBC.ConfigKit.SelfTest
             ExportReport report = Export(source);
             Check(report.Succeeded, "应当成功：\n" + Render(report.Diagnostics));
 
-            AssertCommentRule(FileContent(report, "Config_Hero.cs"), "Config_Hero.cs");
-            AssertCommentRule(FileContent(report, "HeroConfig.cs"), "HeroConfig.cs");
+            AssertCommentRule(FileContent(report, "Config_Hero.cs"), "Config_Hero.cs", expectLocalVariables: false);
+            AssertCommentRule(FileContent(report, "HeroConfig.cs"), "HeroConfig.cs", expectLocalVariables: true);
         }
 
         /// <summary>逐行检查生成代码的注释规则。</summary>
-        private static void AssertCommentRule(string code, string fileName)
+        /// <param name="code">生成代码。</param>
+        /// <param name="fileName">文件名（报错用）。</param>
+        /// <param name="expectLocalVariables">这个文件里应当有局部变量（用于正对照）。</param>
+        private static void AssertCommentRule(string code, string fileName, bool expectLocalVariables)
         {
             string[] lines = code.Replace("\r\n", "\n").Split('\n');
             bool sawNamespace = false;
-            int fieldCount = 0;
+            int declarations = 0;
+            int localDeclarations = 0;
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -929,17 +934,47 @@ namespace NBC.ConfigKit.SelfTest
                         "规则：注释只允许在 文件头 / 变量名后 / 类名方法名前");
                 }
 
-                // ② 字段声明必须带**行尾注释**
-                if (IsFieldDeclaration(trimmed))
+                // ② 变量声明必须带**行尾注释** —— 字段、局部变量、for 计数器都算
+                //    （2026-09-22 负责人加强：不只是字段，"每个变量名在声明处都要加注释"）
+                if (IsVariableDeclaration(trimmed))
                 {
-                    fieldCount++;
+                    declarations++;
+
+                    if (IsLocalVariableDeclaration(trimmed))
+                    {
+                        localDeclarations++;
+                    }
+
                     Check(line.Contains("//", StringComparison.Ordinal),
-                        $"{fileName} 第 {i + 1} 行的字段「{trimmed}」没有行尾注释 —— 规则：变量名后必加注释");
+                        $"{fileName} 第 {i + 1} 行的变量声明「{trimmed}」没有行尾注释 —— " +
+                        "规则：每个变量名在声明处都要加注释");
                 }
             }
 
-            // 正对照：确实检查到了字段（否则"全部通过"可能只是没扫到东西）
-            Check(fieldCount > 0, $"{fileName} 里一个字段都没扫到，检查可能没在工作");
+            // ⚠️ 正对照分两种，缺一不可：
+            //    只断言"扫到过字段"是不够的 —— 如果**局部变量的判据坏了**，
+            //    测试照样全绿，而负责人恰恰是在局部变量那里看不懂代码。
+            Check(declarations > 0, $"{fileName} 里一个变量声明都没扫到，检查可能没在工作");
+
+            if (expectLocalVariables)
+            {
+                Check(localDeclarations > 0,
+                    $"{fileName} 里应当有局部变量（string[] / int / for 计数器…），但一个都没扫到 —— " +
+                    "说明**局部变量的判据没在工作**（字段的判据正常不代表这条正常）");
+            }
+        }
+
+        /// <summary>是不是"局部变量 / for 计数器"（相对于字段而言）。</summary>
+        /// <param name="trimmed">去掉缩进的行。</param>
+        /// <returns>是局部变量吗。</returns>
+        private static bool IsLocalVariableDeclaration(string trimmed)
+        {
+            int comment = trimmed.IndexOf("//", StringComparison.Ordinal);
+            string code = (comment >= 0 ? trimmed.Substring(0, comment) : trimmed).TrimEnd();
+
+            return !code.StartsWith("public ", StringComparison.Ordinal) &&
+                   !code.StartsWith("private ", StringComparison.Ordinal) &&
+                   !code.StartsWith("internal ", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -970,27 +1005,46 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>
-        /// 像不像字段声明（`public int id;  // 注释` / `private Dictionary&lt;...&gt; m_x;  // 注释`）。
+        /// 是不是"变量声明"（字段 / 局部变量 / for 计数器）。
         /// <para>
-        /// ⚠️ **必须先剥掉行尾注释再判断** —— 字段现在以注释结尾，
+        /// ⚠️ **必须先剥掉行尾注释再判断** —— 变量现在以注释结尾，
         /// 直接 `EndsWith(";")` 会永远为假（自测的正对照当场抓到了这一点）。
         /// </para>
+        /// <para>
+        /// 认三种形状（都要求**声明处**有注释）：
+        /// ① 字段：`public int id;`
+        /// ② 局部变量：`int value;` / `string[] parts = ...;` / `Config_Hero row = ...;`
+        /// ③ for 计数器：`for (int i = 0; ...)`
+        /// </para>
+        /// <para>
+        /// ⚠️ **方法参数不在内**：它们由方法注释承担（逐个参数标注释会把签名弄得没法看）。
+        /// </para>
         /// </summary>
-        private static bool IsFieldDeclaration(string trimmed)
+        private static bool IsVariableDeclaration(string trimmed)
         {
             int comment = trimmed.IndexOf("//", StringComparison.Ordinal);
             string code = (comment >= 0 ? trimmed.Substring(0, comment) : trimmed).TrimEnd();
 
-            if (!code.StartsWith("public ", StringComparison.Ordinal) &&
-                !code.StartsWith("private ", StringComparison.Ordinal) &&
-                !code.StartsWith("internal ", StringComparison.Ordinal))
+            // ③ for 计数器
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    code, @"^for\s*\(\s*(int|long|var)\s+\w+"))
             {
-                return false;
+                return true;
             }
 
-            return code.EndsWith(";", StringComparison.Ordinal) &&
-                   !code.Contains("(", StringComparison.Ordinal) &&
-                   !code.Contains(" class ", StringComparison.Ordinal);
+            // ① 字段：带访问修饰符且以 `;` 结尾（排除方法——方法带 `(`）
+            if (code.StartsWith("public ", StringComparison.Ordinal) ||
+                code.StartsWith("private ", StringComparison.Ordinal) ||
+                code.StartsWith("internal ", StringComparison.Ordinal))
+            {
+                return code.EndsWith(";", StringComparison.Ordinal) &&
+                       !code.Contains("(", StringComparison.Ordinal) &&
+                       !code.Contains(" class ", StringComparison.Ordinal);
+            }
+
+            // ② 局部变量：`<类型> <名字>` 后面直接跟 `=` 或 `;`
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                code, @"^(int|long|float|double|bool|string|var|[A-Z]\w*)\s*(\[\])?\s+\w+\s*(=|;)");
         }
 
         // ====================================================================

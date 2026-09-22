@@ -30,7 +30,7 @@ namespace NBC.Game.Config
                 return;
             }
 
-            for (int i = 0; i < rows.Count; i++)
+            for (int i = 0; i < rows.Count; i++)  // 逐行建索引
             {
                 m_index[rows[i].id] = rows[i];
             }
@@ -39,7 +39,7 @@ namespace NBC.Game.Config
         /// <summary>按主键取一行；取不到抛异常。</summary>
         public Config_Skill Get(int id)
         {
-            Config_Skill row;
+            Config_Skill row;  // 找到的那一行
 
             if (m_index == null)
             {
@@ -76,18 +76,18 @@ namespace NBC.Game.Config
                 return;
             }
 
-            string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-            string[] header = lines[0].Split('\t');
+            string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');  // 按行拆开
+            string[] header = lines[0].Split('\t');  // 第一行是字段名
 
-            for (int i = 1; i < lines.Length; i++)
+            for (int i = 1; i < lines.Length; i++)  // 从第 2 行开始（第 1 行是字段名）
             {
                 if (lines[i].Length == 0)
                 {
                     continue;
                 }
 
-                string[] cells = lines[i].Split('\t');
-                Config_Skill row = new Config_Skill();
+                string[] cells = lines[i].Split('\t');  // 这一行的所有格子
+                Config_Skill row = new Config_Skill();  // 正在装配的这一行
                 row.id = ParseInt(Cell(cells, header, "id"));
                 row.name = Unescape(Cell(cells, header, "name"));
                 row.damage = ParseInt(Cell(cells, header, "damage"));
@@ -103,7 +103,7 @@ namespace NBC.Game.Config
         /// <summary>按字段名取单元格（按名字对列，所以调换列顺序不会错位）。</summary>
         private static string Cell(string[] cells, string[] header, string name)
         {
-            for (int i = 0; i < header.Length; i++)
+            for (int i = 0; i < header.Length; i++)  // 逐列找
             {
                 if (header[i] == name)
                 {
@@ -117,21 +117,21 @@ namespace NBC.Game.Config
         /// <summary>解析 int（失败给 0）。</summary>
         private static int ParseInt(string text)
         {
-            int value;
+            int value;  // 解析结果（解析失败时是 0）
             return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0;
         }
 
         /// <summary>解析 long（失败给 0）。</summary>
         private static long ParseLong(string text)
         {
-            long value;
+            long value;  // 解析结果（解析失败时是 0）
             return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0L;
         }
 
         /// <summary>解析 float（失败给 0）。</summary>
         private static float ParseFloat(string text)
         {
-            float value;
+            float value;  // 解析结果（解析失败时是 0）
             return float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0f;
         }
 
@@ -149,10 +149,10 @@ namespace NBC.Game.Config
                 return new int[0];
             }
 
-            string[] parts = text.Split(',');
-            int[] result = new int[parts.Length];
+            string[] parts = text.Split(',');  // 逗号分隔的各项
+            int[] result = new int[parts.Length];  // 结果数组
 
-            for (int i = 0; i < parts.Length; i++)
+            for (int i = 0; i < parts.Length; i++)  // 逐项解析
             {
                 result[i] = ParseInt(parts[i].Trim());
             }
@@ -168,9 +168,9 @@ namespace NBC.Game.Config
                 return text;
             }
 
-            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);
+            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);  // 还原结果
 
-            for (int i = 0; i < text.Length; i++)
+            for (int i = 0; i < text.Length; i++)  // 逐个字符扫描
             {
                 if (text[i] != '\\' || i + 1 >= text.Length)
                 {
