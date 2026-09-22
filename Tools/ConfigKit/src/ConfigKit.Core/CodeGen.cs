@@ -130,19 +130,12 @@ namespace NBC.ConfigKit
             {
                 ColumnSchema column = schema.Columns[i];
 
-                builder.Append("        /// <summary>")
+                builder.Append("        public ").Append(CSharpTypeOf(column.Type)).Append(' ')
+                       .Append(column.Name).Append(";  // ")
                        .Append(Sanitize(column.Comment))
                        .Append("（").Append(Sanitize(column.TypeText)).Append("）")
                        .Append(NullableHint(column))
-                       .Append("</summary>")
                        .AppendLine();
-                builder.Append("        public ").Append(CSharpTypeOf(column.Type)).Append(' ')
-                       .Append(column.Name).AppendLine(";");
-
-                if (i < schema.Columns.Count - 1)
-                {
-                    builder.AppendLine();
-                }
             }
 
             builder.AppendLine("    }");
@@ -165,7 +158,7 @@ namespace NBC.ConfigKit
 
             StringBuilder builder = new StringBuilder();
 
-            AppendHeader(builder, options, tableName, "ScriptableObject（运行时载体）");
+            AppendHeader(builder, options, tableName, "配置资产");
 
             builder.AppendLine("using System.Collections.Generic;");
             builder.AppendLine("using UnityEngine;");
@@ -177,14 +170,13 @@ namespace NBC.ConfigKit
                    .Append("\", menuName = \"配置/").Append(tableName).AppendLine("\")]");
             builder.Append("    public sealed class ").Append(soType).AppendLine(" : ScriptableObject");
             builder.AppendLine("    {");
-            builder.Append("        /// <summary>全部数据行。</summary>").AppendLine();
-            builder.Append("        public List<").Append(rowType).Append("> rows = new List<").Append(rowType).AppendLine(">();");
+            builder.Append("        public List<").Append(rowType).Append("> rows = new List<").Append(rowType)
+                   .AppendLine(">();  // 全部数据行");
 
             if (key != null)
             {
-                builder.AppendLine();
-                builder.AppendLine("        /// <summary>主键索引（**不序列化**，加载时重建）。</summary>");
-                builder.Append("        private Dictionary<int, ").Append(rowType).AppendLine("> m_index;");
+                builder.Append("        private Dictionary<int, ").Append(rowType)
+                       .AppendLine("> m_index;  // 主键索引（不序列化，加载时重建）");
                 builder.AppendLine();
                 builder.AppendLine("        /// <summary>Unity 加载资产时重建索引。</summary>");
                 builder.AppendLine("        private void OnEnable()");
@@ -209,10 +201,7 @@ namespace NBC.ConfigKit
                 builder.AppendLine("            }");
                 builder.AppendLine("        }");
                 builder.AppendLine();
-                builder.Append("        /// <summary>按主键取一行；取不到抛异常（**不返回 null**，"
-                             + "null 会让调用点在很远的地方才崩）。</summary>").AppendLine();
-                builder.AppendLine("        /// <param name=\"id\">主键。</param>");
-                builder.AppendLine("        /// <returns>数据行。</returns>");
+                builder.AppendLine("        /// <summary>按主键取一行；取不到抛异常。</summary>");
                 builder.Append("        public ").Append(rowType).AppendLine(" Get(int id)");
                 builder.AppendLine("        {");
                 builder.Append("            ").Append(rowType).AppendLine(" row;");
@@ -231,10 +220,7 @@ namespace NBC.ConfigKit
                 builder.AppendLine("            return row;");
                 builder.AppendLine("        }");
                 builder.AppendLine();
-                builder.Append("        /// <summary>试着按主键取一行。**配置缺失时用它，别用异常控流程**。</summary>").AppendLine();
-                builder.AppendLine("        /// <param name=\"id\">主键。</param>");
-                builder.AppendLine("        /// <param name=\"row\">数据行。</param>");
-                builder.AppendLine("        /// <returns>取到没有。</returns>");
+                builder.AppendLine("        /// <summary>试着按主键取一行（配置缺失时用它，别用异常控流程）。</summary>");
                 builder.Append("        public bool TryGet(int id, out ").Append(rowType).AppendLine(" row)");
                 builder.AppendLine("        {");
                 builder.AppendLine("            if (m_index == null)");
@@ -253,27 +239,11 @@ namespace NBC.ConfigKit
             return builder.ToString();
         }
 
-        /// <summary>
-        /// 生成"从 TSV 文本填数据"的加载器（**Editor 导入器用它**）。
-        /// <para>
-        /// ⚠️ 为什么不用 `JsonUtility`：Unity 的序列化器**不支持可空值类型**，
-        /// 且枚举在 JsonUtility 里按整数走（工具不知道成员数值）。
-        /// TSV + 显式解析把这两个问题都绕开了，而且**不需要任何解析库**。
-        /// </para>
-        /// <para>按**字段名**对列（不是列序号）—— 所以表里调换列顺序不会错位。</para>
-        /// </summary>
+        /// <summary>生成"从 TSV 文本填数据"的加载器（Editor 导入器用它）。</summary>
         private static void AppendTsvLoader(StringBuilder builder, TableSchema schema, string rowType)
         {
             builder.AppendLine();
-            builder.AppendLine("        /// <summary>");
-            builder.AppendLine("        /// 从 ConfigKit 生成的 .tsv 文本填充数据（**Editor 导入器用**）。");
-            builder.AppendLine("        /// <para>第一行是字段名；按名字对列，所以调换列顺序不会错位。</para>");
-            builder.AppendLine("        /// <para>");
-            builder.AppendLine("        /// ⚠️ 不用 `JsonUtility`：Unity 的序列化器不支持可空值类型（`int?`），");
-            builder.AppendLine("        /// 而枚举在 JsonUtility 里按整数走（工具不知道成员数值）。TSV + 显式解析绕开这两个问题。");
-            builder.AppendLine("        /// </para>");
-            builder.AppendLine("        /// </summary>");
-            builder.AppendLine("        /// <param name=\"text\">tsv 文本。</param>");
+            builder.AppendLine("        /// <summary>从 ConfigKit 生成的 .tsv 文本填充数据（Editor 导入器用；第一行是字段名）。</summary>");
             builder.AppendLine("        public void LoadFromTsv(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            rows.Clear();");
@@ -355,6 +325,7 @@ namespace NBC.ConfigKit
         /// <summary>生成加载器用到的小工具函数（每个 SO 各自一份，保持"生成物自足"）。</summary>
         private static void AppendLoaderHelpers(StringBuilder builder)
         {
+            builder.AppendLine("        /// <summary>按字段名取单元格（按名字对列，所以调换列顺序不会错位）。</summary>");
             builder.AppendLine("        private static string Cell(string[] cells, string[] header, string name)");
             builder.AppendLine("        {");
             builder.AppendLine("            for (int i = 0; i < header.Length; i++)");
@@ -368,29 +339,34 @@ namespace NBC.ConfigKit
             builder.AppendLine("            return string.Empty;");
             builder.AppendLine("        }");
             builder.AppendLine();
+            builder.AppendLine("        /// <summary>解析 int（失败给 0）。</summary>");
             builder.AppendLine("        private static int ParseInt(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            int value;");
             builder.AppendLine("            return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0;");
             builder.AppendLine("        }");
             builder.AppendLine();
+            builder.AppendLine("        /// <summary>解析 long（失败给 0）。</summary>");
             builder.AppendLine("        private static long ParseLong(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            long value;");
             builder.AppendLine("            return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0L;");
             builder.AppendLine("        }");
             builder.AppendLine();
+            builder.AppendLine("        /// <summary>解析 float（失败给 0）。</summary>");
             builder.AppendLine("        private static float ParseFloat(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            float value;");
             builder.AppendLine("            return float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0f;");
             builder.AppendLine("        }");
             builder.AppendLine();
+            builder.AppendLine("        /// <summary>解析 bool（`1` / `true`）。</summary>");
             builder.AppendLine("        private static bool ParseBool(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            return text == \"1\" || string.Equals(text, \"true\", System.StringComparison.OrdinalIgnoreCase);");
             builder.AppendLine("        }");
             builder.AppendLine();
+            builder.AppendLine("        /// <summary>解析逗号分隔的整数数组。</summary>");
             builder.AppendLine("        private static int[] ParseIntArray(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            if (string.IsNullOrEmpty(text))");
@@ -409,7 +385,7 @@ namespace NBC.ConfigKit
             builder.AppendLine("            return result;");
             builder.AppendLine("        }");
             builder.AppendLine();
-            builder.AppendLine("        /// <summary>还原 TSV 的转义（`\\\\t` → 制表符 等）。</summary>");
+            builder.AppendLine("        /// <summary>还原 TSV 的转义。</summary>");
             builder.AppendLine("        private static string Unescape(string text)");
             builder.AppendLine("        {");
             builder.AppendLine("            if (string.IsNullOrEmpty(text) || text.IndexOf('\\\\') < 0)");
@@ -643,10 +619,9 @@ namespace NBC.ConfigKit
                                          string tableName, string what)
         {
             builder.AppendLine("// <auto-generated />");
-            builder.Append("// 本文件由 ").Append(options.GeneratorName)
-                   .Append(" 生成（").Append(tableName).Append(" 表的").Append(what).Append("）。")
-                   .AppendLine();
-            builder.AppendLine("// ⚠️ 手改会被下次导出覆盖。要改数据请改源表，要改行为请改别的文件。");
+            builder.Append("// 由 ").Append(options.GeneratorName).Append(" 生成：")
+                   .Append(tableName).Append(" 表的").Append(what).AppendLine("。");
+            builder.AppendLine("// ⚠️ 手改会被下次导出覆盖。要改数据请改源表。");
             builder.AppendLine();
         }
     }

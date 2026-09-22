@@ -86,6 +86,9 @@ namespace NBC.ConfigKit.SelfTest
             Run("代码生成：SO 含主键索引、Get/TryGet 与 TSV 加载器", CodeGen_ScriptableObjectHasIndex);
             Run("代码生成：注释消毒（不许出现连续两个连字符）", CodeGen_SanitizesDocComments);
 
+            Run("代码生成：注释只出现在「文件头 / 变量名后 / 类名方法名前」（负责人的规则）",
+                CodeGen_CommentDensityRule);
+
             // ---- TSV 中间产物 ----
             Run("TSV：表头是字段名，一行一条数据", Tsv_HeaderAndRows);
             Run("TSV：单元格里的制表符/换行要转义（否则整行静默错位）", Tsv_EscapesTabsAndNewlines);
@@ -855,6 +858,139 @@ namespace NBC.ConfigKit.SelfTest
 
             // 数据行必须仍然是 2 格（制表符被转义，没有把行拆散）
             CheckEqual("1\t第一行\\t带制表符", lines[1], "制表符要转义成 \\t，否则整行错位");
+        }
+
+        /// <summary>
+        /// **生成代码的注释密度规则**（2026-09-22 由负责人明确）：
+        /// <para>
+        /// 只有三处**必定**有注释 ——
+        /// ① **文件开头**、② **变量名后**（行尾）、③ **类名 / 方法名前**；
+        /// **其他地方非必要不加注释。**
+        /// </para>
+        /// <para>
+        /// 这条做成机械检查，因为它太容易被"顺手多写一句"破坏，
+        /// 而生成物的注释一旦膨胀，每次导出的 diff 都变脏、也没人读。
+        /// </para>
+        /// </summary>
+        private static void CodeGen_CommentDensityRule()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", ValidHeroRows(), "Hero.csv");
+
+            ExportReport report = Export(source);
+            Check(report.Succeeded, "应当成功：\n" + Render(report.Diagnostics));
+
+            AssertCommentRule(FileContent(report, "Config_Hero.cs"), "Config_Hero.cs");
+            AssertCommentRule(FileContent(report, "HeroConfig.cs"), "HeroConfig.cs");
+        }
+
+        /// <summary>逐行检查生成代码的注释规则。</summary>
+        private static void AssertCommentRule(string code, string fileName)
+        {
+            string[] lines = code.Replace("\r\n", "\n").Split('\n');
+            bool sawNamespace = false;
+            int fieldCount = 0;
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                string trimmed = line.TrimStart();
+
+                if (trimmed.StartsWith("namespace ", StringComparison.Ordinal))
+                {
+                    sawNamespace = true;
+                    continue;
+                }
+
+                // ① 文件开头（namespace 之前）允许 `//` 注释
+                if (!sawNamespace)
+                {
+                    continue;
+                }
+
+                // ③ 类名 / 方法名前：`///` 允许，但**下一行必须是类或方法**（不能是字段）
+                if (trimmed.StartsWith("///", StringComparison.Ordinal))
+                {
+                    string next = NextNonDocLine(lines, i + 1);
+                    bool isDeclaration = next.Contains(" class ", StringComparison.Ordinal) ||
+                                         next.Contains("(", StringComparison.Ordinal);
+
+                    Check(isDeclaration,
+                        $"{fileName} 第 {i + 1} 行的 /// 注释**不是**在类名/方法名前（下一行是「{next.Trim()}」）—— " +
+                        "规则：字段的注释要写在**变量名后**的行尾");
+                    continue;
+                }
+
+                // 其它地方**不许**有独立注释行（② 行尾注释不算，它在代码后面）
+                if (trimmed.StartsWith("//", StringComparison.Ordinal))
+                {
+                    throw new Exception(
+                        $"{fileName} 第 {i + 1} 行有独立注释行「{trimmed}」—— " +
+                        "规则：注释只允许在 文件头 / 变量名后 / 类名方法名前");
+                }
+
+                // ② 字段声明必须带**行尾注释**
+                if (IsFieldDeclaration(trimmed))
+                {
+                    fieldCount++;
+                    Check(line.Contains("//", StringComparison.Ordinal),
+                        $"{fileName} 第 {i + 1} 行的字段「{trimmed}」没有行尾注释 —— 规则：变量名后必加注释");
+                }
+            }
+
+            // 正对照：确实检查到了字段（否则"全部通过"可能只是没扫到东西）
+            Check(fieldCount > 0, $"{fileName} 里一个字段都没扫到，检查可能没在工作");
+        }
+
+        /// <summary>
+        /// 跳过连续的 `///` 行与**特性行**（`[Serializable]` / `[CreateAssetMenu(...)]`），
+        /// 返回第一个真正的声明行。
+        /// <para>
+        /// ⚠️ 跳特性这一步是自测当场暴露的：类名前的注释后面跟的是 `[Serializable]`，
+        /// 而"下一行不是声明"被误判成违规。**守卫的判据要覆盖语言的实际写法**，
+        /// 不能只覆盖最常见的那种。
+        /// </para>
+        /// </summary>
+        private static string NextNonDocLine(string[] lines, int start)
+        {
+            for (int i = start; i < lines.Length; i++)
+            {
+                string trimmed = lines[i].TrimStart();
+
+                if (trimmed.StartsWith("///", StringComparison.Ordinal) ||
+                    trimmed.StartsWith("[", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return lines[i];
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// 像不像字段声明（`public int id;  // 注释` / `private Dictionary&lt;...&gt; m_x;  // 注释`）。
+        /// <para>
+        /// ⚠️ **必须先剥掉行尾注释再判断** —— 字段现在以注释结尾，
+        /// 直接 `EndsWith(";")` 会永远为假（自测的正对照当场抓到了这一点）。
+        /// </para>
+        /// </summary>
+        private static bool IsFieldDeclaration(string trimmed)
+        {
+            int comment = trimmed.IndexOf("//", StringComparison.Ordinal);
+            string code = (comment >= 0 ? trimmed.Substring(0, comment) : trimmed).TrimEnd();
+
+            if (!code.StartsWith("public ", StringComparison.Ordinal) &&
+                !code.StartsWith("private ", StringComparison.Ordinal) &&
+                !code.StartsWith("internal ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return code.EndsWith(";", StringComparison.Ordinal) &&
+                   !code.Contains("(", StringComparison.Ordinal) &&
+                   !code.Contains(" class ", StringComparison.Ordinal);
         }
 
         // ====================================================================
