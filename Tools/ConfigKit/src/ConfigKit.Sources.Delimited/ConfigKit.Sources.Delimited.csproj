@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.Sources.Delimited —— 接缝① 的实现之一：分隔符文本（CSV / TSV）
+       ⚠️ 零第三方依赖（这点很重要：NPOI 还原不了的时候，全流程还能跑通）
+       对应：Docs\01 §10.5 的 CFG-10（.csv 来源，P2 → 现在是 M1 的先行路径）
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>NBC.ConfigKit.Sources</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.Sources.Delimited</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ConfigKit.Core\ConfigKit.Core.csproj" />
+  </ItemGroup>
+
+</Project>

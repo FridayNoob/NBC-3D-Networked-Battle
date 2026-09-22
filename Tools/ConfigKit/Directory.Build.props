@@ -1,0 +1,37 @@
+<Project>
+
+  <!-- ========================================================================
+       ConfigKit 统一构建属性
+       项目：3D联网战斗Demo   对应：Docs\17-配置表规范.md（C1）、M1-C2
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <!-- ⚠️ 这两个值是本工具链最重要的一条设计约束，别随手改成 12.0：
+         ① netstandard2.1 + ② LangVersion 9.0
+         目的：让 ConfigKit.Core / Sources.Delimited **将来能原样丢进 Unity** 编译
+         （Unity 2022.3 的 C# 是 9.0，且没有 System.Runtime.CompilerServices.IsExternalInit）。
+         推论（写在下面免得别人踩）：
+           · 不用 file-scoped namespace（C# 10）
+           · 不用 record / init（需要 IsExternalInit，netstandard2.1 里没有）
+           · 不开 ImplicitUsings（Unity 也没有，靠它编译会一堆 CS0246）
+         只有 Cli / SelfTest 这两个【宿主】放开到 net8.0 + C# 12 —— 它们不打算进 Unity。 -->
+    <LangVersion>9.0</LangVersion>
+    <!-- ⚠️ Nullable 关掉（而不是 enable）：本工具链的 Core 要能**原样丢进 Unity**，
+         而 Unity 工程不开 nullable 上下文；开着它只会在移植时冒出一堆 CS8632。
+         空引用安全改用两样东西表达：
+           ① 公共方法的 XML 注释写清"什么情况下是 null"
+           ② **防御性判空**（例如 Diagnostics 的排序与格式化对 null 位置是容错的）
+         这个取舍与 Server 侧不同（那边 enable）——因为那边不进 Unity。 -->
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Deterministic>true</Deterministic>
+
+    <Version>0.1.0</Version>
+    <Company>NBC</Company>
+    <Product>NBC ConfigKit</Product>
+  </PropertyGroup>
+
+</Project>

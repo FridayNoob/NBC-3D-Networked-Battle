@@ -1,0 +1,791 @@
+// ============================================================================
+//  ConfigKit · 自测运行器
+//  对应：Docs\16-M1开工清单.md C2 的验收「故意写错一格 → 报错定位到文件+表+行+列」
+//
+//  跑法：dotnet run --project Tools\ConfigKit\tests\ConfigKit.SelfTest
+//  退出码：0 = 全绿；1 = 有红（逐条打印）
+//
+//  ---------------------------------------------------------------------------
+//  这个运行器自己的"正/负对照"
+//  ---------------------------------------------------------------------------
+//  · 每条断言都有**具体期望值**，不是"没崩就算过"
+//  · 架构守卫那两条**先被自己验一遍**（拿一段内含 PackageReference 的合成 XML
+//    喂给检查函数，必须报违规）—— 否则"守卫报 0 违规"可能只是它根本没在工作（W9）
+// ============================================================================
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using NBC.ConfigKit;
+using NBC.ConfigKit.Sources;
+
+namespace NBC.ConfigKit.SelfTest
+{
+    /// <summary>极简断言运行器。</summary>
+    internal static class Program
+    {
+        private static int s_passed;
+        private static int s_failed;
+
+        private static int Main()
+        {
+            try
+            {
+                Console.OutputEncoding = Encoding.UTF8;
+            }
+            catch (IOException)
+            {
+                // 输出被重定向到管道时可能设不了编码 —— 不该因为"显示问题"让自测失败
+            }
+
+            Console.WriteLine("=== ConfigKit 自测 ===");
+
+            // ---- 位置与格式化 ----
+            Run("列号字母转换（1→A / 26→Z / 27→AA / 52→AZ / 53→BA）", ColumnLetters);
+            Run("⚠️ 报错格式契约（Docs\\17 §八 的四要素 + 期望/实际）", DiagnosticFormatContract);
+            Run("表级诊断不带「第 0 行」这种废话", TableLevelLocationReadsWell);
+
+            // ---- 表头解析 ----
+            Run("合法表：0 错误", ValidSet_HasNoErrors);
+            Run("不认识的类型 → CFG0003", UnknownType_IsReported);
+            Run("不认识的规则 → CFG0005（拼错不能被静默忽略）", UnknownRule_IsReported);
+            Run("规则参数个数不对 → CFG0005", RuleArity_IsReported);
+            Run("float 没标 view → CFG0013", FloatWithoutView_IsReported);
+            Run("float 标了 view → 通过", FloatWithView_IsAccepted);
+            Run("字段名中间断了 → CFG0015", BrokenHeader_IsReported);
+            Run("表名不规范 → CFG0002", BadTableName_IsReported);
+
+            // ---- 数据校验 ----
+            Run("该填的格子空着 → CFG0006", EmptyRequiredCell_IsReported);
+            Run("可空字段留空 → 通过", NullableEmpty_IsAccepted);
+            Run("写了 `-` 当空值 → CFG0007", DashPlaceholder_IsReported);
+            Run("类型对不上 → CFG0008", BadInteger_IsReported);
+            Run("range 越界 → CFG0009", OutOfRange_IsReported);
+            Run("int 溢出 → CFG0009", IntOverflow_IsReported);
+            Run("len 越界 → CFG0012", Length_IsReported);
+            Run("unique 冲突 → CFG0010", NotUnique_IsReported);
+            Run("主键重复 → CFG0017，且说明里指出**两行**", DuplicateKey_NamesBothRows);
+            Run("外键值不存在 → CFG0011", ForeignKeyValueMissing_IsReported);
+            Run("外键**表**不存在 → CFG0011（和值不存在分开报）", ForeignKeyTableMissing_IsReported);
+            Run("表中间空行 → CFG0014（不许静默截断）", BlankRowInMiddle_IsReported);
+            Run("一次报出全部错误（不是遇到第一个就停）", AllErrors_AreReportedAtOnce);
+            Run("有结构错误时不再校验数据（避免连锁误报）", FatalStructure_StopsDataValidation);
+
+            // ---- 排序 ----
+            Run("诊断排序：按 文件→表→行→列", Diagnostics_AreSortedByLocation);
+
+            // ---- 分隔符来源 ----
+            Run("CSV 拆分：引号 / 转义引号 / 引号内分隔符", Csv_SplitsQuotedCells);
+
+            // ---- 架构守卫 ----
+            Run("架构守卫：检查函数本身有效（负对照）", ArchitectureGuard_DetectsViolation);
+            Run("架构守卫：注释里的字样不算违规（守卫自己也得过这关）", ArchitectureGuard_IgnoresComments);
+            Run("架构守卫：ConfigKit.Core 零第三方依赖", Core_HasNoPackageReference);
+            Run("架构守卫：ConfigKit.Core 不引用任何 Sources.*", Core_DoesNotReferenceSources);
+
+            Console.WriteLine();
+            Console.WriteLine($"=== 通过 {s_passed} 条，失败 {s_failed} 条 ===");
+            return s_failed == 0 ? 0 : 1;
+        }
+
+        // ====================================================================
+        //  断言小工具
+        // ====================================================================
+
+        private static void Run(string name, Action body)
+        {
+            try
+            {
+                body();
+                s_passed++;
+                Console.WriteLine("  [绿] " + name);
+            }
+            catch (Exception exception)
+            {
+                s_failed++;
+                Console.WriteLine("  [红] " + name);
+                Console.WriteLine("       " + exception.Message.Replace("\n", "\n       "));
+            }
+        }
+
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
+            {
+                throw new Exception(message);
+            }
+        }
+
+        private static void CheckEqual(object expected, object actual, string label)
+        {
+            if (!Equals(expected, actual))
+            {
+                throw new Exception($"{label}：期望 <{expected}>，实际 <{actual}>");
+            }
+        }
+
+        private static void CheckContains(string haystack, string needle, string label)
+        {
+            if (haystack == null || haystack.IndexOf(needle, StringComparison.Ordinal) < 0)
+            {
+                throw new Exception($"{label}：文本里找不到 <{needle}>\n实际文本：\n{haystack}");
+            }
+        }
+
+        // ====================================================================
+        //  测试夹具：用 `|` 分隔单元格，读起来像表格
+        // ====================================================================
+
+        private static IReadOnlyList<string[]> Grid(params string[] rows)
+        {
+            return rows.Select(row => row.Split('|')).ToArray();
+        }
+
+        /// <summary>一张合法的 Skill 表 + Buff 表（供外键引用）。</summary>
+        private static InMemoryTableSource ValidSource()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+
+            source.AddTable("Skill", Grid(
+                "id|name|damage",
+                "编号|名称|伤害",
+                "int|string|int",
+                "key|len(1,16)|range(1,99999)",
+                "2001|火球|100",
+                "2002|冰箭|80"));
+
+            source.AddTable("Buff", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,16)",
+                "3001|灼烧",
+                "3002|冰冻"));
+
+            return source;
+        }
+
+        /// <summary>一张合法的 Hero 表（字段覆盖 int / string / float+view / ref[] / 可空 ref）。</summary>
+        private static IReadOnlyList<string[]> ValidHeroRows()
+        {
+            return Grid(
+                "id|name|hp|moveSpeed|critRate|camDist|skillIds|buffId",
+                "编号|名称|生命值|移动速度（毫米/秒）|暴击率（万分比）|相机距离（米）|技能列表|增益",
+                "int|string|int|int|int|float|ref:Skill[]|ref:Buff?",
+                "key|len(1,16)|range(1,999999)|min(0)|range(0,10000)|view||",
+                "1001|剑士|1200|5000|1500|8.5|2001,2002|3001",
+                "1002|法师|800|4800|500|9.0|2002|");
+        }
+
+        /// <summary>跑一遍：解析表头 + 校验数据，把诊断收集器还回来。</summary>
+        private static DiagnosticBag Validate(InMemoryTableSource source, ConfigPolicy policy = null)
+        {
+            ConfigPolicy actualPolicy = policy ?? ConfigPolicy.CreateDefault();
+            SchemaReader reader = new SchemaReader(actualPolicy);
+            ValidationEngine engine = new ValidationEngine(actualPolicy);
+
+            DiagnosticBag diagnostics = new DiagnosticBag();
+            ConfigSet set = new ConfigSet();
+
+            foreach (RawTable raw in source.ReadAll(diagnostics))
+            {
+                set.Add(new ConfigTable(reader.Read(raw, diagnostics), raw));
+            }
+
+            engine.Validate(set, diagnostics);
+            return diagnostics;
+        }
+
+        /// <summary>诊断里的编号集合（方便断言"有没有报这一类"）。</summary>
+        private static List<string> Codes(DiagnosticBag bag)
+        {
+            return bag.Items.Select(item => item.Code).ToList();
+        }
+
+        private static Diagnostic FirstOf(DiagnosticBag bag, string code)
+        {
+            Diagnostic found = bag.Items.FirstOrDefault(item => item.Code == code);
+            Check(found != null, $"没有任何一条 {code} 诊断。实际编号：{string.Join(", ", Codes(bag))}");
+            return found;
+        }
+
+        // ====================================================================
+        //  位置与格式化
+        // ====================================================================
+
+        private static void ColumnLetters()
+        {
+            CheckEqual("A", SourceLocation.ToColumnLetter(1), "第 1 列");
+            CheckEqual("Z", SourceLocation.ToColumnLetter(26), "第 26 列");
+            CheckEqual("AA", SourceLocation.ToColumnLetter(27), "第 27 列");
+            CheckEqual("AZ", SourceLocation.ToColumnLetter(52), "第 52 列");
+            CheckEqual("BA", SourceLocation.ToColumnLetter(53), "第 53 列");
+            CheckEqual(string.Empty, SourceLocation.ToColumnLetter(0), "第 0 列（不指列）");
+        }
+
+        /// <summary>
+        /// **这是 C2 的验收标准**：故意写错一格（`hp = 0` 越界），
+        /// 报错必须能定位到 文件 + 表 + 行 + 列，而且形状和 `Docs\17` §8.1 一模一样。
+        /// </summary>
+        private static void DiagnosticFormatContract()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", Grid(
+                "id|name|hp|moveSpeed|critRate|camDist|skillIds|buffId",
+                "编号|名称|生命值|移动速度（毫米/秒）|暴击率（万分比）|相机距离（米）|技能列表|增益",
+                "int|string|int|int|int|float|ref:Skill[]|ref:Buff?",
+                "key|len(1,16)|range(1,999999)|min(0)|range(0,10000)|view||",
+                "1001|剑士|0|5000|1500|8.5|2001,2002|3001"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.OutOfRange);
+
+            string text = new TextDiagnosticFormatter().Format(diagnostic);
+
+            string expected =
+                "[配置表] Hero.csv › Hero 第 5 行 «hp»（第 3 列，Excel 列号 C）：" + Environment.NewLine +
+                "    超出允许范围  [CFG0009]" + Environment.NewLine +
+                "    期望：range(1,999999)" + Environment.NewLine +
+                "    实际：0";
+
+            CheckEqual(expected, text, "报错文本（契约形状）");
+
+            // 四要素逐个点名断言：即使形状改了，也要保证这四样都在
+            CheckContains(text, "Hero.csv", "要素①文件");
+            CheckContains(text, "Hero", "要素②表");
+            CheckContains(text, "第 5 行", "要素③行（**Excel 真实行号**）");
+            CheckContains(text, "Excel 列号 C", "要素④列");
+        }
+
+        private static void TableLevelLocationReadsWell()
+        {
+            SourceLocation location = new SourceLocation("Hero.csv", "heroes",
+                SourceLocation.NoRow, SourceLocation.NoColumn, null);
+
+            CheckEqual("Hero.csv › heroes", location.ToString(), "表级位置的可读文本");
+        }
+
+        // ====================================================================
+        //  表头解析
+        // ====================================================================
+
+        private static void ValidSet_HasNoErrors()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", ValidHeroRows(), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+
+            CheckEqual(0, diagnostics.ErrorCount,
+                "合法表不该有错误。实际：\n" + Render(diagnostics));
+        }
+
+        private static void UnknownType_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|integer",
+                "key|range(1,10)",
+                "1|5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.UnknownType);
+            CheckEqual(2, diagnostic.Location.Column, "出错的是第 2 列");
+        }
+
+        private static void UnknownRule_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|ranage(1,999999)",
+                "1|5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.UnknownRule);
+            CheckEqual("ranage(1,999999)", diagnostic.Actual, "原样回显写错的规则");
+        }
+
+        private static void RuleArity_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|range(1)",
+                "1|5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.UnknownRule);
+            CheckContains(diagnostic.Message, "需要 2 个参数", "参数个数提示");
+        }
+
+        private static void FloatWithoutView_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|speed",
+                "编号|速度",
+                "int|float",
+                "key|min(0)",
+                "1|1.5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            FirstOf(diagnostics, DiagnosticCodes.FloatWithoutViewFlag);
+        }
+
+        private static void FloatWithView_IsAccepted()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|speed",
+                "编号|速度",
+                "int|float",
+                "key|min(0);view",
+                "1|1.5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            CheckEqual(0, diagnostics.ErrorCount, "标了 view 的 float 应当通过。实际：\n" + Render(diagnostics));
+        }
+
+        private static void BrokenHeader_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id||hp",
+                "编号||生命值",
+                "int||int",
+                "key||range(1,10)",
+                "1||5"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            FirstOf(diagnostics, DiagnosticCodes.BrokenColumnHeader);
+        }
+
+        private static void BadTableName_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("hero_table", Grid(
+                "id",
+                "编号",
+                "int",
+                "key",
+                "1"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.Naming);
+            CheckEqual(1, diagnostic.Location.Row, "表名问题要指向字段名那一行（表级诊断也要有位置）");
+        }
+
+        // ====================================================================
+        //  数据校验
+        // ====================================================================
+
+        private static void EmptyRequiredCell_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|range(1,10)",
+                "1|"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.UnexpectedEmpty);
+
+            CheckEqual(5, diagnostic.Location.Row, "行号是 Excel 真实行号");
+            CheckEqual("B", diagnostic.Location.ColumnLetter, "hp 是这一表的第 2 列 → B");
+        }
+
+        private static void NullableEmpty_IsAccepted()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", ValidHeroRows(), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.UnexpectedEmpty),
+                "`ref:Buff?` 留空是合法的，不该报 CFG0006");
+        }
+
+        private static void DashPlaceholder_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,16)",
+                "1|-"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.BadEmptyPlaceholder);
+            CheckContains(diagnostic.Message, "留空", "提示里要说清正确写法");
+        }
+
+        private static void BadInteger_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|range(1,10)",
+                "1|abc"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            FirstOf(diagnostics, DiagnosticCodes.ValueParseFailed);
+        }
+
+        private static void OutOfRange_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|range(1,10)",
+                "1|99"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.OutOfRange);
+            CheckEqual("range(1,10)", diagnostic.Expected, "期望里回显规则原文");
+            CheckEqual("99", diagnostic.Actual, "实际是单元格原文");
+        }
+
+        private static void IntOverflow_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|int",
+                "key|",
+                "1|99999999999"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            FirstOf(diagnostics, DiagnosticCodes.OutOfRange);
+        }
+
+        private static void Length_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,3)",
+                "1|这个名字太长了"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            FirstOf(diagnostics, DiagnosticCodes.LengthOutOfRange);
+        }
+
+        private static void NotUnique_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,16);unique",
+                "1|同名",
+                "2|同名"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.NotUnique);
+            CheckEqual(6, diagnostic.Location.Row, "冲突报在**后面那一行**上");
+            CheckContains(diagnostic.Message, "第 5 行", "说明里指出第一次出现在哪一行");
+        }
+
+        private static void DuplicateKey_NamesBothRows()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,16)",
+                "1001|甲",
+                "1001|乙"));
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.DuplicateKey);
+
+            CheckEqual(6, diagnostic.Location.Row, "重复的那一行");
+            CheckContains(diagnostic.Message, "第 5 行", "说明里指出第一行");
+            CheckEqual("1001", diagnostic.Actual, "实际值");
+        }
+
+        private static void ForeignKeyValueMissing_IsReported()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", Grid(
+                "id|skillIds",
+                "编号|技能列表",
+                "int|ref:Skill[]",
+                "key|",
+                "1001|2001,9999"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ForeignKeyMissing);
+            CheckContains(diagnostic.Message, "9999", "指出是哪个值");
+            CheckContains(diagnostic.Message, "没有这个主键", "说清是「值不存在」");
+        }
+
+        private static void ForeignKeyTableMissing_IsReported()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|itemId",
+                "编号|道具",
+                "int|ref:Item",
+                "key|",
+                "1001|1"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ForeignKeyMissing);
+            CheckContains(diagnostic.Message, "Item", "指出是哪个表");
+            CheckContains(diagnostic.Message, "不存在", "说清是\"表不存在\"（和值不存在分开）");
+        }
+
+        private static void BlankRowInMiddle_IsReported()
+        {
+            InMemoryTableSource source = ValidSource();
+            source.AddTable("Hero", Grid(
+                "id|name",
+                "编号|名称",
+                "int|string",
+                "key|len(1,16)",
+                "1001|甲",
+                "|",
+                "1002|乙"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.BlankRowInMiddle);
+            CheckEqual(7, diagnostic.Location.Row, "指向空行**之后**那条数据");
+        }
+
+        private static void AllErrors_AreReportedAtOnce()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp|name",
+                "编号|生命值|名称",
+                "int|int|string",
+                "key|range(1,10)|len(1,2)",
+                "0|99|太长了吧"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+
+            // 三处错误（主键 < 1 / hp 越界 / name 太长）应当一次全报出来
+            Check(diagnostics.ErrorCount >= 3,
+                $"一次应当报出全部 {3} 类错误，实际只有 {diagnostics.ErrorCount} 条：\n" + Render(diagnostics));
+        }
+
+        private static void FatalStructure_StopsDataValidation()
+        {
+            InMemoryTableSource source = new InMemoryTableSource();
+            source.AddTable("Hero", Grid(
+                "id|hp",
+                "编号|生命值",
+                "int|bogus",
+                "key|range(1,10)",
+                "9999|9999"), "Hero.csv");
+
+            DiagnosticBag diagnostics = Validate(source);
+
+            Check(Codes(diagnostics).Contains(DiagnosticCodes.UnknownType), "结构错误要报");
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.OutOfRange),
+                "结构都不成立时不该再校验数据（否则连锁误报会把真正的错埋掉）");
+        }
+
+        private static void Diagnostics_AreSortedByLocation()
+        {
+            DiagnosticBag bag = new DiagnosticBag();
+            bag.Error("X", new SourceLocation("b.csv", "B", 2, 1, "c"), "m");
+            bag.Error("X", new SourceLocation("a.csv", "A", 9, 1, "c"), "m");
+            bag.Error("X", new SourceLocation("a.csv", "A", 3, 5, "c"), "m");
+            bag.SortByLocation();
+
+            CheckEqual("a.csv", bag.Items[0].Location.File, "先按文件");
+            CheckEqual(3, bag.Items[0].Location.Row, "同文件按行");
+            CheckEqual(9, bag.Items[1].Location.Row, "同文件按行");
+            CheckEqual("b.csv", bag.Items[2].Location.File, "后按文件");
+        }
+
+        // ====================================================================
+        //  分隔符来源
+        // ====================================================================
+
+        private static void Csv_SplitsQuotedCells()
+        {
+            DelimitedTableSource source = new DelimitedTableSource(".");
+            IReadOnlyList<string> cells = source.SplitLine("1001,\"a,b\",\"他说\"\"你好\"\"\",5");
+
+            CheckEqual(4, cells.Count, "单元格个数");
+            CheckEqual("1001", cells[0], "第 1 格");
+            CheckEqual("a,b", cells[1], "引号里的逗号不算分隔符");
+            CheckEqual("他说\"你好\"", cells[2], "两个引号 = 一个引号");
+            CheckEqual("5", cells[3], "第 4 格");
+        }
+
+        // ====================================================================
+        //  架构守卫（⚠️ 守卫自己必须先被验一遍 —— W9）
+        // ====================================================================
+
+        /// <summary>
+        /// 找出一个工程文件里的违规点（纯函数，方便负对照）。
+        /// <para>
+        /// ⚠️ **先剥掉 XML 注释再匹配。**
+        /// 这条是自测跑出来的：`ConfigKit.Core.csproj` 的**注释里**写着
+        /// "不得引用任何 ConfigKit.Sources.*"，于是守卫把这个字样当成了真违规。
+        /// 这是本项目的老毛病（机械检查命中注释 —— W9 已经栽过 4 次），
+        /// **修法必须落在守卫这一侧**：否则以后谁在注释里提一句就红，
+        /// 大家就会开始"改注释让检查过去"，而守卫也就废了。
+        /// </para>
+        /// </summary>
+        private static List<string> FindViolations(string csprojXml, bool allowThirdParty)
+        {
+            List<string> violations = new List<string>();
+            string code = Regex.Replace(csprojXml ?? string.Empty, "<!--.*?-->", string.Empty,
+                RegexOptions.Singleline);
+
+            if (!allowThirdParty &&
+                Regex.IsMatch(code, "<PackageReference\\s+Include=", RegexOptions.IgnoreCase))
+            {
+                violations.Add("出现了 <PackageReference>（本工程必须零第三方依赖）");
+            }
+
+            if (Regex.IsMatch(code, "ConfigKit\\.Sources\\.", RegexOptions.IgnoreCase))
+            {
+                violations.Add("引用了 ConfigKit.Sources.*（Core 不许认识具体来源）");
+            }
+
+            return violations;
+        }
+
+        /// <summary>负对照：合成一段**含违规**的工程文本，检查函数必须报出来。</summary>
+        private static void ArchitectureGuard_DetectsViolation()
+        {
+            const string bad = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <PackageReference Include=""NPOI"" Version=""2.8.0"" />
+    <ProjectReference Include=""..\ConfigKit.Sources.Xlsx\ConfigKit.Sources.Xlsx.csproj"" />
+  </ItemGroup>
+</Project>";
+
+            List<string> violations = FindViolations(bad, allowThirdParty: false);
+
+            CheckEqual(2, violations.Count, "负对照：两条违规都该被抓到");
+            Check(violations[0].Contains("PackageReference"), "第一条是依赖违规");
+            Check(violations[1].Contains("Sources"), "第二条是来源耦合违规");
+
+            // 正对照：去掉违规内容后必须干净
+            const string good = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <ProjectReference Include=""..\ConfigKit.Core\ConfigKit.Core.csproj"" />
+  </ItemGroup>
+</Project>";
+
+            CheckEqual(0, FindViolations(good, allowThirdParty: false).Count, "正对照：干净工程不该报违规");
+        }
+
+        /// <summary>
+        /// **注释里的字样不算违规**（守卫自己必须先过这一关）。
+        /// <para>这条是被真实情况逼出来的：Core 的 csproj 注释里就写着那句"不许引用"。</para>
+        /// </summary>
+        private static void ArchitectureGuard_IgnoresComments()
+        {
+            const string onlyInComment = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <!-- ⚠️ 本工程【不得】引用任何 ConfigKit.Sources.*，也不许有 PackageReference -->
+  <ItemGroup>
+    <ProjectReference Include=""..\ConfigKit.Core\ConfigKit.Core.csproj"" />
+  </ItemGroup>
+</Project>";
+
+            CheckEqual(0, FindViolations(onlyInComment, allowThirdParty: false).Count,
+                "只出现在注释里的字样不该被判违规");
+
+            const string realPlusComment = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <!-- 注释里也提一句 ConfigKit.Sources.Xlsx -->
+  <ItemGroup>
+    <ProjectReference Include=""..\ConfigKit.Sources.Xlsx\ConfigKit.Sources.Xlsx.csproj"" />
+  </ItemGroup>
+</Project>";
+
+            CheckEqual(1, FindViolations(realPlusComment, allowThirdParty: false).Count,
+                "真违规夹在注释旁边时，仍然必须抓到（剥注释不能把真问题一起剥掉）");
+        }
+
+        private static void Core_HasNoPackageReference()
+        {
+            string path = FindProjectFile("ConfigKit.Core");
+            string xml = File.ReadAllText(path, Encoding.UTF8);
+            List<string> violations = FindViolations(xml, allowThirdParty: false);
+
+            Check(violations.Count == 0, $"ConfigKit.Core 有违规：{string.Join("；", violations)}\n({path})");
+            CheckContains(xml, "netstandard2.1", "Core 必须钉在 netstandard2.1（要能丢进 Unity）");
+        }
+
+        private static void Core_DoesNotReferenceSources()
+        {
+            string path = FindProjectFile("ConfigKit.Core");
+            string xml = File.ReadAllText(path, Encoding.UTF8);
+
+            // ⚠️ 这里**必须复用会剥注释的守卫函数**，不能自己写一遍 `Contains`。
+            //    第一次我就是自己写的，于是同一个坑在两个地方各踩了一遍
+            //    （Core 的注释里写着"不许引用 ConfigKit.Sources.*"，被自己的 Contains 命中）。
+            //    **判据：一个检查逻辑只该存在一处。**
+            //    allowThirdParty: true —— 这条只负责"来源耦合"这一个维度，依赖那条由上面一条守。
+            List<string> violations = FindViolations(xml, allowThirdParty: true);
+
+            Check(violations.Count == 0,
+                $"ConfigKit.Core 不能认识具体来源：{string.Join("；", violations)}\n({path})");
+        }
+
+        /// <summary>从自测程序所在目录往上找仓库里的 Tools\ConfigKit。</summary>
+        private static string FindProjectFile(string projectName)
+        {
+            DirectoryInfo directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+            while (directory != null)
+            {
+                string candidate = Path.Combine(directory.FullName, "Tools", "ConfigKit", "src", projectName,
+                    projectName + ".csproj");
+
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+
+                directory = directory.Parent;
+            }
+
+            throw new Exception($"找不到 {projectName}.csproj（从 {AppContext.BaseDirectory} 向上找 Tools\\ConfigKit 没找到）");
+        }
+
+        /// <summary>把诊断全部渲染出来（测试失败时给人看）。</summary>
+        private static string Render(DiagnosticBag bag)
+        {
+            TextDiagnosticFormatter formatter = new TextDiagnosticFormatter();
+            StringBuilder builder = new StringBuilder();
+
+            foreach (Diagnostic diagnostic in bag.Items)
+            {
+                builder.AppendLine(formatter.Format(diagnostic));
+            }
+
+            builder.Append(formatter.FormatSummary(bag));
+            return builder.ToString();
+        }
+    }
+}

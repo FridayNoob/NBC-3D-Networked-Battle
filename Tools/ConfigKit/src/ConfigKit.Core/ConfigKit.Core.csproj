@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.Core —— 模型 / 接缝接口 / 表头解析 / 校验 / 诊断 / 代码生成
+       ⚠️ 本工程【零第三方依赖】，且【不得】引用任何 ConfigKit.Sources.*
+          （由 ConfigKit.SelfTest 的架构守卫机械检查）
+       ⚠️ 目标框架与语言版本锁在 netstandard2.1 + C# 9，理由见 Directory.Build.props
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>NBC.ConfigKit</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.SelfTest —— 零依赖自测运行器
+       ⚠️ 为什么不用 xUnit：2026-09-22 实测本沙箱**还原不了任何 NuGet 包**
+          （NU1301，无网络），xUnit 拿不到。而"故意写错一格 → 报错定位到
+          文件+表+行+列"是 C2 的验收标准，**必须能被跑一遍看到**。
+          （将来 xUnit 能还原时，把断言搬进 [Fact] 即可，断言体本身不依赖本运行器。）
+       ⚠️ 本工程是【宿主】，所以放开到 net8.0 + C# 12（它不打算进 Unity）
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>NBC.ConfigKit.SelfTest</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.SelfTest</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ConfigKit.Core\ConfigKit.Core.csproj" />
+    <ProjectReference Include="..\..\src\ConfigKit.Sources.Delimited\ConfigKit.Sources.Delimited.csproj" />
+  </ItemGroup>
+
+</Project>
