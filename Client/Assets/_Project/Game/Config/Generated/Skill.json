@@ -1,0 +1,8 @@
+{
+  "table": "Skill",
+  "fields": ["id", "name", "damage"],
+  "rows": [
+    { "id": 2001, "name": "火球", "damage": 100 },
+    { "id": 2002, "name": "冰箭", "damage": 80 }
+  ]
+}

@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b73db77c940e95449a22bea8f363031, type: 3}
+  m_Name: HeroConfig
+  m_EditorClassIdentifier: 
+  rows:
+  - id: 1001
+    name: "\u5251\u58EB"
+    hp: 1200
+    moveSpeed: 5000
+    skillIds: d1070000d2070000
+  - id: 1002
+    name: "\u6CD5\u5E08"
+    hp: 800
+    moveSpeed: 4800
+    skillIds: d2070000

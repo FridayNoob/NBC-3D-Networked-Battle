@@ -1,0 +1,8 @@
+{
+  "table": "Hero",
+  "fields": ["id", "name", "hp", "moveSpeed", "skillIds"],
+  "rows": [
+    { "id": 1001, "name": "剑士", "hp": 1200, "moveSpeed": 5000, "skillIds": [ 2001, 2002 ] },
+    { "id": 1002, "name": "法师", "hp": 800, "moveSpeed": 4800, "skillIds": [ 2002 ] }
+  ]
+}
