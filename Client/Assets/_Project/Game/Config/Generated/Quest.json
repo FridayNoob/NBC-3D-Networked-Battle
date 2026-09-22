@@ -1,0 +1,9 @@
+{
+  "table": "Quest",
+  "fields": ["id", "name", "desc", "conditionIds", "rewardId"],
+  "rows": [
+    { "id": 3001, "name": "初次狩猎", "desc": "击杀 3 只野狼，并带回 2 张狼皮", "conditionIds": [ 4001, 4002 ], "rewardId": 5001 },
+    { "id": 3002, "name": "草药采集", "desc": "帮药师采集 2 份草药", "conditionIds": [ 4003 ], "rewardId": 5002 },
+    { "id": 3003, "name": "森林深处", "desc": "抵达幽暗森林并击杀狼王", "conditionIds": [ 4004, 4005 ], "rewardId": 5003 }
+  ]
+}

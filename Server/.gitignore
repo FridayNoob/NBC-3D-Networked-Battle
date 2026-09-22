@@ -10,6 +10,10 @@
 _unity-ref-probe/
 _nupkg-verify/
 _api-probe/
+# M2 起：在 .NET 上真跑一遍**共享层**纯逻辑（条件系统）的探针。
+# 为什么值得单开一个：共享层的卖点是"双端同一份源码"，
+# 而"能在 .NET 8 上真跑"这件事，只有跑一遍才算数（Unity 侧跑的是 Mono/IL2CPP）。
+_condition-probe/
 
 # --- 这些目录下的 NuGet 还原产物（体积大、可重建，不应进仓库） ---
 #

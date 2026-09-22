@@ -1,0 +1,9 @@
+id,eventType,targetId,requiredCount,note
+编号,事件类型（见 EConditionEvent）,目标编号（0 = 任意）,需要数量,说明
+int,enum:NBC.Shared.Condition.EConditionEvent,int,int,string
+key,,"min(0)","range(1,9999)","len(1,32)"
+4001,KillMonster,6001,3,击杀野狼
+4002,CollectItem,7001,2,带回狼皮
+4003,CollectItem,7002,2,采集草药
+4004,ReachArea,1,1,抵达幽暗森林
+4005,KillMonster,6003,1,击杀狼王

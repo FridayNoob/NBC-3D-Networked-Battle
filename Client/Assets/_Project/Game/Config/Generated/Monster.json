@@ -1,0 +1,9 @@
+{
+  "table": "Monster",
+  "fields": ["id", "name", "hp", "attack", "skillIds"],
+  "rows": [
+    { "id": 6001, "name": "野狼", "hp": 300, "attack": 20, "skillIds": [ 2003 ] },
+    { "id": 6002, "name": "森林蜘蛛", "hp": 200, "attack": 15, "skillIds": [ 2002, 2003 ] },
+    { "id": 6003, "name": "狼王", "hp": 2000, "attack": 60, "skillIds": [ 2001, 2002 ] }
+  ]
+}

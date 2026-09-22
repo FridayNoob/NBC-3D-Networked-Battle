@@ -1,0 +1,11 @@
+{
+  "table": "QuestCondition",
+  "fields": ["id", "eventType", "targetId", "requiredCount", "note"],
+  "rows": [
+    { "id": 4001, "eventType": "KillMonster", "targetId": 6001, "requiredCount": 3, "note": "击杀野狼" },
+    { "id": 4002, "eventType": "CollectItem", "targetId": 7001, "requiredCount": 2, "note": "带回狼皮" },
+    { "id": 4003, "eventType": "CollectItem", "targetId": 7002, "requiredCount": 2, "note": "采集草药" },
+    { "id": 4004, "eventType": "ReachArea", "targetId": 1, "requiredCount": 1, "note": "抵达幽暗森林" },
+    { "id": 4005, "eventType": "KillMonster", "targetId": 6003, "requiredCount": 1, "note": "击杀狼王" }
+  ]
+}

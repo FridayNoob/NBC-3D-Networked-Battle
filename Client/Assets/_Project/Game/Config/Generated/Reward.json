@@ -1,0 +1,9 @@
+{
+  "table": "Reward",
+  "fields": ["id", "exp", "gold", "itemId", "itemCount"],
+  "rows": [
+    { "id": 5001, "exp": 100, "gold": 50, "itemId": 7001, "itemCount": 2 },
+    { "id": 5002, "exp": 80, "gold": 40, "itemId": 7002, "itemCount": 1 },
+    { "id": 5003, "exp": 500, "gold": 300, "itemId": 8001, "itemCount": 1 }
+  ]
+}
