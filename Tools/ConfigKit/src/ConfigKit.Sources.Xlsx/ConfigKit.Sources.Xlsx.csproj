@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       ConfigKit.Sources.Xlsx —— 接缝① 的实现：.xlsx（NPOI）
+       ⚠️ **这是整个工具链里【唯一】允许引第三方的工程**（由自测里的架构守卫机械检查）
+       ⚠️ 它【不被】ConfigKit.SelfTest 引用 —— 所以 NPOI 没还原时，
+          其余一切（Core / Delimited / Cli / 自测）**照常能构建、能跑**。
+          这是"接缝优先"的直接好处：**最难搞的依赖被隔离在一个叶子里**。
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>NBC.ConfigKit.Sources</RootNamespace>
+    <AssemblyName>NBC.ConfigKit.Sources.Xlsx</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- T1 已定稿为 NPOI 2.8.0（Apache-2.0），理由见 Docs\05-依赖清单.md §三 -->
+    <PackageReference Include="NPOI" Version="2.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ConfigKit.Core\ConfigKit.Core.csproj" />
+  </ItemGroup>
+
+</Project>

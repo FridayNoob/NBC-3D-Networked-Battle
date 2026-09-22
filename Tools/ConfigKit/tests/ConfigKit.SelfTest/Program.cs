@@ -97,6 +97,7 @@ namespace NBC.ConfigKit.SelfTest
             Run("架构守卫：注释里的字样不算违规（守卫自己也得过这关）", ArchitectureGuard_IgnoresComments);
             Run("架构守卫：ConfigKit.Core 零第三方依赖", Core_HasNoPackageReference);
             Run("架构守卫：ConfigKit.Core 不引用任何 Sources.*", Core_DoesNotReferenceSources);
+            Run("架构守卫：**只有** Sources.Xlsx 允许引第三方", OnlyXlsxMayUseThirdParty);
 
             Console.WriteLine();
             Console.WriteLine($"=== 通过 {s_passed} 条，失败 {s_failed} 条 ===");
@@ -896,8 +897,7 @@ namespace NBC.ConfigKit.SelfTest
         private static List<string> FindViolations(string csprojXml, bool allowThirdParty)
         {
             List<string> violations = new List<string>();
-            string code = Regex.Replace(csprojXml ?? string.Empty, "<!--.*?-->", string.Empty,
-                RegexOptions.Singleline);
+            string code = StripXmlComments(csprojXml);
 
             if (!allowThirdParty &&
                 Regex.IsMatch(code, "<PackageReference\\s+Include=", RegexOptions.IgnoreCase))
@@ -911,6 +911,17 @@ namespace NBC.ConfigKit.SelfTest
             }
 
             return violations;
+        }
+
+        /// <summary>
+        /// 剥掉 XML 注释。
+        /// <para>⚠️ **只留一处实现**：上一轮我在两个地方各写了一遍匹配，
+        /// 于是"注释里的字样"这个坑被踩了两次。判据：一个检查逻辑只该存在一处。</para>
+        /// </summary>
+        private static string StripXmlComments(string csprojXml)
+        {
+            return Regex.Replace(csprojXml ?? string.Empty, "<!--.*?-->", string.Empty,
+                RegexOptions.Singleline);
         }
 
         /// <summary>负对照：合成一段**含违规**的工程文本，检查函数必须报出来。</summary>
@@ -993,24 +1004,99 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>从自测程序所在目录往上找仓库里的 Tools\ConfigKit。</summary>
-        private static string FindProjectFile(string projectName)
+        private static string FindConfigKitRoot()
         {
             DirectoryInfo directory = new DirectoryInfo(AppContext.BaseDirectory);
 
             while (directory != null)
             {
-                string candidate = Path.Combine(directory.FullName, "Tools", "ConfigKit", "src", projectName,
-                    projectName + ".csproj");
+                string candidate = Path.Combine(directory.FullName, "Tools", "ConfigKit", "Directory.Build.props");
 
                 if (File.Exists(candidate))
                 {
-                    return candidate;
+                    return Path.Combine(directory.FullName, "Tools", "ConfigKit");
                 }
 
                 directory = directory.Parent;
             }
 
-            throw new Exception($"找不到 {projectName}.csproj（从 {AppContext.BaseDirectory} 向上找 Tools\\ConfigKit 没找到）");
+            throw new Exception($"从 {AppContext.BaseDirectory} 向上找 Tools\\ConfigKit 没找到");
+        }
+
+        /// <summary>找某个工程的 csproj（单一实现：基于 <see cref="FindConfigKitRoot"/>）。</summary>
+        private static string FindProjectFile(string projectName)
+        {
+            string candidate = Path.Combine(FindConfigKitRoot(), "src", projectName, projectName + ".csproj");
+
+            if (!File.Exists(candidate))
+            {
+                throw new Exception($"找不到 {candidate}");
+            }
+
+            return candidate;
+        }
+
+        /// <summary>列出工具链下所有工程的 csproj（排除 obj 里的生成物）。</summary>
+        private static List<string> FindAllProjects()
+        {
+            string[] files = Directory.GetFiles(FindConfigKitRoot(), "*.csproj", SearchOption.AllDirectories);
+            List<string> result = new List<string>();
+
+            for (int i = 0; i < files.Length; i++)
+            {
+                if (files[i].IndexOf("\\obj\\", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
+                result.Add(files[i]);
+            }
+
+            result.Sort(StringComparer.Ordinal);
+            return result;
+        }
+
+        /// <summary>
+        /// **只有** `ConfigKit.Sources.Xlsx` 允许引第三方依赖。
+        /// <para>
+        /// 这条守卫守的是"接缝优先"的核心收益：**最难搞的依赖被隔离在一个叶子里** ——
+        /// 所以 NPOI 没还原时，Core / Delimited / Cli / 自测**照常构建、照常能跑**。
+        /// 一旦有人往别的工程顺手加个包，这条就红。
+        /// </para>
+        /// </summary>
+        private static void OnlyXlsxMayUseThirdParty()
+        {
+            const string allowed = "ConfigKit.Sources.Xlsx";
+            List<string> projects = FindAllProjects();
+            List<string> withPackages = new List<string>();
+            List<string> offenders = new List<string>();
+
+            for (int i = 0; i < projects.Count; i++)
+            {
+                string code = StripXmlComments(File.ReadAllText(projects[i], Encoding.UTF8));
+
+                if (!Regex.IsMatch(code, "<PackageReference\\s+Include=", RegexOptions.IgnoreCase))
+                {
+                    continue;
+                }
+
+                string name = Path.GetFileNameWithoutExtension(projects[i]);
+                withPackages.Add(name);
+
+                if (name != allowed)
+                {
+                    offenders.Add(name);
+                }
+            }
+
+            // ⚠️ 正对照：先确认"扫到了工程、也扫到了 Xlsx 那一个"。
+            //    否则"恰好一个引第三方"可能只是"一个都没扫到"这种假绿。
+            Check(projects.Count >= 5, $"只扫到 {projects.Count} 个工程，明显不对（是不是路径找错了）");
+            Check(withPackages.Contains(allowed),
+                $"没扫到 {allowed} 的第三方依赖 —— 守卫可能压根没工作。扫到的：{string.Join(", ", withPackages)}");
+            CheckEqual(1, withPackages.Count,
+                $"应当**恰好一个**工程引第三方，实际 {withPackages.Count} 个：{string.Join(", ", withPackages)}");
+            Check(offenders.Count == 0, $"这些工程不该引第三方：{string.Join(", ", offenders)}");
         }
 
         /// <summary>把诊断全部渲染出来（测试失败时给人看）。</summary>

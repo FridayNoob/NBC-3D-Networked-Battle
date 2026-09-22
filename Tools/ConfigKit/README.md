@@ -157,12 +157,33 @@ dotnet run --project Tools/ConfigKit/tests/ConfigKit.SelfTest
 
 | 谁是瓶颈 | 状态 |
 | --- | --- |
-| 我（AI）还原 NPOI | ❌ 不行（无网络，已实测） |
-| 你（负责人）还原 NPOI | ✅ 可以：在能联网的机器上 `dotnet restore Tools\ConfigKit\ConfigKit.sln` |
-| 在此之前怎么办 | 用 `Sources.Delimited`（CSV/TSV，**零依赖**）跑通全流程。Excel 里"另存为 CSV（UTF-8）"即可 |
+| 我（AI）还原 NPOI | ❌ 不行（无网络，已实测 NU1301） |
+| 你（负责人）还原 NPOI | ✅ 一条命令（见下） |
+| 在此之前 | 用 `Sources.Delimited`（CSV/TSV，**零依赖**）跑通全流程。Excel 里"另存为 CSV（UTF-8）"即可 |
 
-> 这不是降级方案：`Docs\01` 的 **CFG-10（`.csv` 来源，P2）** 本来就在路线图上。
-> 只是它现在从"顺便支持"变成了"先支持"。
+```powershell
+# 在能联网的机器上执行一次（还原整个工具链，含 NPOI 2.8.0）
+dotnet restore Tools\ConfigKit\ConfigKit.sln
+```
+
+⚠️ **还原之前**：`ConfigKit.Sources.Xlsx` 这个**一个**工程构建不了（`NU1301`），
+**其余全部照常**（Core / Delimited / Cli / 自测都验过）。所以：
+
+| 命令 | 还原前 | 还原后 |
+| --- | --- | --- |
+| `dotnet build ...\ConfigKit.SelfTest\...csproj` | ✅ | ✅ |
+| `dotnet build ...\ConfigKit.Cli\...csproj` | ✅ | ✅ |
+| `dotnet build Tools\ConfigKit\ConfigKit.sln` | ❌（含 Xlsx） | ✅ |
+| `dotnet build ...\ConfigKit.Sources.Xlsx\...csproj` | ❌ NU1301 | ✅ |
+
+> 📌 **这就是"接缝优先"的直接回报**：最难搞的依赖被隔离在一个**叶子**里，
+> 所以"没还原 NPOI"这件事**不会阻塞其他任何工作**。
+> 这条由自测里的架构守卫机械保证（`只有 Sources.Xlsx 允许引第三方`）。
+
+⚠️ `XlsxTableSource.cs` 是**在 NPOI 还没还原时写的**，所以它**尚未被编译器验证**。
+为了让那一次编译尽量一次过，文件头里逐条列了它用到的 **12 个 NPOI 成员**
+（`ICell.CellType`、`DataFormatter.FormatCellValue`、`NumMergedRegions` …）。
+还原之后若有个别 API 出入，**改动只会落在那一个文件里**。
 
 ---
 
