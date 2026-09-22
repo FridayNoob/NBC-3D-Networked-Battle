@@ -17,9 +17,20 @@ MonoBehaviour:
     name: "\u5251\u58EB"
     hp: 1200
     moveSpeed: 5000
+    critRatePerTenThousand: 1500
+    camDist: 8.5
     skillIds: d1070000d2070000
   - id: 1002
     name: "\u6CD5\u5E08"
     hp: 800
     moveSpeed: 4800
-    skillIds: d2070000
+    critRatePerTenThousand: 500
+    camDist: 9
+    skillIds: d3070000
+  - id: 1003
+    name: "\u5F13\u624B"
+    hp: 900
+    moveSpeed: 5200
+    critRatePerTenThousand: 2500
+    camDist: 7.5
+    skillIds: d2070000d3070000

@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a66d5ce131565444a93bf7b2a409da33, type: 3}
+  m_Name: LevelConfig
+  m_EditorClassIdentifier: 
+  rows:
+  - id: 1
+    sceneName: Level_01
+    displayName: "\u65B0\u624B\u6751"
+    monsterWaves: 3
+    timeLimitSeconds: 300
+    bossSkillId: 0
+  - id: 2
+    sceneName: Level_02
+    displayName: "\u5E7D\u6697\u68EE\u6797"
+    monsterWaves: 5
+    timeLimitSeconds: 600
+    bossSkillId: 2001
+  - id: 3
+    sceneName: Level_03
+    displayName: "\u706B\u7130\u5CE1\u8C37"
+    monsterWaves: 8
+    timeLimitSeconds: 900
+    bossSkillId: 2003
