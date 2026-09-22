@@ -159,25 +159,84 @@ namespace NBC.Tests.EditMode
         }
 
         /// <summary>
-        /// **平均值会掩盖卡顿，最差值不会** ——
-        /// 平均 60 FPS 完全可以藏着每 3 秒一次 200ms 的卡顿，所以两样都要看。
+        /// **平均值会掩盖卡顿，最差值不会** —— 这是这一组里最该记住的一条。
+        /// <para>
+        /// ⚠️ 这条测试的期望值是**算出来的，不是估的**（第一版我拍了个 `> 55`，
+        /// 结果实际是 50.7 —— 因为 200ms 卡顿在**1 秒窗口**里要掉掉约 9 FPS）。
+        /// </para>
+        /// <para>
+        /// 算术：5 秒窗口（300 帧）= 299 帧 × 1/60 + 1 帧 × 0.2s = 4.983 + 0.2 = 5.183s
+        /// ⇒ FPS = 300 / 5.183 ≈ 57.9。**平均只掉了 2 FPS**，但那一帧实实在在是 200ms。
+        /// </para>
+        /// <para>
+        /// 📌 窗口越短，单次卡顿越掩盖不住：
+        /// 同样的 200ms 卡顿，在 **1 秒窗口**里会让 FPS 掉到 50.7，在 **5 秒窗口**里只掉到 57.9。
+        /// 所以"看平均"永远只能看出持续性的问题，**突发卡顿必须看最差帧**。
+        /// </para>
         /// </summary>
         [Test]
         public void WorstFrame_ExposesHitchesThatAverageHides()
         {
-            FpsCounter counter = new FpsCounter(windowFrames: 60);
+            // 5 秒窗口：让"平均"有机会掩盖一次突发卡顿
+            FpsCounter counter = new FpsCounter(windowFrames: 300);
 
-            for (int i = 0; i < 59; i++)
+            for (int i = 0; i < 299; i++)
             {
                 counter.AddFrame(SixtyFpsFrame);
             }
 
             counter.AddFrame(0.2f);   // 一帧卡了 200ms
 
-            // 平均仍然接近 60 —— 这一帧只把平均值拉低一点点
-            Assert.Greater(counter.Fps, 55f, "平均值应当仍然很高");
+            // 算出来的期望：300 / (299/60 + 0.2) ≈ 57.9
+            Assert.Greater(counter.Fps, 57f, "5 秒窗口下，一次 200ms 卡顿只让平均掉约 2 FPS");
+            Assert.Less(counter.Fps, 60f, "但确实掉了一点，不是完全没影响");
+
             Assert.AreEqual(200f, counter.WorstFrameMilliseconds, 0.1f,
-                "最差帧必须如实反映那次卡顿");
+                "⚠️ 最差帧必须如实报出那次卡顿 —— 光看平均值你会以为一切正常");
+        }
+
+        /// <summary>
+        /// **窗口长短本身就是一个取舍**，这条把它钉住：
+        /// 窗口短 → 反应快但数字抖；窗口长 → 数字稳但**会把突发卡顿抹平**。
+        /// <para>
+        /// 所以"该用多长的窗口"没有标准答案 —— 但**必须同时看最差帧**，
+        /// 否则长窗口下你会以为一切正常。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void WindowLength_TradesResponsivenessAgainstHitchVisibility()
+        {
+            // 同一个 200ms 卡顿，分别放进 60 帧窗口和 600 帧窗口
+            float shortWindowFps = FpsWithOneHitch(windowFrames: 60);
+            float longWindowFps = FpsWithOneHitch(windowFrames: 600);
+
+            // 60 帧 ≈ 1 秒：卡顿占掉 1/6 的时间 → 掉到约 50.7
+            Assert.AreEqual(50.7f, shortWindowFps, 0.2f);
+
+            // 600 帧 ≈ 10 秒：卡顿只占 2% → 平均几乎看不出来
+            Assert.Greater(longWindowFps, 59f, "长窗口下平均值几乎看不出这次卡顿");
+
+            Assert.Less(shortWindowFps, longWindowFps,
+                "窗口越短，单次卡顿在平均里占比越大、越藏不住");
+        }
+
+        /// <summary>
+        /// 造一个"满是 60 FPS 的帧 + 最后卡一帧 200ms"的序列，返回平均 FPS。
+        /// </summary>
+        /// <param name="windowFrames">窗口帧数。</param>
+        /// <returns>平均 FPS。</returns>
+        private static float FpsWithOneHitch(int windowFrames)
+        {
+            FpsCounter counter = new FpsCounter(windowFrames);
+
+            for (int i = 0; i < windowFrames - 1; i++)
+            {
+                counter.AddFrame(SixtyFpsFrame);
+            }
+
+            counter.AddFrame(0.2f);
+
+            return counter.Fps;
         }
 
         /// <summary>`Reset` 之后回到初始状态。</summary>
