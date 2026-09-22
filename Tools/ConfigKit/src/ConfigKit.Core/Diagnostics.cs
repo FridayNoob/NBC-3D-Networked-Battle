@@ -94,6 +94,12 @@ namespace NBC.ConfigKit
 
         /// <summary>来源本身的问题（文件读不了、sheet 名不合法等）。</summary>
         public const string Source = "CFG0018";
+
+        /// <summary>
+        /// 可空用法不受支持：**Unity 的序列化器不支持可空值类型**（`int?` / `float?` / `bool?`）。
+        /// <para>可空只允许用在 `ref:` / `ref:[]` / `string` 上 —— 详见本条的使用说明。</para>
+        /// </summary>
+        public const string UnsupportedNullable = "CFG0019";
     }
 
     /// <summary>

@@ -577,6 +577,7 @@ namespace NBC.ConfigKit
 
                 CheckRules(table, column, typeRow, ruleRow, diagnostics);
                 CheckFloatPolicy(table, column, typeRow, diagnostics);
+                CheckNullableSupport(table, column, typeRow, diagnostics);
 
                 if (column.IsKey)
                 {
@@ -655,6 +656,54 @@ namespace NBC.ConfigKit
                         rule.Source);
                 }
             }
+        }
+
+        /// <summary>
+        /// 可空用法检查。
+        /// <para>
+        /// ⚠️ 这条是**被 Unity 逼出来的**：Unity 的序列化器**不支持可空值类型**
+        /// （`int?` / `float?` / `bool?` / `long?`），而生成的 SO 类型必须能被 Unity 序列化。
+        /// 如果放任不管，会走两条**都不可接受**的路：
+        /// </para>
+        /// <list type="bullet">
+        /// <item><description>生成 `int?` → Unity **静默不序列化**它（数据丢失，且不报错）；</description></item>
+        /// <item><description>生成 `int` → 空值与显式的 `0` **分不开**（正是本项目一直在防的"假值"）。</description></item>
+        /// </list>
+        /// <para>
+        /// 所以可空**只允许**三类，且各有安全的理由：
+        /// </para>
+        /// <list type="bullet">
+        /// <item><description>
+        /// <c>ref:</c> / <c>ref:[]</c> —— 生成 `int` / `int[]`，`0` 表示"无引用"。
+        /// **`0` 在这里是安全的**：主键永远 ≥ <see cref="ConfigPolicy.MinKeyValue"/>，
+        /// 所以 `0` 不可能是一个合法引用。
+        /// </description></item>
+        /// <item><description><c>string?</c> —— 生成 `string`，`null` 就是 `null`，Unity 支持。</description></item>
+        /// <item><description>（`float?` / `bool?` / `int?` 这类一律报错，改成不许空。）</description></item>
+        /// </list>
+        /// </summary>
+        private static void CheckNullableSupport(RawTable table, ColumnSchema column, RawRow typeRow,
+                                                 DiagnosticBag diagnostics)
+        {
+            if (column.Type == null || !column.Type.Nullable)
+            {
+                return;
+            }
+
+            if (column.Type.Kind == TypeKind.Ref ||
+                column.Type.Kind == TypeKind.RefArray ||
+                column.Type.Kind == TypeKind.String)
+            {
+                return;
+            }
+
+            diagnostics.Error(DiagnosticCodes.UnsupportedNullable,
+                table.LocationOf(typeRow.Get(column.Index, 0), column.Name),
+                "可空只允许用在 `ref:` / `ref:[]` / `string` 上。**Unity 的序列化器不支持可空值类型**，" +
+                "生成 `" + column.TypeText + "` 会静默丢数据；而退化成 `" + column.TypeText.TrimEnd('?') +
+                "` 又会让\"没填\"和\"填了 0\"分不开。请改成不许空，或换 `string`",
+                "ref:表名? / ref:表名[]? / string?",
+                column.TypeText);
         }
 
         /// <summary>浮点策略检查（`float` 必须标 `view`）。</summary>

@@ -67,7 +67,7 @@ namespace NBC.ConfigKit.Cli
             ConfigPolicy policy = ConfigPolicy.CreateDefault();
             ExportPipeline pipeline = new ExportPipeline(
                 policy,
-                new CSharpConfigEmitter(),
+                CreateEmitter(options),
                 new EmitOptions { Namespace = options.Namespace });
 
             ITableSource source = CreateSource(options);
@@ -143,6 +143,61 @@ namespace NBC.ConfigKit.Cli
             return new DelimitedTableSource(options.SourceDirectory, DelimiterKind.Comma);
         }
 
+        /// <summary>
+        /// 按 <c>--emitter</c> 选产物。
+        /// <para>
+        /// 默认 <c>both</c>：**C# 类型 + TSV 数据**。两个都要 ——
+        /// C# 类型让工程编译得过，TSV 让 Unity 侧的导入器把数据灌进 SO。
+        /// </para>
+        /// </summary>
+        private static ITableEmitter CreateEmitter(Options options)
+        {
+            switch (options.Emitter ?? "both")
+            {
+                case "csharp":
+                    return new CSharpConfigEmitter();
+
+                case "tsv":
+                    return new TsvConfigEmitter();
+
+                default:
+                    return new CompositeEmitter(new CSharpConfigEmitter(), new TsvConfigEmitter());
+            }
+        }
+
+        /// <summary>把多个发射器的产物合起来（宿主侧的编排，不属于 Core）。</summary>
+        private sealed class CompositeEmitter : ITableEmitter
+        {
+            private readonly ITableEmitter[] m_emitters;
+
+            public CompositeEmitter(params ITableEmitter[] emitters)
+            {
+                m_emitters = emitters;
+            }
+
+            public string Name
+            {
+                get { return "composite"; }
+            }
+
+            public IReadOnlyList<EmittedFile> Emit(ConfigTable table, EmitOptions options)
+            {
+                List<EmittedFile> files = new List<EmittedFile>();
+
+                for (int i = 0; i < m_emitters.Length; i++)
+                {
+                    IReadOnlyList<EmittedFile> produced = m_emitters[i].Emit(table, options);
+
+                    for (int f = 0; f < produced.Count; f++)
+                    {
+                        files.Add(produced[f]);
+                    }
+                }
+
+                return files;
+            }
+        }
+
         /// <summary>统一换行成 LF（跨平台 + diff 稳定）。</summary>
         private static string NormalizeNewLines(string text)
         {
@@ -162,6 +217,9 @@ namespace NBC.ConfigKit.Cli
                         · .xlsx：**一个 sheet = 一张表**（表名 = sheet 名）
                         · .csv/.tsv：**文件名 = 表名**
   --format <格式>     auto（默认，看目录里有什么）/ xlsx / csv / tsv
+  --emitter <产物>    both（默认：C# 类型 + TSV 数据）/ csharp / tsv
+                      · C# 类型：Config_<表>.cs + <表>Config.cs（含 LoadFromTsv）
+                      · TSV 数据：<表>.tsv —— Unity 侧导入器读它建 .asset
   --out <目录>        生成目录。默认 Assets/_Project/Game/Config/Generated
   --ns <命名空间>     生成代码的命名空间。默认 NBC.Game.Config
   --check             只校验，不写文件
@@ -180,6 +238,7 @@ namespace NBC.ConfigKit.Cli
             public string OutputDirectory = "Assets/_Project/Game/Config/Generated";
             public string Namespace = "NBC.Game.Config";
             public string Format;
+            public string Emitter;
             public bool CheckOnly;
             public bool ShowHelp;
 
@@ -241,6 +300,22 @@ namespace NBC.ConfigKit.Cli
                                 options.Format != "csv" && options.Format != "tsv")
                             {
                                 error = "不认识的格式 " + options.Format + "（只支持 auto / xlsx / csv / tsv）";
+                                return false;
+                            }
+
+                            continue;
+
+                        case "--emitter":
+                            if (!TryNext(args, ref i, out options.Emitter))
+                            {
+                                error = "--emitter 后面要跟 both / csharp / tsv";
+                                return false;
+                            }
+
+                            if (options.Emitter != "both" && options.Emitter != "csharp" &&
+                                options.Emitter != "tsv")
+                            {
+                                error = "不认识的产物 " + options.Emitter + "（只支持 both / csharp / tsv）";
                                 return false;
                             }
 

@@ -267,9 +267,33 @@ Tools\ConfigKit\tests\ConfigKit.XlsxProbe\bin\Debug\net8.0\NBC.ConfigKit.XlsxPro
 | `ConfigKit.Cli`（命令行 + 退出码 0/1/2 + `--format`） | ✅ |
 | `ConfigKit.Sources.Xlsx`（NPOI） | ✅ **9 条探针全绿**（真 xlsx 读写） |
 | `ConfigKit.XlsxProbe`（可复现验证探针 + 示例表生成） | ✅ |
-| `ITableEmitter` 的 JSON 实现 | ⏳ |
-| Unity 侧薄导入器（读生成物 → 建 `.asset`） | ⏳ **下一步** |
+| `ConfigKit.Core` 的 **TSV 发射器 + 生成的 `LoadFromTsv` 加载器** | ✅ |
+| `ITableEmitter` 的 JSON 实现 | ❌ **不做**（见下） |
+| Unity 侧薄导入器（读 `.tsv` → 建 `.asset`） | ⏳ **下一步** |
 | 3 张种子表（`Hero`/`Skill`/`Level`） | ⏳ |
+
+### ⚠️ 为什么中间产物是 TSV 而不是 JSON（**本轮改掉的设计**）
+
+原计划发 JSON 让 Unity 用 `JsonUtility` 读。动手前想清楚两个坑：
+
+| 坑 | 说明 |
+| --- | --- |
+| **Unity 序列化不支持可空值类型** | `int?` 会**静默不序列化**（丢数据不报错），而规范允许 `ref:Hero?` |
+| **`JsonUtility` 里 enum 按整数走** | 可枚举定义在 C# 里，**工具不知道成员对应的数值**，只能写成员名 → 装不进去 |
+
+而且这两条**我在本机无法实测**（没有 Unity）—— 赌一个自己验不了的行为，正是本项目最反对的事。
+
+换 TSV 之后：Unity 侧只要 `string.Split('\t')`（**不需要任何解析库**），
+枚举/可空/数组由**生成的显式加载器**逐字段处理，而且 **TSV 的文本我能在这里逐字断言**。
+
+**顺带逼出一条新的校验规则（`CFG0019`）**：可空只允许 `ref:` / `ref:[]` / `string`——
+
+- 可空 `ref` → 生成 `int` / `int[]`，**`0` 表示无引用**（安全：主键永远 ≥ 1，`0` 不可能是合法引用）
+- 可空 `string` → `null` 就是 `null`，Unity 支持
+- **可空 `int?` / `float?` / `bool?` / `long?` 一律报错**：生成 `int?` 会静默丢数据，退化成 `int` 又让"没填"和"填了 0"分不开
+
+> 这条是对 `Docs\17` §六 的**收窄**（原写"任意类型加 `?`"），原因是被 Unity 序列化限制逼出来的 ——
+> 属于"实现时发现某条太贵，回来改规范并记一笔"的那种（`Docs\17` §十二 约定的做法）。
 
 ---
 

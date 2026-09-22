@@ -132,7 +132,9 @@ namespace NBC.ConfigKit
 
                 builder.Append("        /// <summary>")
                        .Append(Sanitize(column.Comment))
-                       .Append("（").Append(Sanitize(column.TypeText)).Append("）</summary>")
+                       .Append("（").Append(Sanitize(column.TypeText)).Append("）")
+                       .Append(NullableHint(column))
+                       .Append("</summary>")
                        .AppendLine();
                 builder.Append("        public ").Append(CSharpTypeOf(column.Type)).Append(' ')
                        .Append(column.Name).AppendLine(";");
@@ -244,9 +246,201 @@ namespace NBC.ConfigKit
                 builder.AppendLine("        }");
             }
 
+            AppendTsvLoader(builder, schema, rowType);
+
             builder.AppendLine("    }");
             builder.AppendLine("}");
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// 生成"从 TSV 文本填数据"的加载器（**Editor 导入器用它**）。
+        /// <para>
+        /// ⚠️ 为什么不用 `JsonUtility`：Unity 的序列化器**不支持可空值类型**，
+        /// 且枚举在 JsonUtility 里按整数走（工具不知道成员数值）。
+        /// TSV + 显式解析把这两个问题都绕开了，而且**不需要任何解析库**。
+        /// </para>
+        /// <para>按**字段名**对列（不是列序号）—— 所以表里调换列顺序不会错位。</para>
+        /// </summary>
+        private static void AppendTsvLoader(StringBuilder builder, TableSchema schema, string rowType)
+        {
+            builder.AppendLine();
+            builder.AppendLine("        /// <summary>");
+            builder.AppendLine("        /// 从 ConfigKit 生成的 .tsv 文本填充数据（**Editor 导入器用**）。");
+            builder.AppendLine("        /// <para>第一行是字段名；按名字对列，所以调换列顺序不会错位。</para>");
+            builder.AppendLine("        /// <para>");
+            builder.AppendLine("        /// ⚠️ 不用 `JsonUtility`：Unity 的序列化器不支持可空值类型（`int?`），");
+            builder.AppendLine("        /// 而枚举在 JsonUtility 里按整数走（工具不知道成员数值）。TSV + 显式解析绕开这两个问题。");
+            builder.AppendLine("        /// </para>");
+            builder.AppendLine("        /// </summary>");
+            builder.AppendLine("        /// <param name=\"text\">tsv 文本。</param>");
+            builder.AppendLine("        public void LoadFromTsv(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            rows.Clear();");
+            builder.AppendLine();
+            builder.AppendLine("            if (string.IsNullOrEmpty(text))");
+            builder.AppendLine("            {");
+            builder.AppendLine("                RebuildIndex();");
+            builder.AppendLine("                return;");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            string[] lines = text.Replace(\"\\r\\n\", \"\\n\").Replace('\\r', '\\n').Split('\\n');");
+            builder.AppendLine("            string[] header = lines[0].Split('\\t');");
+            builder.AppendLine();
+            builder.AppendLine("            for (int i = 1; i < lines.Length; i++)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                if (lines[i].Length == 0)");
+            builder.AppendLine("                {");
+            builder.AppendLine("                    continue;");
+            builder.AppendLine("                }");
+            builder.AppendLine();
+            builder.AppendLine("                string[] cells = lines[i].Split('\\t');");
+            builder.Append("                ").Append(rowType).AppendLine(" row = new " + rowType + "();");
+
+            for (int c = 0; c < schema.Columns.Count; c++)
+            {
+                ColumnSchema column = schema.Columns[c];
+                builder.Append("                row.").Append(column.Name).Append(" = ")
+                       .Append(AssignExpression(column))
+                       .AppendLine(";");
+            }
+
+            builder.AppendLine();
+            builder.AppendLine("                rows.Add(row);");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            RebuildIndex();");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+
+            AppendLoaderHelpers(builder);
+        }
+
+        /// <summary>某个字段的赋值表达式（按类型选解析函数）。</summary>
+        private static string AssignExpression(ColumnSchema column)
+        {
+            string cell = "Cell(cells, header, \"" + column.Name + "\")";
+
+            switch (column.Type.Kind)
+            {
+                case TypeKind.String:
+                    return "Unescape(" + cell + ")";
+
+                case TypeKind.Int:
+                case TypeKind.Ref:
+                    return "ParseInt(" + cell + ")";
+
+                case TypeKind.Long:
+                    return "ParseLong(" + cell + ")";
+
+                case TypeKind.Float:
+                    return "ParseFloat(" + cell + ")";
+
+                case TypeKind.Bool:
+                    return "ParseBool(" + cell + ")";
+
+                case TypeKind.Enum:
+                    return "(" + column.Type.EnumName + ")System.Enum.Parse(typeof(" + column.Type.EnumName +
+                           "), " + cell + ", true)";
+
+                case TypeKind.IntArray:
+                case TypeKind.RefArray:
+                    return "ParseIntArray(" + cell + ")";
+
+                default:
+                    return cell;
+            }
+        }
+
+        /// <summary>生成加载器用到的小工具函数（每个 SO 各自一份，保持"生成物自足"）。</summary>
+        private static void AppendLoaderHelpers(StringBuilder builder)
+        {
+            builder.AppendLine("        private static string Cell(string[] cells, string[] header, string name)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            for (int i = 0; i < header.Length; i++)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                if (header[i] == name)");
+            builder.AppendLine("                {");
+            builder.AppendLine("                    return i < cells.Length ? cells[i] : string.Empty;");
+            builder.AppendLine("                }");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            return string.Empty;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        private static int ParseInt(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            int value;");
+            builder.AppendLine("            return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        private static long ParseLong(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            long value;");
+            builder.AppendLine("            return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0L;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        private static float ParseFloat(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            float value;");
+            builder.AppendLine("            return float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0f;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        private static bool ParseBool(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            return text == \"1\" || string.Equals(text, \"true\", System.StringComparison.OrdinalIgnoreCase);");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        private static int[] ParseIntArray(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            if (string.IsNullOrEmpty(text))");
+            builder.AppendLine("            {");
+            builder.AppendLine("                return new int[0];");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            string[] parts = text.Split(',');");
+            builder.AppendLine("            int[] result = new int[parts.Length];");
+            builder.AppendLine();
+            builder.AppendLine("            for (int i = 0; i < parts.Length; i++)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                result[i] = ParseInt(parts[i].Trim());");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            return result;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+            builder.AppendLine("        /// <summary>还原 TSV 的转义（`\\\\t` → 制表符 等）。</summary>");
+            builder.AppendLine("        private static string Unescape(string text)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            if (string.IsNullOrEmpty(text) || text.IndexOf('\\\\') < 0)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                return text;");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);");
+            builder.AppendLine();
+            builder.AppendLine("            for (int i = 0; i < text.Length; i++)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                if (text[i] != '\\\\' || i + 1 >= text.Length)");
+            builder.AppendLine("                {");
+            builder.AppendLine("                    builder.Append(text[i]);");
+            builder.AppendLine("                    continue;");
+            builder.AppendLine("                }");
+            builder.AppendLine();
+            builder.AppendLine("                i++;");
+            builder.AppendLine();
+            builder.AppendLine("                switch (text[i])");
+            builder.AppendLine("                {");
+            builder.AppendLine("                    case 't': builder.Append('\\t'); break;");
+            builder.AppendLine("                    case 'r': builder.Append('\\r'); break;");
+            builder.AppendLine("                    case 'n': builder.Append('\\n'); break;");
+            builder.AppendLine("                    case '\\\\': builder.Append('\\\\'); break;");
+            builder.AppendLine("                    default: builder.Append(text[i]); break;");
+            builder.AppendLine("                }");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            return builder.ToString();");
+            builder.AppendLine("        }");
         }
 
         // ====================================================================
@@ -264,6 +458,18 @@ namespace NBC.ConfigKit
             if (value.Length == 0)
             {
                 // 只有可空字段才可能空着（校验保证了这一点）
+                // ⚠️ 映射必须和 CSharpTypeOf 一致：可空 ref 生成的是 `int` / `int[]`，
+                //    所以"无引用"是 **0** / 空数组，而不是 null
+                if (column.Type.Kind == TypeKind.Ref)
+                {
+                    return "0";
+                }
+
+                if (column.Type.Kind == TypeKind.RefArray)
+                {
+                    return "new int[0]";
+                }
+
                 return "null";
             }
 
@@ -293,7 +499,19 @@ namespace NBC.ConfigKit
             }
         }
 
-        /// <summary>字段的 C# 类型名。</summary>
+        /// <summary>
+        /// 字段的 C# 类型名。
+        /// <para>
+        /// ⚠️ **可空一律不加 `?`**（连 `string?` 也不加）：Unity 的序列化器
+        /// **不支持可空值类型**，而生成的类型必须能被 Unity 序列化。
+        /// 可空的语义由"约定"承担，并写在字段注释里：
+        /// </para>
+        /// <list type="bullet">
+        /// <item><description><c>ref:</c> / <c>ref:[]</c> 可空 → `int` / `int[]`，**`0` 表示无引用**（安全：主键 ≥ 1）</description></item>
+        /// <item><description><c>string?</c> → `string`，`null` 就是 `null`</description></item>
+        /// <item><description>其它类型的可空**会被 <see cref="SchemaReader"/> 当错误拦下**（`CFG0019`）</description></item>
+        /// </list>
+        /// </summary>
         /// <param name="type">类型。</param>
         /// <returns>C# 类型名。</returns>
         public static string CSharpTypeOf(ColumnType type)
@@ -336,7 +554,31 @@ namespace NBC.ConfigKit
                     break;
             }
 
-            return type.Nullable && type.Kind != TypeKind.String ? core + "?" : core;
+            // 刻意不加 `?`：见方法注释（Unity 不支持可空值类型）
+            return core;
+        }
+
+        /// <summary>字段注释里的可空约定提示（没有可空就返回空串）。</summary>
+        /// <param name="column">列。</param>
+        /// <returns>提示文本。</returns>
+        private static string NullableHint(ColumnSchema column)
+        {
+            if (column.Type == null || !column.Type.Nullable)
+            {
+                return string.Empty;
+            }
+
+            if (column.Type.Kind == TypeKind.Ref || column.Type.Kind == TypeKind.RefArray)
+            {
+                return "，**0 表示无引用**（主键永远 >= 1，所以 0 不会被误认）";
+            }
+
+            if (column.Type.Kind == TypeKind.String)
+            {
+                return "，可为 null";
+            }
+
+            return string.Empty;
         }
 
         /// <summary>把 `1,2,3` 写成 `new int[] { 1, 2, 3 }`。</summary>
