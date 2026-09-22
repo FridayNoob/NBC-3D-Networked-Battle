@@ -48,7 +48,7 @@ namespace NBC.EditorTools
     /// <summary>把 ConfigKit 生成的 .tsv 导入成 &lt;表&gt;Config 资产。</summary>
     public static class ConfigImporter
     {
-        /// <summary>生成的 .tsv 所在目录（与 ConfigKit.Cli 的 --out 默认值一致）。</summary>
+        /// <summary>生成的 .tsv 所在目录（与 ConfigKit.Cli 的 out 参数默认值一致）。</summary>
         public const string TsvDirectory = "Assets/_Project/Game/Config/Generated";
 
         /// <summary>生成出来的 SO 资产放在哪。</summary>
