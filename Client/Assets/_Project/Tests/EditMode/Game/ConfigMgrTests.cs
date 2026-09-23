@@ -65,6 +65,16 @@ namespace NBC.Tests.EditMode
         //  建表用的假资产类型（**必须叫 &lt;表&gt;Config**：命名约定是硬要求）
         // ====================================================================
 
+        // ⚠️ **这两个假类型与生成物撞名**（`NBC.Game.Config.HeroConfig` / `SkillConfig`）。
+        //    2026-09-23 真踩到过一次：`ConfigImporter` 原来按"任意程序集里第一个同名且是
+        //    ScriptableObject 的类型"找类型，而测试程序集在编辑器里是加载着的 ——
+        //    于是点导入菜单**随机**挑到这两个假类型，报"HeroConfig 上没有 LoadFromTsv(string)"，
+        //    还误导人去重跑 ConfigKit（生成物其实是好的）。
+        //    现象很说明问题：当时**只有 HeroConfig / SkillConfig 失败**，因为只有这两个名字撞了。
+        //    ✅ `ConfigImporter` 的判据已收紧为"同名 **且** 有 `LoadFromTsv(string)`"，
+        //       所以撞名不再有害。但**新增假类型时仍建议起别的名字**（例如 `FakeHeroConfig`），
+        //       少一个能让人误会的同名类型。
+
         /// <summary>假的 Hero 配置资产。</summary>
         public sealed class HeroConfig : ScriptableObject
         {

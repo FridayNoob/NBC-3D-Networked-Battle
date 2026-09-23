@@ -143,29 +143,22 @@ namespace NBC.EditorTools
         private static bool ImportOne(string tableName, string tsv, bool write)
         {
             string soTypeName = tableName + TypeSuffix;
-            Type soType = FindType(soTypeName);
+
+            // ⚠️ 找类型时**必须同时要求它有 LoadFromTsv(string)** —— 见 FindImportableType 的说明：
+            //    只按"名字 + 是 ScriptableObject"找会**随机挑到同名类型**（测试里的假类型就撞过名）。
+            string diagnostic;
+            Type soType = FindImportableType(soTypeName, out diagnostic);
 
             if (soType == null)
             {
                 Debug.LogError(
-                    "[ConfigImporter] 找不到类型 " + soTypeName + "。\n" +
-                    "两个常见原因：\n" +
-                    "  ① 还没跑过 ConfigKit.Cli（没有生成 Config_" + tableName + ".cs / " + soTypeName + ".cs）\n" +
-                    "  ② 生成了但 Unity 还没编译完 —— 等它编译完再点一次这个菜单\n" +
-                    "（本脚本按**类型名**找，所以生成目录不写死在代码里。）");
+                    "[ConfigImporter] 找不到可用的类型 " + soTypeName + "。\n" + diagnostic);
                 return false;
             }
 
-            MethodInfo load = soType.GetMethod(LoadMethodName, BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { typeof(string) }, null);
-
-            if (load == null)
-            {
-                Debug.LogError(
-                    "[ConfigImporter] " + soTypeName + " 上没有 " + LoadMethodName + "(string)。\n" +
-                    "说明这个类型是**旧版生成器**产出的（或被人手改过）—— 重新跑一次 ConfigKit.Cli。");
-                return false;
-            }
+            // 这里不再判 `LoadFromTsv` 找没找到：`FindImportableType` **就是按它筛的**，
+            // 所以再判一次是**永远走不到的分支**（那种分支比没有分支更糟，见 M2-B 的教训）。
+            MethodInfo load = GetLoadMethod(soType);
 
             string assetPath = AssetDirectory + "/" + soTypeName + ".asset";
             ScriptableObject asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
@@ -214,11 +207,36 @@ namespace NBC.EditorTools
         //  查找与报告
         // ====================================================================
 
-        /// <summary>在所有已加载程序集里按名字找 &lt;表&gt;Config（必须是 ScriptableObject 派生）。</summary>
-        /// <param name="typeName">类型名。</param>
-        /// <returns>类型；找不到则 null。</returns>
-        private static Type FindType(string typeName)
+        /// <summary>
+        /// 在所有已加载程序集里找**可导入**的 &lt;表&gt;Config。
+        ///
+        /// ------------------------------------------------------------------
+        /// ⚠️ 为什么"按名字找"不够（2026-09-23 真踩到，负责人点菜单报错）
+        /// ------------------------------------------------------------------
+        /// 原来的实现是"**任意程序集里第一个**同名且是 ScriptableObject 的类型"。
+        /// 工程里出现**同名类型**之后就变成了**随机挑**：
+        ///
+        ///     · `NBC.Game.Config.HeroConfig`（生成物，有 `LoadFromTsv`）
+        ///     · `NBC.Tests.EditMode.ConfigMgrTests+HeroConfig`（测试里的假类型，**没有**）
+        ///
+        /// 测试程序集在编辑器里**是加载着的**，而 `GetAssemblies()` 的顺序不保证，
+        /// 于是点导入菜单会报"H​eroConfig 上没有 LoadFromTsv(string)" ——
+        /// 报错还误导人去重跑 ConfigKit（其实生成物是好的）。
+        /// 现象很能说明问题：当时**只有 HeroConfig / SkillConfig 失败**，
+        /// 因为**只有这两个名字撞了**（其余 5 张表只有一个同名类型）。
+        ///
+        /// ✅ 改法：判据从"名字像"收紧成"**名字像 且 真的有 `LoadFromTsv(string)`**" ——
+        ///    那个方法正是导入器**需要的东西**，用它当判据既准确又不会错杀。
+        ///    若仍有多个候选，**不猜**，把候选列表报出来让人处理。
+        /// </summary>
+        /// <param name="typeName">类型名（如 `HeroConfig`）。</param>
+        /// <param name="diagnostic">找不到/有歧义时的说明（成功时为 null）。</param>
+        /// <returns>可用的类型；找不到或有歧义时返回 null。</returns>
+        private static Type FindImportableType(string typeName, out string diagnostic)
         {
+            List<Type> nameMatches = new List<Type>();
+            List<Type> importable = new List<Type>();
+
             Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
 
             for (int i = 0; i < assemblies.Length; i++)
@@ -248,14 +266,91 @@ namespace NBC.EditorTools
                 {
                     Type type = types[t];
 
-                    if (type != null && type.Name == typeName && typeof(ScriptableObject).IsAssignableFrom(type))
+                    if (type == null || type.Name != typeName || !typeof(ScriptableObject).IsAssignableFrom(type))
                     {
-                        return type;
+                        continue;
+                    }
+
+                    nameMatches.Add(type);
+
+                    if (GetLoadMethod(type) != null)
+                    {
+                        importable.Add(type);
                     }
                 }
             }
 
+            if (importable.Count == 1)
+            {
+                diagnostic = null;
+                return importable[0];
+            }
+
+            if (importable.Count > 1)
+            {
+                // 有歧义就**别猜**：猜错了会把数据导进错误的类型，而且看起来一切正常
+                diagnostic =
+                    "找到 " + importable.Count + " 个同名**且可导入**的类型，无法确定用哪一个：\n" +
+                    Describe(importable) +
+                    "\n请把多余的删掉/改名（生成物只应有一份）。";
+                return null;
+            }
+
+            // 一个可导入的都没有：把"同名但不可导入"的列出来，这才是真正的线索
+            if (nameMatches.Count > 0)
+            {
+                diagnostic =
+                    "找到了 " + nameMatches.Count + " 个同名类型，但**都没有 " + LoadMethodName + "(string)**：\n" +
+                    Describe(nameMatches) +
+                    "\n最常见的两个原因：\n" +
+                    "  ① 有**别的程序集定义了同名类型**（测试里的假类型就撞过这个名 —— " +
+                    "判据已收紧为\"必须有 " + LoadMethodName + "\"，正常情况下不会再挑到它）\n" +
+                    "  ② 这个类型是**旧版生成器**产出的（或被人手改过）—— 重新跑一次 ConfigKit.Cli";
+                return null;
+            }
+
+            diagnostic =
+                "整个 AppDomain 里都没有这个名字的类型。两个常见原因：\n" +
+                "  ① 还没跑过 ConfigKit.Cli（没有生成 `Config_" + typeName + ".cs` / `" + typeName + ".cs`）\n" +
+                "  ② 生成了但 Unity 还没编译完 —— 等它编译完再点一次这个菜单\n" +
+                "（本脚本按**类型名**找，所以生成目录不写死在代码里。）";
             return null;
+        }
+
+        /// <summary>取一个类型的 `LoadFromTsv(string)` 公开实例方法（没有就返回 null）。</summary>
+        /// <param name="type">类型。</param>
+        /// <returns>方法；没有则 null。</returns>
+        private static MethodInfo GetLoadMethod(Type type)
+        {
+            return type.GetMethod(LoadMethodName, BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { typeof(string) }, null);
+        }
+
+        /// <summary>把一组类型写成"全名（程序集）"的多行列表（报歧义/报线索用）。</summary>
+        /// <param name="types">类型。</param>
+        /// <returns>文本。</returns>
+        private static string Describe(List<Type> types)
+        {
+            StringBuilder builder = new StringBuilder();
+
+            for (int i = 0; i < types.Count; i++)
+            {
+                builder.Append("  · `").Append(types[i].FullName).Append("`（程序集 ");
+
+                try
+                {
+                    builder.Append(types[i].Assembly.GetName().Name);
+                }
+                catch (Exception)
+                {
+                    // 取不到程序集名不该让报错本身炸掉
+                    builder.Append("?");
+                }
+
+                builder.Append("）\n");
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>把 "Assets/..." 换成绝对路径（Application.dataPath 去掉末尾的 /Assets）。</summary>
