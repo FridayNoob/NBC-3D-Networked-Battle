@@ -3,6 +3,7 @@
     "rootNamespace": "NBC.Boot",
     "references": [
         "NBC.Framework",
+        "NBC.Framework.UI",
         "NBC.Framework.YooAsset",
         "NBC.Game"
     ],

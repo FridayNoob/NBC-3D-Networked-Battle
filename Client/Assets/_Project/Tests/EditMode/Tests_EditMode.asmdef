@@ -7,6 +7,7 @@
         "NBC.Shared",
         "NBC.Game",
         "NBC.Model",
+        "UnityEngine.UI",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
