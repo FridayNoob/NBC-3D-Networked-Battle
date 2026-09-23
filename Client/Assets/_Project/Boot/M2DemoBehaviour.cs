@@ -72,17 +72,28 @@ namespace NBC.Boot
         /// <summary>
         /// 编辑器模拟模式的清单目录（只有 EditorSimulate 用得上）。
         /// <para>
-        /// ⚠️ 默认值就是 YooAsset 的约定路径，**不是猜的**（2026-09-22 读源码 + 看磁盘确认）：
-        /// `BundleSimulateBuilder.SimulateBuild` 里写死 `PackageVersion = "Simulate"`，
-        /// 而 `BundleBuilderHelper.GetDefaultBuildOutputRoot()` = `&lt;工程根&gt;/Bundles`，
-        /// 于是输出落在 `Bundles/&lt;平台&gt;/&lt;包名&gt;/Simulate`。
-        /// 本机是 Windows，平台段就是 `StandaloneWindows64`
-        /// （与 `YooAssetAdapterSmokeTests` 用的是同一个约定 —— 那个测试也是这么拼的）。
+        /// ⚠️ **留空 = 自动挑最新的一份**（见 `ResolveSimulatePackageRoot`）。
+        /// 这是因为"模拟清单目录"其实有**两个不同来源**（2026-09-23 读源码 + 实测确认）：
         /// </para>
-        /// <para>相对路径会按**工程根**（`Application.dataPath` 的上一级）解析。</para>
+        /// <list type="bullet">
+        /// <item>`YooAsset → Bundle Builder` 窗口（Pipeline 选 `EditorSimulateBuildPipeline`）：
+        /// 用的是**窗口上那个"构建版本"文本框**（`PackageVersion = _buildVersionField.value`，
+        /// 默认是日期时间串）→ 输出到 `Bundles/&lt;平台&gt;/&lt;包名&gt;/&lt;构建版本&gt;/`</item>
+        /// <item>运行时反射入口 `EditorSimulateBuildInvoker.Build(...)`（内部调
+        /// `BundleSimulateBuilder.SimulateBuild`）：那里**写死** `PackageVersion = "Simulate"`
+        /// → 输出到 `Bundles/&lt;平台&gt;/&lt;包名&gt;/Simulate/`</item>
+        /// </list>
+        /// <para>
+        /// 📌 教训：**"读了源码"还不够，要读对代码路径** —— 同一个功能两个入口，
+        /// 我第一版只读了 `BundleSimulateBuilder`，于是把约定路径写成了 `Simulate`，
+        /// 而负责人从窗口构建出来的其实是 `2026-09-23-833`。
+        /// </para>
         /// </summary>
-        [Tooltip("模拟构建的输出目录（相对工程根或绝对路径）。默认就是 YooAsset 的约定路径")]
-        [SerializeField] private string m_simulatePackageRoot = "Bundles/StandaloneWindows64/DefaultPackage/Simulate";
+        [Tooltip("模拟清单目录（相对工程根或绝对路径）。留空 = 自动挑 Bundles/<平台>/<包名>/ 下最新的一份")]
+        [SerializeField] private string m_simulatePackageRoot = string.Empty;
+
+        /// <summary>自动找清单时用的平台目录名（本机是 Windows；与 PlayMode 冒烟测试同一个约定）。</summary>
+        private const string SimulatePlatformFolder = "StandaloneWindows64";
 
         /// <summary>用哪个英雄当玩家（`Hero` 表主键）。</summary>
         [Tooltip("Hero 表主键：1001 剑士（火球/冰箭）、1002 法师（穿心箭）")]
@@ -160,24 +171,28 @@ namespace NBC.Boot
                 {
                     string root = ResolveSimulatePackageRoot();
 
-                    if (!System.IO.Directory.Exists(root))
+                    if (string.IsNullOrEmpty(root) || !System.IO.Directory.Exists(root))
                     {
                         Fail(
-                            "找不到编辑器模拟清单目录：\n  " + root + "\n\n" +
+                            "找不到编辑器模拟清单目录。我找过了：\n" +
+                            "  · 你填的字段：" + (string.IsNullOrEmpty(m_simulatePackageRoot) ? "（空 = 自动挑）" : m_simulatePackageRoot) + "\n" +
+                            "  · 自动挑的目录：" + PackageFolder() + "（下面没有任何 `*.bytes` 清单）\n\n" +
                             "先做一次『模拟构建』（免打包模式需要它）：\n" +
                             "  ① 菜单 `YooAsset → Bundle Builder`\n" +
                             "  ② 窗口**顶部**的 Pipeline 下拉框，选 `EditorSimulateBuildPipeline`\n" +
                             "  ③ 点那个绿色的 `Click Build` 按钮\n" +
-                            "输出就会落在上面那个目录（约定：`Bundles/<平台>/<包名>/Simulate`）。\n\n" +
+                            "构建完窗口会**自动在文件管理器里定位到输出目录**；也可以直接把那个目录填进字段。\n\n" +
                             "或者改走另一条路：把 Mode 改成 `Offline`（读打好的包，见 Docs\\18 §七）。");
                         return;
                     }
+
+                    Say("① 用模拟清单：" + root + "（" +
+                        System.IO.File.GetLastWriteTime(root).ToString("MM-dd HH:mm") + "）");
                 }
 
                 Say("① 装配资源层：" + m_mode +
                     (m_mode == AssetRuntimeMode.EditorSimulate
-                        ? "（⚠️ 模拟清单是**快照**：若它是加表之前做的，得重做一次 —— " +
-                          "`Bundle Builder` → Pipeline 选 `EditorSimulateBuildPipeline` → 绿色 `Click Build`）"
+                        ? "（⚠️ 模拟清单是**快照**：若它是加表之前做的，得重做一次）"
                         : string.Empty));
 
                 string simulateRoot = m_mode == AssetRuntimeMode.EditorSimulate
@@ -196,26 +211,85 @@ namespace NBC.Boot
             }
         }
 
-        /// <summary>把模拟清单目录解析成绝对路径（相对路径按工程根算）。</summary>
-        /// <returns>绝对路径。</returns>
+        /// <summary>
+        /// 解析模拟清单目录：**手填优先，留空则自动挑最新的一份**。
+        /// <para>
+        /// ⚠️ 为什么要"自动挑"：见字段注释 —— 窗口构建输出的是 `<构建版本>` 目录名，
+        /// 而运行时反射入口输出的是 `Simulate`，**两种都可能存在**。
+        /// 靠人来填这个路径是这个演示最脆的一环（负责人第一次就卡在这儿）。
+        /// </para>
+        /// </summary>
+        /// <returns>绝对路径；一个都没找到时返回空串。</returns>
         private string ResolveSimulatePackageRoot()
         {
-            if (string.IsNullOrEmpty(m_simulatePackageRoot))
+            // ① 手填优先（相对路径按工程根解析）
+            if (!string.IsNullOrEmpty(m_simulatePackageRoot))
+            {
+                string configured = System.IO.Path.IsPathRooted(m_simulatePackageRoot)
+                    ? m_simulatePackageRoot
+                    : CombineWithProjectRoot(m_simulatePackageRoot);
+
+                if (System.IO.Directory.Exists(configured))
+                {
+                    return configured;
+                }
+
+                // 填了但不存在：不静默改用别的，而是**说出来**（免得"我明明填了呀"）
+                Debug.LogWarning("[M2演示] 你填的模拟清单目录不存在，改为自动挑最新的一份：\n  " + configured);
+            }
+
+            // ② 自动挑：<工程根>/Bundles/<平台>/<包名>/ 下，**清单文件最新的那个子目录**
+            string packageFolder = PackageFolder();
+
+            if (!System.IO.Directory.Exists(packageFolder))
             {
                 return string.Empty;
             }
 
-            // 已经是绝对路径就直接用（`Path.IsPathRooted` 对 "C:\..." 与 "/..." 都给 true）
-            if (System.IO.Path.IsPathRooted(m_simulatePackageRoot))
+            string newest = null;
+            DateTime newestTime = DateTime.MinValue;
+            string[] subDirectories = System.IO.Directory.GetDirectories(packageFolder);
+
+            for (int i = 0; i < subDirectories.Length; i++)
             {
-                return m_simulatePackageRoot;
+                // 只认"里面有清单文件"的目录（把 OutputCache 之类排除掉）
+                string[] manifests = System.IO.Directory.GetFiles(
+                    subDirectories[i], AssetBootstrapper.DefaultPackageName + "*.bytes");
+
+                if (manifests.Length == 0)
+                {
+                    continue;
+                }
+
+                DateTime time = System.IO.File.GetLastWriteTime(manifests[0]);
+
+                if (time > newestTime)
+                {
+                    newestTime = time;
+                    newest = subDirectories[i];
+                }
             }
 
-            // 工程根 = Assets 的上一级
+            return newest ?? string.Empty;
+        }
+
+        /// <summary>自动找清单时用的包目录：`&lt;工程根&gt;/Bundles/&lt;平台&gt;/&lt;包名&gt;`。</summary>
+        /// <returns>绝对路径。</returns>
+        private string PackageFolder()
+        {
+            return CombineWithProjectRoot(
+                "Bundles/" + SimulatePlatformFolder + "/" + AssetBootstrapper.DefaultPackageName);
+        }
+
+        /// <summary>把相对路径拼到工程根上（工程根 = `Application.dataPath` 的上一级）。</summary>
+        /// <param name="relative">相对路径。</param>
+        /// <returns>绝对路径。</returns>
+        private string CombineWithProjectRoot(string relative)
+        {
             string projectRoot = Application.dataPath.Substring(
                 0, Application.dataPath.Length - "/Assets".Length);
 
-            return System.IO.Path.Combine(projectRoot, m_simulatePackageRoot).Replace('\\', '/');
+            return System.IO.Path.Combine(projectRoot, relative).Replace('\\', '/');
         }
 
         /// <summary>装配失败时按模式给一句"下一步做什么"。</summary>
@@ -227,7 +301,8 @@ namespace NBC.Boot
                 return "\n\n下一步：菜单 `YooAsset → Bundle Builder` → **顶部 Pipeline 下拉框**选 " +
                        "`EditorSimulateBuildPipeline` → 点绿色 `Click Build`，然后重新进播放模式。\n" +
                        "（M2 加过 4 张新表，**旧的模拟清单里没有它们** —— 必须重做一次。\n" +
-                       " 完整操作单：Docs\\16 §B3 的 10.4.2；输出约定：Bundles/<平台>/<包名>/Simulate）";
+                       " 输出目录名是窗口上那个『构建版本』文本框；本演示留空会自动挑最新的一份。\n" +
+                       " 完整操作单：Docs\\16 §10.4.2）";
             }
 
             return "\n\n下一步：菜单 `YooAsset → Bundle Builder` → **顶部 Pipeline 下拉框**选 " +
