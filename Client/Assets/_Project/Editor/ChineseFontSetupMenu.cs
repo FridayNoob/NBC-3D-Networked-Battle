@@ -53,24 +53,34 @@ namespace NBC.EditorTools
     public static class ChineseFontSetupMenu
     {
         /// <summary>
-        /// 源字体（拷进仓库的那份；见同目录的 `README-字体来源与授权.txt`）。
+        /// 源字体（仓库里那份；见同目录的 `README-字体来源与授权.txt`）。
         /// <para>
-        /// ⚠️ **必须是 `.ttf`，不能用 `.otf`**（2026-09-23 实测踩到）：
-        /// 第一版用的是 `.otf`（14.9 MB），字体资产建出来了、默认字体与兜底也都接上了，
-        /// 但 TMP **一个字形都没加进去**（资产里 `m_UsedGlyphRects` 一直是空的），
-        /// 屏幕上就是方框。TMP 的动态字形加载走 FreeType，**对 OTF（CFF 轮廓）支持不佳**。
-        /// 旁证：负责人另一个工程 RPG2 里那份**能用**的同名字体资产，
-        /// 它的 `m_SourceFontFileGUID` 指的正是 **`.ttf`**。
+        /// ⚠️ **必须是 `.ttf`，不能用 `.otf`**（2026-09-23 实测踩到两次）：
+        /// ① 第一版用 `.otf`（14.9 MB）：字体资产建出来了、默认字体与兜底也都接上了，
+        ///    但 TMP **一个字形都没加进去**（`m_UsedGlyphRects` 一直空）→ 屏幕上是方框。
+        ///    TMP 的动态字形加载走 FreeType，**对 OTF（CFF 轮廓）支持不佳**。
+        /// ② 换成 `.ttf` 后用本脚本的 `CreateFontAsset` 生成，**图集是空的**
+        ///    （`Texture2D.m_CompleteImageSize: 0`、宽高 0）→ 屏幕上一个字都不显示。
+        ///    所以现在**不再用脚本生成**，改用一份**经验证可用**的资产（见 <see cref="OutputPath"/>）。
         /// </para>
-        /// <para>代价：`.ttf` 比 `.otf` 大（21.7 MB vs 14.9 MB）—— M5 打包优化时按用到的字子集化。</para>
         /// </summary>
-        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.ttf";
+        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-Regular.ttf";
 
         /// <summary>生成的 TMP 字体资产放在哪。</summary>
         public const string OutputFolder = "Assets/_Project/Art/Fonts";
 
-        /// <summary>生成的 TMP 字体资产路径。</summary>
-        public const string OutputPath = OutputFolder + "/AlibabaPuHuiTi SDF.asset";
+        /// <summary>
+        /// TMP 字体资产路径。
+        /// <para>
+        /// ⚠️ **这份不是本脚本生成的**，而是从负责人另一个工程 RPG2
+        /// （`Assets/Fonts/AlibabaPuHuiTi-3-55-Regular/`）**整份搬过来的**，
+        /// 连 `.meta` 一起搬所以 GUID 不变、里面的源字体引用也不会断。
+        /// 它已经被验证过可用：Dynamic 模式 + 1024² 图集 + **图集里真的有数据**
+        /// （`m_CompleteImageSize: 1048576`）+ 71 个已烘焙字形。
+        /// </para>
+        /// <para>仓库里只放这一份；脚本 ① 只在"资产不存在"时才去生成。</para>
+        /// </summary>
+        public const string OutputPath = OutputFolder + "/AlibabaPuHuiTi-3-55-Regular SDF.asset";
 
         /// <summary>TMP 自带的拉丁字体（要往它的兜底列表里塞我们的中文）。</summary>
         private const string LatinFontAssetPath =
@@ -88,10 +98,23 @@ namespace NBC.EditorTools
         /// <summary>图集边长（2048 起步；不够 TMP 会自动再开一张）。</summary>
         private const int AtlasSize = 2048;
 
-        /// <summary>① 生成中文字体资产（Dynamic 模式）。</summary>
+        /// <summary>① 生成中文字体资产（Dynamic 模式）。**资产已存在时不重建**。</summary>
         [MenuItem("Tools/NBC/UI/① 生成中文字体资产（TMP，Dynamic）")]
         private static void CreateFontAsset()
         {
+            // ⚠️ 已经有一份可用资产时**不要重建**：仓库里那份是从 RPG2 搬来的、经验证可用；
+            //    而本脚本的生成路径实测会产出"图集为空"的资产（见 SourceFontPath 上的说明）。
+            TMP_FontAsset existing = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(OutputPath);
+
+            if (existing != null)
+            {
+                Debug.Log("[中文字体] 已经有可用的字体资产，**不需要重建**：\n  " + OutputPath + "\n" +
+                          "  （图集状态：模式 " + existing.atlasPopulationMode + "）\n" +
+                          "直接跑 `Tools/NBC/UI/② 设为 TMP 默认字体 + 加为兜底字体` 即可。\n" +
+                          "⚠️ 真的要重建：先手动删掉那个 .asset，再点本菜单。");
+                return;
+            }
+
             Font source = AssetDatabase.LoadAssetAtPath<Font>(SourceFontPath);
 
             if (source == null)
