@@ -46,6 +46,7 @@ using System.Collections.Generic;
 using NBC.Framework;
 using NBC.Framework.UI;
 using NBC.Game.Quest;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -54,26 +55,50 @@ namespace NBC.Game.UI
     /// <summary>任务面板：接取列表 + 追踪列表 + 交付按钮。</summary>
     public sealed class QuestPanel : BasePanel
     {
-        /// <summary>标题控件的名字（预制体里按这个名字找）。</summary>
-        public const string TitleControl = "Title";
+        // ⚠️ 控件名遵循 `Docs\00` 的 **W12 场景物体命名规范**：`类型_物体名`（例 `button_开始`）。
+        //    这些常量只是**默认值**；Inspector 上每个名字都能改（见下面那组序列化字段），
+        //    所以预制体用别的命名也不会把面板卡死。
 
-        /// <summary>消息控件的名字。</summary>
-        public const string MessageControl = "Message";
+        /// <summary>标题控件的默认名字。</summary>
+        public const string TitleControl = "text_Title";
 
-        /// <summary>可接列表容器的名字。</summary>
-        public const string OfferListControl = "OfferList";
+        /// <summary>消息控件的默认名字。</summary>
+        public const string MessageControl = "text_Message";
 
-        /// <summary>已接列表容器的名字。</summary>
-        public const string TrackingListControl = "TrackingList";
+        /// <summary>可接列表容器的默认名字。</summary>
+        public const string OfferListControl = "layout_OfferList";
 
-        /// <summary>行模板的名字（一个不激活的 Button）。</summary>
-        public const string RowTemplateControl = "RowTemplate";
+        /// <summary>已接列表容器的默认名字。</summary>
+        public const string TrackingListControl = "layout_TrackingList";
 
-        /// <summary>标题控件。</summary>
-        private Text m_title;
+        /// <summary>行模板的默认名字。</summary>
+        public const string RowTemplateControl = "button_RowTemplate";
 
-        /// <summary>消息控件（显示上一次操作的结果/失败原因）。</summary>
-        private Text m_message;
+        /// <summary>标题控件名（可改）。</summary>
+        [Tooltip("标题的物体名（规范：text_XXX）")]
+        [SerializeField] private string m_titleControl = TitleControl;
+
+        /// <summary>消息控件名（可改）。</summary>
+        [Tooltip("消息行的物体名（规范：text_XXX）")]
+        [SerializeField] private string m_messageControl = MessageControl;
+
+        /// <summary>可接列表容器名（可改）。</summary>
+        [Tooltip("可接列表容器的物体名（规范：layout_XXX）")]
+        [SerializeField] private string m_offerListControl = OfferListControl;
+
+        /// <summary>已接列表容器名（可改）。</summary>
+        [Tooltip("已接列表容器的物体名（规范：layout_XXX）")]
+        [SerializeField] private string m_trackingListControl = TrackingListControl;
+
+        /// <summary>行模板名（可改）。</summary>
+        [Tooltip("行模板的物体名（规范：button_XXX）")]
+        [SerializeField] private string m_rowTemplateControl = RowTemplateControl;
+
+        /// <summary>标题（可能是 UGUI `Text`，也可能是 `TextMeshProUGUI`）。</summary>
+        private LabelRef m_title;
+
+        /// <summary>消息控件（两种文字组件都支持）。</summary>
+        private LabelRef m_message;
 
         /// <summary>可接列表的父节点。</summary>
         private RectTransform m_offerList;
@@ -85,7 +110,7 @@ namespace NBC.Game.UI
         private Button m_rowTemplate;
 
         /// <summary>行模板里的文字（克隆出来的行都用它）。</summary>
-        private Text m_rowTemplateLabel;
+        private LabelRef m_rowTemplateLabel;
 
         /// <summary>视图模型（`Bind` 之后才有）。</summary>
         private QuestPanelModel m_model;
@@ -121,21 +146,26 @@ namespace NBC.Game.UI
         /// <summary>初始化：把控件按名字取出来（取不到就**当场报清楚**）。</summary>
         protected override void OnInit()
         {
-            m_title = RequireControl<Text>(TitleControl);
-            m_message = RequireControl<Text>(MessageControl);
+            // ⚠️ 这里取的是 `Graphic` 而不是 `Text`：因为**两种文字组件都支持** ——
+            //    `UnityEngine.UI.Text` 与 `TextMeshProUGUI` 都继承自 `Graphic`，
+            //    而 `BasePanel.GetControl<T>` 是 `bucket[i] as T`，所以用基类取能同时命中两者。
+            //    （负责人用的是 TMP，我第一版硬要 `Text`，于是报"找不到 Title" —— 见类头说明。）
+            m_title = ResolveLabel(m_titleControl, "标题");
+            m_message = ResolveLabel(m_messageControl, "消息行");
 
-            m_offerList = RequireControl<VerticalLayoutGroup>(OfferListControl).transform as RectTransform;
-            m_trackingList = RequireControl<VerticalLayoutGroup>(TrackingListControl).transform as RectTransform;
+            m_offerList = RequireControl<VerticalLayoutGroup>(m_offerListControl).transform as RectTransform;
+            m_trackingList = RequireControl<VerticalLayoutGroup>(m_trackingListControl).transform as RectTransform;
 
-            m_rowTemplate = RequireControl<Button>(RowTemplateControl);
-            m_rowTemplateLabel = m_rowTemplate.GetComponentInChildren<Text>(true);
+            m_rowTemplate = RequireControl<Button>(m_rowTemplateControl);
+            m_rowTemplateLabel = LabelRef.FindIn(m_rowTemplate.gameObject);
 
             if (m_rowTemplateLabel == null)
             {
                 // 这是**预制体搭错了**，不是运行期数据问题 —— 说清怎么修
                 Debug.LogError(
-                    "[QuestPanel] 行模板「" + RowTemplateControl + "」下面没有 Text 子物体。\n" +
-                    "请给模板按钮加一个子 Text（行里的文字会写在它上面）。\n" +
+                    "[QuestPanel] 行模板「" + m_rowTemplateControl + "」下面没有文字组件。\n" +
+                    "请给模板按钮加一个子物体，挂 `Text` 或 `TextMeshProUGUI` 都行" +
+                    "（行里的文字会写在它上面）。\n" +
                     "（代码按组件找，不按子物体名字找 —— 名字由搭预制体的人定。）");
             }
 
@@ -147,7 +177,7 @@ namespace NBC.Game.UI
         /// <param name="buttonName">按钮名（模板名会被忽略）。</param>
         protected override void OnClick(string buttonName)
         {
-            if (buttonName == RowTemplateControl)
+            if (buttonName == m_rowTemplateControl)
             {
                 return;   // 模板本体（正常情况点不到，双保险）
             }
@@ -202,12 +232,12 @@ namespace NBC.Game.UI
 
             if (m_title != null)
             {
-                m_title.text = "任务";
+                m_title.Set("任务");
             }
 
             if (m_message != null)
             {
-                m_message.text = m_model == null ? string.Empty : m_model.LastMessage;
+                m_message.Set(m_model == null ? string.Empty : m_model.LastMessage);
             }
 
             if (m_model == null)
@@ -262,8 +292,12 @@ namespace NBC.Game.UI
 
                 if (m_rowTemplateLabel != null)
                 {
-                    Text label = button.GetComponentInChildren<Text>(true);
-                    label.text = row.Title + "\n" + row.Detail + "\n[" + row.ActionLabel + "]";
+                    LabelRef label = LabelRef.FindIn(button.gameObject);
+
+                    if (label != null)
+                    {
+                        label.Set(row.Title + "\n" + row.Detail + "\n[" + row.ActionLabel + "]");
+                    }
                 }
 
                 // ⚠️ 克隆体**不会带上模板的点击监听**，必须自己接（见文件头说明）
@@ -327,11 +361,122 @@ namespace NBC.Game.UI
             EventCenter.Instance.RemoveEventListener<int>(QuestEvents.Submitted, OnQuestChanged);
         }
 
+        /// <summary>
+        /// 按名字取一个**文字**控件（UGUI `Text` 或 `TextMeshProUGUI` 都认）。
+        /// <para>
+        /// ⚠️ 取的时候用基类 `Graphic`：两种文字组件都是它的子类，
+        /// 而 `BasePanel.GetControl&lt;T&gt;` 是 `bucket[i] as T` —— 用基类才能同时命中。
+        /// </para>
+        /// </summary>
+        /// <param name="controlName">控件名。</param>
+        /// <param name="what">这是什么（报错里说人话用）。</param>
+        /// <returns>引用（一定不是 null）。</returns>
+        private LabelRef ResolveLabel(string controlName, string what)
+        {
+            // 名字不对 -> 这里抛，消息里会列出"现有这些控件"（A9 的报错风格）
+            Graphic graphic = RequireControl<Graphic>(controlName);
+
+            LabelRef label = LabelRef.FindIn(graphic.gameObject);
+
+            if (label == null)
+            {
+                // 名字对了、但那个物体上没有文字组件 —— 这是**另一种错**，要分开说
+                throw new InvalidOperationException(
+                    "[QuestPanel] 名字 «" + controlName + "» 找到了，但" + what +
+                    "那个物体上挂的是 " + graphic.GetType().Name +
+                    "，不是文字组件（`Text` 或 `TextMeshProUGUI`）。\n" +
+                    "请给它挂一个文字组件，或者把面板上对应的控件名改成另一个物体的名字。");
+            }
+
+            return label;
+        }
+
         /// <summary>任务有任何变化就重画。</summary>
         /// <param name="questId">任务编号（这里用不到，只为对上事件签名）。</param>
         private void OnQuestChanged(int questId)
         {
             Refresh();
+        }
+
+        // ====================================================================
+        //  LabelRef —— "能设文字的东西"的极薄适配（**UGUI Text 与 TMP 都支持**）
+        // ====================================================================
+
+        /// <summary>
+        /// 一个文字控件的引用：里面装的是 `Text` 或 `TMP_Text`，对外只暴露"设文字"。
+        /// <para>
+        /// ⚠️ **为什么需要这一层**：项目里两种文字组件都有 ——
+        /// 框架的既有面板（`LoadingMaskPanel` / `PerfHudPanel`）用的是 UGUI `Text`，
+        /// 而新搭的界面（负责人这次）用的是 **`TextMeshProUGUI`**（TMP 是 Unity 现在的默认推荐）。
+        /// 我第一版硬邦邦地要 `Text`，于是 TMP 的预制体直接报"找不到控件"。
+        /// </para>
+        /// <para>
+        /// ⚠️ 两个实现细节值得记：
+        /// ① 取组件时**不能写 `a ?? b`** —— Unity 的"假 null"（对象已销毁但托管引用还在）
+        ///    会让 `??` 判断失效，必须显式 `if (x == null)`（Unity 重载了 `==`，`??` 不走它）。
+        /// ② 用 `GetComponentInChildren<T>(true)`：`true` = **包含未激活的子物体** ——
+        ///    行模板正好是"未激活"的，不传这个参数一行都取不到。
+        /// </para>
+        /// </summary>
+        private sealed class LabelRef
+        {
+            /// <summary>UGUI 文字（二选一）。</summary>
+            private readonly Text m_legacy;
+
+            /// <summary>TMP 文字（二选一）。</summary>
+            private readonly TMP_Text m_tmp;
+
+            /// <summary>造一个引用（两个都为 null 时**不要**造，用 `FindIn`/`Require`）。</summary>
+            /// <param name="legacy">UGUI 文字。</param>
+            /// <param name="tmp">TMP 文字。</param>
+            private LabelRef(Text legacy, TMP_Text tmp)
+            {
+                m_legacy = legacy;
+                m_tmp = tmp;
+            }
+
+            /// <summary>把一段文字写进去。</summary>
+            /// <param name="text">文字。</param>
+            public void Set(string text)
+            {
+                if (m_tmp != null)
+                {
+                    m_tmp.text = text;
+                    return;
+                }
+
+                if (m_legacy != null)
+                {
+                    m_legacy.text = text;
+                }
+            }
+
+            /// <summary>在一个物体（含未激活子物体）里找文字组件；找不到返回 null。</summary>
+            /// <param name="owner">物体。</param>
+            /// <returns>引用；没有文字组件时 null。</returns>
+            public static LabelRef FindIn(GameObject owner)
+            {
+                if (owner == null)
+                {
+                    return null;
+                }
+
+                TMP_Text tmp = owner.GetComponentInChildren<TMP_Text>(true);
+
+                if (tmp != null)
+                {
+                    return new LabelRef(null, tmp);
+                }
+
+                Text legacy = owner.GetComponentInChildren<Text>(true);
+
+                if (legacy != null)
+                {
+                    return new LabelRef(legacy, null);
+                }
+
+                return null;
+            }
         }
     }
 }

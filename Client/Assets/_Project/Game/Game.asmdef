@@ -6,6 +6,7 @@
         "NBC.Framework.UI",
         "NBC.Model",
         "NBC.Shared",
+        "Unity.TextMeshPro",
         "UnityEngine.UI"
     ],
     "includePlatforms": [],

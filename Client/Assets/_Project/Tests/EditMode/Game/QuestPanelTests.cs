@@ -338,6 +338,35 @@ namespace NBC.Tests.EditMode
                 EventCenter.Instance.Trigger(QuestEvents.ProgressChanged, GameTestTables.DemoQuest));
         }
 
+        /// <summary>
+        /// 名字对了、但那物体上挂的**不是文字组件**（例如 `Image`）：报错要指出这一点。
+        /// <para>
+        /// ⚠️ 这是另一类错（"找不到控件" vs "找到了但不是文字"），两类必须分开说 ——
+        /// 否则拿到"找不到"的人会一直去改名，而问题其实在组件上。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void Initialize_ControlWithoutTextComponent_ThrowsActionableMessage()
+        {
+            Object.DestroyImmediate(m_root);
+
+            m_root = new GameObject("QuestPanel", typeof(RectTransform));
+            m_panel = m_root.AddComponent<QuestPanel>();
+
+            // Title 位置上放一个 Image（它也是 Graphic，但不是文字）
+            AddControl<Image>(QuestPanel.TitleControl);
+            AddControl<Text>(QuestPanel.MessageControl);
+            AddControl<VerticalLayoutGroup>(QuestPanel.OfferListControl);
+            AddControl<VerticalLayoutGroup>(QuestPanel.TrackingListControl);
+            AddControl<Button>(QuestPanel.RowTemplateControl);
+
+            System.InvalidOperationException exception =
+                Assert.Throws<System.InvalidOperationException>(() => m_panel.Initialize());
+
+            StringAssert.Contains(QuestPanel.TitleControl, exception.Message);
+            StringAssert.Contains("不是文字组件", exception.Message);
+        }
+
         /// <summary>绑定 null 要当场报错（免得后面每处都判）。</summary>
         [Test]
         public void Bind_NullModel_Throws()
