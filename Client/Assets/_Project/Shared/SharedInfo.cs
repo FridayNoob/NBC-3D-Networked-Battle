@@ -21,7 +21,27 @@
 //     这是刻意的：**让"能编过"这件事本身就代表"Unity 也能编过"**。
 //     上一版这里用了文件作用域命名空间（`namespace NBC.Shared;`，C# 10），
 //     服务端编得过、**Unity 编不过** —— 那个隐患就是靠钉 LangVersion 消掉的。
+//
+// ---------------------------------------------------------------------------
+//  ⚠️ 2026-09-23（M3-S5）：**速率与版本号不再各写一个数，改成派生自协议契约**
+// ---------------------------------------------------------------------------
+//  原来是三处各写一个数：`ContractVersion = 1`、`LogicTickRate = 30`、`SnapshotSendRate = 20`。
+//  而同在共享层的 `NetContract` 已经写着 `Version = 1`、`TickRate = 30`。
+//  两个来源报同一个数，就一定会有一天各说各话（本项目已经把这条写进 D1 的判据了：
+//  **两份拷贝一定会漂移，而漂移不报错**）。
+//
+//  这次实锤了一次：`SnapshotSendRate = 20` 与 Docs\25 的 D5"**每 tick 全量快照**"（= 30）矛盾，
+//  而那个 20 **一行代码都没用到** —— 它唯一的作用就是在日志里显示一个错数字。
+//
+//  处置（三件）：
+//    ① `LogicTickRate` / `ContractVersion` **派生自 `NetContract`** —— 从"两处要对齐"变成"只有一处"
+//    ② 删掉 `SnapshotSendRate`：M3 的快照**每 tick 发一张**（30Hz，理由见 Docs\25 §8.5）；
+//       将来真要降频（M5 的差分/压缩），那时再**按需要**加一个能兑现的常量
+//    ③ 那条"两个常量必须相等"的测试随之删掉（派生之后它恒真 —— **一个永远不会红的检查 = 死检查**），
+//       换成"标识里只允许出现一个速率"（防止有人再加一个）
 // ============================================================================
+
+using NBC.Shared.Net;
 
 namespace NBC.Shared
 {
@@ -33,21 +53,22 @@ namespace NBC.Shared
         /// <summary>共享层名称标识。</summary>
         public const string LayerName = "NBC.Shared";
 
-        /// <summary>共享层契约版本。双端不一致时应拒绝联机（协议版本握手，见 PROTO-04）。</summary>
-        public const int ContractVersion = 1;
+        /// <summary>
+        /// 共享层契约版本。**派生自 <see cref="NetContract.Version"/>**（协议契约是唯一来源）。
+        /// </summary>
+        public const int ContractVersion = NetContract.Version;
 
-        /// <summary>逻辑帧率（Hz）。客户端与服务端必须一致，否则帧同步必然失败。</summary>
-        public const int LogicTickRate = 30;
-
-        /// <summary>状态同步快照下发率（Hz）。</summary>
-        public const int SnapshotSendRate = 20;
+        /// <summary>
+        /// 逻辑帧率（Hz）。**派生自 <see cref="NetContract.TickRate"/>**。
+        /// <para>客户端与服务端必须一致，否则帧同步必然失败 —— 派生之后它不可能不一致。</para>
+        /// </summary>
+        public const int LogicTickRate = NetContract.TickRate;
 
         /// <summary>返回一行可读的版本摘要，便于启动日志输出。</summary>
         /// <returns>版本摘要。</returns>
         public static string Describe()
         {
-            return LayerName + " v" + ContractVersion +
-                   " (LogicTick=" + LogicTickRate + "Hz, Snapshot=" + SnapshotSendRate + "Hz)";
+            return LayerName + " v" + ContractVersion + " (LogicTick=" + LogicTickRate + "Hz)";
         }
     }
 }

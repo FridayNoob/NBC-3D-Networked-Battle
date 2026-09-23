@@ -236,25 +236,29 @@ namespace NBC.Tests.EditMode
         }
 
         /// <summary>
-        /// 协议 tick 率与共享层的逻辑帧率必须**相等**（30Hz 这件事现在有两处写着）。
+        /// `SharedInfo` 的标识里**只允许出现一个速率**（30Hz 这件事只能有一个来源）。
         /// <para>
-        /// ⚠️ 这条测试是被编译器"逼"出来的：M3-S3 我本来在服务端启动时写了一段
-        /// "两者不一致就警告"的运行时检查，编译器直接报
-        /// **CS0162 无法访问的代码** —— 两个都是 `const`，比较在编译期就有答案，
-        /// 那段检查**永远不执行**。这正是"走不到的分支比没有分支更糟"：
-        /// 看着很负责，其实是个摆设。
+        /// ⚠️ 这条测试的前身是 `TickRate_MatchesSharedLayerLogicRate`（断言两个常量相等）。
+        /// M3-S5 把 `SharedInfo.LogicTickRate` 改成**派生自** `NetContract.TickRate` 之后，
+        /// 那条断言**恒真**了 —— 一个永远不会红的检查就是**死检查**（本项目"走不到的分支比没有分支更糟"同源），
+        /// 所以删掉它，换成这条"防人再加一个速率"的检查。
         /// </para>
         /// <para>
-        /// 该待的地方就是这里：把两个常量钉成相等。将来有人只改了一处，这条会当场红。
+        /// 它抓的是真实事故：`SharedInfo.SnapshotSendRate = 20` 曾经与 D5 的"每 tick 全量快照"（30）
+        /// 各说各话，而那个 20 **一行代码都没用到** —— 唯一作用是让启动日志显示一个错数字。
         /// </para>
         /// </summary>
         [Test]
-        public void TickRate_MatchesSharedLayerLogicRate()
+        public void SharedInfoDescribe_MentionsOnlyOneRate()
         {
-            Assert.AreEqual(NBC.Shared.SharedInfo.LogicTickRate, NetContract.TickRate,
-                "共享层 `SharedInfo.LogicTickRate` 与协议 `NetContract.TickRate` 必须相等：\n" +
-                "客户端逻辑帧与服务端 tick 对不上时，帧同步必然失败（DET-03），\n" +
-                "而那种错配**不会**在单端测试里暴露。");
+            string text = NBC.Shared.SharedInfo.Describe();
+
+            StringAssert.Contains("LogicTick=" + NetContract.TickRate + "Hz", text,
+                "标识里应当出现协议契约的 tick 率（当前：" + text + "）");
+
+            Assert.IsFalse(text.Contains("Snapshot"),
+                "标识里不该再出现第二个速率（快照与 tick 的关系已定：**每 tick 一张**，见 Docs\\25 §8.5）。" +
+                "当前：" + text);
         }
     }
 }

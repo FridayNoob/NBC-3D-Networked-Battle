@@ -12,6 +12,7 @@
 using NBC.Server.Core;
 using NBC.Server.Game;
 using NBC.Shared;
+using NBC.Shared.Net;      // M3-S5：断言用 `NetContract.TickRate`（速率的唯一来源）
 
 namespace NBC.Server.Tests;
 
@@ -40,9 +41,12 @@ public static class SkeletonSelfCheck
         ok &= SharedInfo.LayerName == "NBC.Shared";
         ok &= SharedInfo.ContractVersion >= 1;
 
-        // 2. 帧率常量
-        ok &= SharedInfo.LogicTickRate == 30;
-        ok &= SharedInfo.SnapshotSendRate == 20;
+        // 2. 帧率常量 —— ⚠️ 2026-09-23（M3-S5）改过：
+        //    原来这里断言的是"字面量 30 / 20"，其中 20 是 `SnapshotSendRate`（一个**没人用的常量**，
+        //    而且和 D5"每 tick 全量快照"矛盾）。现在共享层的速率**派生自协议契约**，
+        //    所以这里断言真正的不变量：**共享层的 tick 率就是协议契约的 tick 率**。
+        ok &= SharedInfo.LogicTickRate == NetContract.TickRate;
+        ok &= SharedInfo.ContractVersion == NetContract.Version;
 
         // 3. 帧号 → 毫秒换算：30 帧/秒，第 30 帧应为 1000ms
         ok &= TickScheduler.TickToMs(0) == 0;

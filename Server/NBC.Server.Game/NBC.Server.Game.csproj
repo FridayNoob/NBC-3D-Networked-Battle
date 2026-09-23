@@ -22,4 +22,19 @@
     <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
   </ItemGroup>
 
+  <!-- ========================================================================
+       ★ Google.Protobuf：**必须直接引一份**（2026-09-23，今天第四次撞同一条规律）
+
+       `NBC.Server.Core` 引了它，但 `<Reference>`（裸程序集引用）**不传递** ——
+       本工程生成快照时用到 `ServerMessage.ToByteArray()`（`Google.Protobuf` 的扩展方法），
+       报错是 `CS0246: 未能找到类型或命名空间名"Google"`。
+       📌 判据同上：**用到第三方类型就自己引**；报 CS0012 时读它的原文（会点名程序集）。
+       ======================================================================== -->
+  <ItemGroup>
+    <Reference Include="Google.Protobuf">
+      <HintPath>..\..\Client\Assets\ThirdParty\GoogleProtobuf\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
 </Project>

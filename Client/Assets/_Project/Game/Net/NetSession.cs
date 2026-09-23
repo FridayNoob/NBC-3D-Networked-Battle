@@ -118,6 +118,12 @@ namespace NBC.Game.Net
         /// <summary>最近一次被拒的错误。</summary>
         private ErrorResponse m_lastError;
 
+        /// <summary>客户端的世界状态（服务端快照的本地副本）。</summary>
+        private readonly SnapshotView m_world = new SnapshotView();
+
+        /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
+        private bool m_loggedFirstSnapshot;
+
         /// <summary>最近一次测到的往返延迟（毫秒；-1 = 还没测到）。</summary>
         private int m_rttMs = -1;
 
@@ -248,6 +254,15 @@ namespace NBC.Game.Net
             get { return m_lastError; }
         }
 
+        /// <summary>
+        /// 客户端的世界状态（**只由服务端快照决定**，见 `SnapshotView` 文件头）。
+        /// <para>表现层（建 GameObject、播动画）去读它，而不是自己去算。</para>
+        /// </summary>
+        public SnapshotView World
+        {
+            get { return m_world; }
+        }
+
         /// <summary>一句人话（编辑器窗口/日志直接用）。</summary>
         public string Description
         {
@@ -315,6 +330,8 @@ namespace NBC.Game.Net
             m_ack = null;
             m_room = null;
             m_lastError = null;
+            m_world.Clear();
+            m_loggedFirstSnapshot = false;
             m_failureReason = null;
             m_rttMs = -1;
             m_lastPingSentMs = -1;
@@ -562,6 +579,10 @@ namespace NBC.Game.Net
                     HandleRoomState(message.RoomState);
                     break;
 
+                case ServerMessage.PayloadOneofCase.Snapshot:
+                    HandleSnapshot(message.Snapshot);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.Error:
                     HandleError(message.Error);
                     break;
@@ -723,6 +744,25 @@ namespace NBC.Game.Net
             if (handler != null)
             {
                 handler(error);
+            }
+        }
+
+        /// <summary>处理世界快照（交给 `SnapshotView`；这里只管日志与事件）。</summary>
+        /// <param name="snapshot">快照。</param>
+        private void HandleSnapshot(WorldSnapshot snapshot)
+        {
+            bool applied = m_world.Apply(snapshot);
+
+            if (!applied)
+            {
+                // 旧快照（见 `SnapshotView` 文件头第二节）：不刷日志，但值得知道它发生过
+                return;
+            }
+
+            if (!m_loggedFirstSnapshot)
+            {
+                m_loggedFirstSnapshot = true;
+                Log("收到第一张世界快照：" + m_world.Describe());
             }
         }
 

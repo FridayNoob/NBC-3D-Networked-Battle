@@ -31,6 +31,7 @@
 using System.Reflection;
 using NBC.Protocol;
 using NBC.Server.Core;
+using NBC.Server.Game;          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
 using NBC.Shared;
 using NBC.Shared.Net;
 
@@ -79,6 +80,10 @@ internal static class Program
         rooms.RegisterHandlers(router);
         rooms.Note += line => Log(quiet, "[房间] " + line);
 
+        // 状态同步（S5）：每个房间一个权威世界，每逻辑帧推进并下发全量快照（30Hz）
+        var battles = new RoomBattleService(transport, rooms.Registry);
+        battles.Note += line => Log(quiet, "[战斗] " + line);
+
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
 
         transport.SessionOpened += session =>
@@ -124,8 +129,13 @@ internal static class Program
             // ---- ① 网络：收字节拆帧（只入队）→ 路由 → 回包/断开 --------------
             pump.Pump();
 
-            // ---- ② 逻辑：推进定长帧（S5 起在这里跑战斗、下发快照） ------------
-            scheduler.ConsumePendingTicks();
+            // ---- ② 逻辑：推进定长帧（每帧 = 推进世界 + 下发一张快照） -------
+            int ticks = scheduler.ConsumePendingTicks();
+
+            for (int i = 0; i < ticks; i++)
+            {
+                battles.Tick();
+            }
 
             if (tickLimit > 0 && scheduler.CurrentTick >= tickLimit)
             {
@@ -145,6 +155,8 @@ internal static class Program
                           $"握手成功 {pump.HandshakesAccepted}，被拒 {pump.HandshakesRejected}，" +
                           $"踢出 {pump.Kicks}，解不出 {pump.Undecodable}");
         Console.WriteLine($"[统计] 房间 {rooms.Registry.RoomCount} 个，席位表广播 {rooms.StateBroadcasts} 份");
+        Console.WriteLine($"[统计] 战斗世界 {battles.BattleCount} 个，推进 {battles.TicksRun} 帧，" +
+                          $"快照送出 {battles.SnapshotsSent} 份，回收世界 {battles.BattlesDropped} 个");
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

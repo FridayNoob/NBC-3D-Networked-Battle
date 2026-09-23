@@ -273,6 +273,31 @@ namespace NBC.EditorTools
                     "上次请求被拒（" + m_session.LastError.Code + "）：" + m_session.LastError.Message,
                     MessageType.Warning);
             }
+
+            DrawWorld();
+        }
+
+        /// <summary>画世界区（服务端快照的本地副本 —— M3 客户端的"画面数据"全在这儿）。</summary>
+        private void DrawWorld()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("世界（服务端快照）", EditorStyles.boldLabel);
+
+            SnapshotView world = m_session.World;
+
+            EditorGUILayout.LabelField("服务端帧", world.ServerTick < 0 ? "（还没收到）" : world.ServerTick.ToString());
+            EditorGUILayout.LabelField("单位", world.AliveCount + " / " + world.EntityCount + " 个活着");
+            EditorGUILayout.LabelField("快照", "采纳 " + world.Applied + "，丢弃旧快照 " + world.StaleIgnored);
+
+            for (int i = 0; i < world.Entities.Count; i++)
+            {
+                NBC.Protocol.EntitySnapshot e = world.Entities[i];
+
+                EditorGUILayout.LabelField(
+                    "  · 实例 " + e.EntityId + "（配置 " + e.ConfigId + "）",
+                    (e.Alive ? "HP " + e.Hp + "/" + e.MaxHp : "已死亡")
+                    + "　位置 (" + e.PosXMm + ", " + e.PosZMm + ") mm　朝向 " + e.FacingDeg + "°");
+            }
         }
 
         /// <summary>画日志区。</summary>
