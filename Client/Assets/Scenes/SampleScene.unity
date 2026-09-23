@@ -445,7 +445,7 @@ GameObject:
   - component: {fileID: 660702432}
   - component: {fileID: 660702434}
   m_Layer: 5
-  m_Name: QuestPanel
+  m_Name: Panel_QuestPanel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -525,6 +525,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9c4a7390c3fbf7e46826bf28d551f3a4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  m_titleControl: Text_Title
+  m_messageControl: Text_Message
+  m_offerListControl: Layout_OfferList
+  m_trackingListControl: Layout_TrackingList
+  m_rowTemplateControl: Button_RowTemplate
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
@@ -688,7 +693,7 @@ GameObject:
   - component: {fileID: 992410756}
   - component: {fileID: 992410755}
   m_Layer: 5
-  m_Name: Message
+  m_Name: Text_Message
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -823,7 +828,7 @@ GameObject:
   - component: {fileID: 1232305885}
   - component: {fileID: 1232305884}
   m_Layer: 5
-  m_Name: RowTemplate
+  m_Name: Button_RowTemplate
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1010,7 +1015,7 @@ GameObject:
   - component: {fileID: 1531468394}
   - component: {fileID: 1531468395}
   m_Layer: 5
-  m_Name: OfferList
+  m_Name: Layout_OfferList
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1072,7 +1077,7 @@ GameObject:
   - component: {fileID: 1667606391}
   - component: {fileID: 1667606392}
   m_Layer: 5
-  m_Name: TrackingList
+  m_Name: Layout_TrackingList
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1135,7 +1140,7 @@ GameObject:
   - component: {fileID: 1769062548}
   - component: {fileID: 1769062547}
   m_Layer: 5
-  m_Name: Title
+  m_Name: Text_Title
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
