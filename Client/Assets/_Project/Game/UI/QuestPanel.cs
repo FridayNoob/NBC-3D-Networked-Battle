@@ -60,38 +60,38 @@ namespace NBC.Game.UI
         //    所以预制体用别的命名也不会把面板卡死。
 
         /// <summary>标题控件的默认名字。</summary>
-        public const string TitleControl = "text_Title";
+        public const string TitleControl = "Text_Title";
 
         /// <summary>消息控件的默认名字。</summary>
-        public const string MessageControl = "text_Message";
+        public const string MessageControl = "Text_Message";
 
         /// <summary>可接列表容器的默认名字。</summary>
-        public const string OfferListControl = "layout_OfferList";
+        public const string OfferListControl = "Layout_OfferList";
 
         /// <summary>已接列表容器的默认名字。</summary>
-        public const string TrackingListControl = "layout_TrackingList";
+        public const string TrackingListControl = "Layout_TrackingList";
 
         /// <summary>行模板的默认名字。</summary>
-        public const string RowTemplateControl = "button_RowTemplate";
+        public const string RowTemplateControl = "Button_RowTemplate";
 
         /// <summary>标题控件名（可改）。</summary>
-        [Tooltip("标题的物体名（规范：text_XXX）")]
+        [Tooltip("标题的物体名（规范：Text_XXX）")]
         [SerializeField] private string m_titleControl = TitleControl;
 
         /// <summary>消息控件名（可改）。</summary>
-        [Tooltip("消息行的物体名（规范：text_XXX）")]
+        [Tooltip("消息行的物体名（规范：Text_XXX）")]
         [SerializeField] private string m_messageControl = MessageControl;
 
         /// <summary>可接列表容器名（可改）。</summary>
-        [Tooltip("可接列表容器的物体名（规范：layout_XXX）")]
+        [Tooltip("可接列表容器的物体名（规范：Layout_XXX）")]
         [SerializeField] private string m_offerListControl = OfferListControl;
 
         /// <summary>已接列表容器名（可改）。</summary>
-        [Tooltip("已接列表容器的物体名（规范：layout_XXX）")]
+        [Tooltip("已接列表容器的物体名（规范：Layout_XXX）")]
         [SerializeField] private string m_trackingListControl = TrackingListControl;
 
         /// <summary>行模板名（可改）。</summary>
-        [Tooltip("行模板的物体名（规范：button_XXX）")]
+        [Tooltip("行模板的物体名（规范：Button_XXX）")]
         [SerializeField] private string m_rowTemplateControl = RowTemplateControl;
 
         /// <summary>标题（可能是 UGUI `Text`，也可能是 `TextMeshProUGUI`）。</summary>
