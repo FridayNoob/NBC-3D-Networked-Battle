@@ -310,11 +310,100 @@ namespace NBC.Boot
                    "（M2 加过 4 张新表，**旧的内容包里没有它们** —— 必须重打一次。）";
         }
 
-        /// <summary>配置表就绪：装配一局、接任务、进关卡。</summary>
+        /// <summary>
+        /// 数据预检：演示要用到的那些 id 在**当前加载的资产**里都存在吗。
+        /// <para>
+        /// ⚠️ 它查的是**数据**（资产里有没有这个 id），所以**在打包后的 Player 里也有效** ——
+        /// 比"比文件时间"更直接（比时间那套只在编辑器里有意义）。
+        /// </para>
+        /// </summary>
+        /// <returns>没问题返回 null；有问题返回一句人话（带处理办法）。</returns>
+        private string VerifyConfiguredIds()
+        {
+            // ① 英雄 + 它的技能
+            Config_Hero hero;
+
+            if (!ConfigMgr.Instance.Get<HeroConfig>().TryGet(m_heroId, out hero))
+            {
+                return MissingId("Hero", m_heroId, "英雄");
+            }
+
+            if (hero.skillIds == null || hero.skillIds.Length == 0)
+            {
+                return "英雄 " + m_heroId + " 在 `Hero.skillIds` 里没有技能，演示没法放技能。";
+            }
+
+            SkillConfig skills = ConfigMgr.Instance.Get<SkillConfig>();
+
+            for (int i = 0; i < hero.skillIds.Length; i++)
+            {
+                Config_Skill skill;
+
+                if (!skills.TryGet(hero.skillIds[i], out skill))
+                {
+                    return MissingId("Skill", hero.skillIds[i], "技能（英雄 " + m_heroId + " 的技能列表里）");
+                }
+            }
+
+            // ② 怪
+            Config_Monster monster;
+
+            if (!ConfigMgr.Instance.Get<MonsterConfig>().TryGet(m_monsterId, out monster))
+            {
+                return MissingId("Monster", m_monsterId, "怪物");
+            }
+
+            // ③ 任务（**这一条最常踩**：M2 加任务时常常忘了重新导入）
+            Config_Quest quest;
+
+            if (!ConfigMgr.Instance.Get<QuestConfig>().TryGet(m_questId, out quest))
+            {
+                return MissingId("Quest", m_questId, "任务");
+            }
+
+            // ④ 任务的奖励
+            Config_Reward reward;
+
+            if (!ConfigMgr.Instance.Get<RewardConfig>().TryGet(quest.rewardId, out reward))
+            {
+                return MissingId("Reward", quest.rewardId, "奖励（任务 " + m_questId + " 的）");
+            }
+
+            return null;
+        }
+
+        /// <summary>拼一句"某个表里没有某个 id"的报错，并**给出最可能的原因与处理办法**。</summary>
+        /// <param name="table">表名。</param>
+        /// <param name="id">缺的编号。</param>
+        /// <param name="what">这是什么（人话）。</param>
+        /// <returns>报错文本。</returns>
+        private static string MissingId(string table, int id, string what)
+        {
+            return "配置表 " + table + " 里没有" + what + " " + id + "。\n\n" +
+                   "最常见的原因：**配置资产是旧的**（改过 CSV，但没重新导入）。\n" +
+                   "处理办法（两步都别漏）：\n" +
+                   "  ① 改过 CSV 的话，先跑一次 ConfigKit.Cli 生成 .tsv / .cs\n" +
+                   "  ② 点一次菜单 `Tools/NBC/配置表/导入 TSV → ScriptableObject`\n\n" +
+                   "想先看是哪几张表过期：跑菜单 `Tools/NBC/配置表/检查资产是否过期（只报告）`。";
+        }
+
+        /// <summary>配置表就绪：**先做数据预检**，再装配一局、接任务、进关卡。</summary>
         private void OnConfigsReady()
         {
             try
             {
+                // ⚠️ 出门前的数据预检。为什么值得专门写一段：
+                //    "改过 CSV、忘了点导入菜单"会让**资产变成旧快照**，而这**不报任何错** ——
+                //    表现是运行到一半才说"某张表里没有某个 id"（M2 期间真踩到过）。
+                //    在这里拦下来，报错方向才对。
+                string problem = VerifyConfiguredIds();
+
+                if (problem != null)
+                {
+                    Fail(problem);
+                    return;
+                }
+
                 Say("③ 装配一局（BattleSession）");
                 m_sink = new InMemoryQuestRewardSink();
                 m_session = BattleSession.FromConfigMgr(m_heroId, m_sink);
