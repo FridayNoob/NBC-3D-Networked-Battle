@@ -49,6 +49,12 @@ namespace NBC.EditorTools
         /// <summary>玩家名（M3 没有账号系统，只用于日志/席位）。</summary>
         [SerializeField] private string m_playerName = "剑士";
 
+        /// <summary>想进哪个副本（`Dungeon` 表主键；S6 才会真用它建副本）。</summary>
+        [SerializeField] private int m_dungeonId = 1001;
+
+        /// <summary>指定房号（留空 = 让服务端按副本安排一个）。</summary>
+        [SerializeField] private string m_roomId = "";
+
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
 
@@ -154,6 +160,34 @@ namespace NBC.EditorTools
             }
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("房间", EditorStyles.boldLabel);
+
+            m_dungeonId = EditorGUILayout.IntField("副本编号", m_dungeonId);
+            m_roomId = EditorGUILayout.TextField("房号（留空 = 服务端安排）", m_roomId);
+
+            bool online = m_session != null && m_session.IsOnline;
+            bool inRoom = m_session != null && m_session.InRoom;
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!online || inRoom))
+                {
+                    if (GUILayout.Button("加入房间", GUILayout.Height(22f)))
+                    {
+                        m_session.JoinRoom(m_roomId, m_dungeonId);
+                    }
+                }
+
+                using (new EditorGUI.DisabledScope(!inRoom))
+                {
+                    if (GUILayout.Button("离开房间", GUILayout.Height(22f)))
+                    {
+                        m_session.LeaveRoom();
+                    }
+                }
+            }
+
+            EditorGUILayout.Space();
             DrawStatus();
             EditorGUILayout.Space();
             DrawLog();
@@ -197,6 +231,47 @@ namespace NBC.EditorTools
             if (!string.IsNullOrEmpty(m_session.FailureReason))
             {
                 EditorGUILayout.HelpBox(m_session.FailureReason, MessageType.Error);
+            }
+
+            DrawRoom();
+        }
+
+        /// <summary>画房间区（席位表 + 最近一次被拒）。</summary>
+        private void DrawRoom()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("房间与席位", EditorStyles.boldLabel);
+
+            NBC.Protocol.RoomState room = m_session.CurrentRoom;
+
+            if (room == null || string.IsNullOrEmpty(room.RoomId))
+            {
+                EditorGUILayout.LabelField("位置", "不在任何房间");
+            }
+            else
+            {
+                EditorGUILayout.LabelField("房号", room.RoomId);
+                EditorGUILayout.LabelField("副本", room.DungeonId.ToString());
+                EditorGUILayout.LabelField("席位", room.Members.Count + " / " + room.Capacity);
+                EditorGUILayout.LabelField("阶段", room.Phase.ToString());
+
+                for (int i = 0; i < room.Members.Count; i++)
+                {
+                    NBC.Protocol.RoomMember member = room.Members[i];
+
+                    EditorGUILayout.LabelField(
+                        "  · 玩家 " + member.PlayerId,
+                        member.PlayerName + (member.IsHost ? "（房主）" : string.Empty)
+                        + (member.Ready ? "（已准备）" : string.Empty));
+                }
+            }
+
+            if (m_session.LastError != null)
+            {
+                // 被拒 ≠ 掉线：这里用 Warning 而不是 Error，提示"这个请求没成"
+                EditorGUILayout.HelpBox(
+                    "上次请求被拒（" + m_session.LastError.Code + "）：" + m_session.LastError.Message,
+                    MessageType.Warning);
             }
         }
 

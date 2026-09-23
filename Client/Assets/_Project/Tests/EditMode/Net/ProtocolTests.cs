@@ -197,6 +197,34 @@ namespace NBC.Tests.EditMode
         //  三、常量之间的关系（自己跟自己要对得上）
         // ====================================================================
 
+        /// <summary>
+        /// M3-S4 追加的两条消息要能真的过一趟（加消息是**兼容**改动，但生成物得能用）。
+        /// <para>
+        /// ⚠️ 这条同时钉住一件事：**`CONTRACT_VERSION` 不应该因为它俩而 +1**。
+        /// 判据在 `.proto` 顶部 —— 只有"删字段 / 改类型 / 改语义"才叫不兼容，
+        /// 加消息、加 oneof 分支都是兼容的（proto3 会忽略未知字段）。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void S4Messages_RoundTrip()
+        {
+            ClientMessage leaving = new ClientMessage { LeaveRoom = new LeaveRoomRequest() };
+            ClientMessage back = ClientMessage.Parser.ParseFrom(leaving.ToByteArray());
+
+            Assert.AreEqual(ClientMessage.PayloadOneofCase.LeaveRoom, back.PayloadCase,
+                "leave_room 应当落在正确的 oneof 分支上");
+
+            ServerMessage error = new ServerMessage
+            {
+                Error = new ErrorResponse { Code = NetErrors.RoomFull, Message = "房间 r1 已满（4/4）" },
+            };
+            ServerMessage errorBack = ServerMessage.Parser.ParseFrom(error.ToByteArray());
+
+            Assert.AreEqual(ServerMessage.PayloadOneofCase.Error, errorBack.PayloadCase);
+            Assert.AreEqual(NetErrors.RoomFull, errorBack.Error.Code);
+            StringAssert.Contains("已满", errorBack.Error.Message, "中文说明要能原样过网线");
+        }
+
         /// <summary>帧间隔与 tick 率必须自洽（30Hz → 33ms）。</summary>
         [Test]
         public void Constants_AreSelfConsistent()

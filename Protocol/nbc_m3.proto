@@ -95,6 +95,30 @@ message JoinRoomRequest
     int32  dungeon_id = 2;   // 想打哪个副本（`Dungeon` 表主键）
 }
 
+/// 请求离开当前房间（**M3-S4 追加**）。
+///
+/// ⚠️ 本消息与下面的 `ErrorResponse` 都是**兼容改动**（只加消息 / 加 oneof 字段）：
+///    proto3 里未知字段会被忽略，所以旧的一端不会因此出错 ——
+///    **`CONTRACT_VERSION` 保持 1**（判据见本文件顶部：只有删字段 / 改类型 / 改语义才要 +1）。
+message LeaveRoomRequest
+{
+}
+
+/// 一句"你的请求被拒了，因为……"（**M3-S4 追加**）。
+///
+/// 为什么必须有它：M3 到处的判据都是"**失败要 fail loud，还要说人话**"——
+/// 进房失败（房间满 / 重复进房 / 房间不存在）如果只是"什么都不回"，
+/// 客户端就只能显示"点了没反应"，那是最难查的一类问题。
+///
+/// ⚠️ 与 `RoomState` 的分工（**别混**）：
+///    · `RoomState`  = 你现在的房间**长什么样**（空房间状态 = 你不在任何房间）
+///    · `ErrorResponse` = 你刚发的那个请求**被拒了**，原因是……
+message ErrorResponse
+{
+    int32  code    = 1;   // 机器可判的编号（常量在 `Shared\Net\NetErrors.cs`）
+    string message = 2;   // 人话（可以直接显示给玩家 / 写日志）
+}
+
 /// 房间里的一个席位。
 message RoomMember
 {
@@ -217,6 +241,7 @@ message ServerMessage
         RoomState     room_state    = 3;
         WorldSnapshot snapshot      = 4;
         ServerEvent   event         = 5;
+        ErrorResponse error         = 6;   // M3-S4 追加（兼容：只是多一个 oneof 分支）
     }
 }
 
@@ -225,9 +250,10 @@ message ClientMessage
 {
     oneof payload
     {
-        Handshake       handshake = 1;
-        Ping            ping      = 2;
-        JoinRoomRequest join_room = 3;
-        PlayerInput     input     = 4;
+        Handshake       handshake  = 1;
+        Ping            ping       = 2;
+        JoinRoomRequest join_room  = 3;
+        PlayerInput     input      = 4;
+        LeaveRoomRequest leave_room = 5;   // M3-S4 追加（兼容）
     }
 }

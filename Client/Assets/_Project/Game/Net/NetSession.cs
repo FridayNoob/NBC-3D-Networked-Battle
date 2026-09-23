@@ -112,6 +112,12 @@ namespace NBC.Game.Net
         /// <summary>握手结果（成功后有）。</summary>
         private HandshakeAck m_ack;
 
+        /// <summary>服务端最后一次下发的房间状态（含"你不在任何房间"的那份）。</summary>
+        private RoomState m_room;
+
+        /// <summary>最近一次被拒的错误。</summary>
+        private ErrorResponse m_lastError;
+
         /// <summary>最近一次测到的往返延迟（毫秒；-1 = 还没测到）。</summary>
         private int m_rttMs = -1;
 
@@ -218,6 +224,30 @@ namespace NBC.Game.Net
             get { return m_state == ESessionState.Online; }
         }
 
+        /// <summary>
+        /// 当前房间状态（服务端最后一次下发的）。
+        /// <para>
+        /// ⚠️ 判断"在不在房间里"要用 <see cref="InRoom"/>：服务端离开房间时会下发一份
+        /// **房号为空**的状态（约定见 `RoomService` 文件头第二节），所以"有状态"不等于"在房里"。
+        /// </para>
+        /// </summary>
+        public RoomState CurrentRoom
+        {
+            get { return m_room; }
+        }
+
+        /// <summary>现在在不在房间里（房号非空才算）。</summary>
+        public bool InRoom
+        {
+            get { return m_room != null && !string.IsNullOrEmpty(m_room.RoomId); }
+        }
+
+        /// <summary>最近一次被拒的错误（null = 还没被拒过）。</summary>
+        public ErrorResponse LastError
+        {
+            get { return m_lastError; }
+        }
+
         /// <summary>一句人话（编辑器窗口/日志直接用）。</summary>
         public string Description
         {
@@ -253,6 +283,12 @@ namespace NBC.Game.Net
         /// <summary>收到一条服务端消息（Pong 也会走这里，方便界面显示"有流量"）。</summary>
         public event Action<ServerMessage> MessageReceived;
 
+        /// <summary>房间状态变了（服务端每次都**整份**下发，见 D5）。</summary>
+        public event Action<RoomState> RoomChanged;
+
+        /// <summary>请求被服务端拒了（带错误码与人话原因）。</summary>
+        public event Action<ErrorResponse> ErrorReceived;
+
         /// <summary>值得记一句的事情（人话）。</summary>
         public event Action<string> Note;
 
@@ -277,6 +313,8 @@ namespace NBC.Game.Net
             // 重连前把上一次的残留清干净（否则上一局的失败原因会跟着这一局）
             m_inbox.Clear();
             m_ack = null;
+            m_room = null;
+            m_lastError = null;
             m_failureReason = null;
             m_rttMs = -1;
             m_lastPingSentMs = -1;
@@ -363,6 +401,30 @@ namespace NBC.Game.Net
             }
 
             SendPing();
+        }
+
+        /// <summary>
+        /// 请求进房（`roomId` 留空 = 让服务端分配/找一个）。
+        /// <para>服务端的结果可能是 `RoomState`（成功）或 `ErrorResponse`（被拒，原因在 `LastError`）。</para>
+        /// </summary>
+        /// <param name="roomId">房号（留空 = 让服务端安排）。</param>
+        /// <param name="dungeonId">想打的副本（留空房号时服务端按它找房/开房）。</param>
+        public void JoinRoom(string roomId, int dungeonId)
+        {
+            Send(new ClientMessage
+            {
+                JoinRoom = new JoinRoomRequest
+                {
+                    RoomId = roomId ?? string.Empty,
+                    DungeonId = dungeonId,
+                },
+            });
+        }
+
+        /// <summary>请求离开当前房间（结果同样走 `RoomChanged` / `LastError`）。</summary>
+        public void LeaveRoom()
+        {
+            Send(new ClientMessage { LeaveRoom = new LeaveRoomRequest() });
         }
 
         // ====================================================================
@@ -496,6 +558,14 @@ namespace NBC.Game.Net
                     HandlePong(message.Pong);
                     break;
 
+                case ServerMessage.PayloadOneofCase.RoomState:
+                    HandleRoomState(message.RoomState);
+                    break;
+
+                case ServerMessage.PayloadOneofCase.Error:
+                    HandleError(message.Error);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -584,6 +654,75 @@ namespace NBC.Game.Net
                 {
                     handler(rtt);
                 }
+            }
+        }
+
+        /// <summary>处理房间状态（服务端整份下发，覆盖本地的即可）。</summary>
+        /// <param name="state">新状态。</param>
+        private void HandleRoomState(RoomState state)
+        {
+            if (state == null)
+            {
+                return;
+            }
+
+            m_room = state;
+
+            if (string.IsNullOrEmpty(state.RoomId))
+            {
+                Log("你不在任何房间");
+            }
+            else
+            {
+                // 把席位表拼成人话：`r1（副本 1001）2/4 人：剑士[房主]、法师`
+                var text = new System.Text.StringBuilder();
+                text.Append("房间 ").Append(state.RoomId)
+                    .Append("（副本 ").Append(state.DungeonId).Append("）")
+                    .Append(state.Members.Count).Append('/').Append(state.Capacity).Append(" 人：");
+
+                for (int i = 0; i < state.Members.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        text.Append('、');
+                    }
+
+                    text.Append(state.Members[i].PlayerName);
+
+                    if (state.Members[i].IsHost)
+                    {
+                        text.Append("[房主]");
+                    }
+                }
+
+                Log(text.ToString());
+            }
+
+            Action<RoomState> handler = RoomChanged;
+
+            if (handler != null)
+            {
+                handler(state);
+            }
+        }
+
+        /// <summary>处理"请求被拒"。</summary>
+        /// <param name="error">错误。</param>
+        private void HandleError(ErrorResponse error)
+        {
+            if (error == null)
+            {
+                return;
+            }
+
+            m_lastError = error;
+            Log("被拒（" + error.Code + "）：" + error.Message);
+
+            Action<ErrorResponse> handler = ErrorReceived;
+
+            if (handler != null)
+            {
+                handler(error);
             }
         }
 

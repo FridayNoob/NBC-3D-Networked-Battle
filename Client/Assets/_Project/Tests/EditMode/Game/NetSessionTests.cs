@@ -361,8 +361,159 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  五、房间与席位（S4）
+        // ====================================================================
+
+        /// <summary>进房：发出去的应当是 `JoinRoomRequest`，字段原样。</summary>
+        [Test]
+        public void JoinRoom_SendsJoinRequest()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            session.JoinRoom("r1", 1001);
+
+            ClientMessage sent = ClientMessage.Parser.ParseFrom(fake.LastSent);
+            Assert.AreEqual(ClientMessage.PayloadOneofCase.JoinRoom, sent.PayloadCase);
+            Assert.AreEqual("r1", sent.JoinRoom.RoomId);
+            Assert.AreEqual(1001, sent.JoinRoom.DungeonId);
+        }
+
+        /// <summary>收到席位表：`CurrentRoom` 更新、事件发出来、`InRoom` 为真。</summary>
+        [Test]
+        public void RoomState_UpdatesCurrentRoom()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            List<RoomState> changed = new List<RoomState>();
+            session.RoomChanged += changed.Add;
+
+            fake.PushFrame(Room("r1", 1001, 4, new[] { ("剑士", true), ("法师", false) }));
+            session.Pump(0);
+
+            Assert.AreEqual(1, changed.Count, "RoomChanged 应当发一次");
+            Assert.IsTrue(session.InRoom);
+            Assert.AreEqual("r1", session.CurrentRoom.RoomId);
+            Assert.AreEqual(1001, session.CurrentRoom.DungeonId);
+            Assert.AreEqual(2, session.CurrentRoom.Members.Count);
+            Assert.IsTrue(session.CurrentRoom.Members[0].IsHost, "第一个人是房主");
+            Assert.IsFalse(session.CurrentRoom.Members[1].IsHost);
+        }
+
+        /// <summary>
+        /// 服务端下发的"空房号状态" = 你不在任何房间。
+        /// <para>⚠️ 这条是**约定**（`RoomService` 文件头第二节）：<c>CurrentRoom != null</c> 不等于"在房里"，
+        /// 判断必须用 <c>InRoom</c>。写错的话，离开房间之后界面还会显示房间号。</para>
+        /// </summary>
+        [Test]
+        public void EmptyRoomState_MeansNotInRoom()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            fake.PushFrame(Room("", 0, 0, new (string, bool)[0]));
+            session.Pump(0);
+
+            Assert.IsNotNull(session.CurrentRoom, "状态本身是收到了的");
+            Assert.IsFalse(session.InRoom, "房号为空 = 不在任何房间");
+        }
+
+        /// <summary>被拒：记下错误码与人话，**但状态仍然是在线**（被拒 ≠ 掉线）。</summary>
+        [Test]
+        public void Error_IsRecordedWithoutDroppingTheSession()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            List<ErrorResponse> errors = new List<ErrorResponse>();
+            session.ErrorReceived += errors.Add;
+
+            fake.PushFrame(new ServerMessage
+            {
+                Error = new ErrorResponse { Code = NetErrors.RoomFull, Message = "房间 r1 已满（4/4）" },
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(1, errors.Count);
+            Assert.AreEqual(NetErrors.RoomFull, session.LastError.Code);
+            StringAssert.Contains("已满", session.LastError.Message);
+            Assert.AreEqual(ESessionState.Online, session.State,
+                "被拒只是这个请求没成，会话还好好的 —— 把状态打成失败是过度反应");
+        }
+
+        /// <summary>离开房间：发出去的应当是 `LeaveRoomRequest`。</summary>
+        [Test]
+        public void LeaveRoom_SendsLeaveRequest()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            session.LeaveRoom();
+
+            ClientMessage sent = ClientMessage.Parser.ParseFrom(fake.LastSent);
+            Assert.AreEqual(ClientMessage.PayloadOneofCase.LeaveRoom, sent.PayloadCase);
+        }
+
+        /// <summary>重连要把房间与错误清干净（否则新一局界面上还挂着上一局的房号）。</summary>
+        [Test]
+        public void Reconnect_ClearsRoomAndError()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            fake.PushFrame(Room("r1", 1001, 4, new[] { ("剑士", true) }));
+            fake.PushFrame(new ServerMessage
+            {
+                Error = new ErrorResponse { Code = NetErrors.RoomFull, Message = "满了" },
+            }.ToByteArray());
+            session.Pump(0);
+
+            Assert.IsTrue(session.InRoom);
+            Assert.IsNotNull(session.LastError);
+
+            session.Disconnect();
+            session.Connect("127.0.0.1", 7777);
+
+            Assert.IsFalse(session.InRoom, "重连后不该还挂着上一局的房间");
+            Assert.IsNull(session.CurrentRoom);
+            Assert.IsNull(session.LastError);
+        }
+
+        // ====================================================================
         //  辅助
         // ====================================================================
+
+        /// <summary>造一条 `RoomState` 载荷。</summary>
+        /// <param name="roomId">房号。</param>
+        /// <param name="dungeonId">副本编号。</param>
+        /// <param name="capacity">容量。</param>
+        /// <param name="members">成员（名字 + 是否房主）。</param>
+        /// <returns>序列化后的载荷。</returns>
+        private static byte[] Room(string roomId, int dungeonId, int capacity,
+                                   (string Name, bool IsHost)[] members)
+        {
+            var state = new RoomState
+            {
+                RoomId = roomId,
+                DungeonId = dungeonId,
+                Capacity = capacity,
+                Phase = RoomPhase.Waiting,
+            };
+
+            for (int i = 0; i < members.Length; i++)
+            {
+                state.Members.Add(new RoomMember
+                {
+                    PlayerId = i + 1,
+                    PlayerName = members[i].Name,
+                    IsHost = members[i].IsHost,
+                });
+            }
+
+            return new ServerMessage { RoomState = state }.ToByteArray();
+        }
 
         /// <summary>造一条服务端答复。</summary>
         /// <param name="accepted">是否接受。</param>
