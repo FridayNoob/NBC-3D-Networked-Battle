@@ -66,6 +66,7 @@ namespace NBC.Tests.EditMode
                 { "NBC.Framework", "NBC.Framework" },
                 { "NBC.Shared", "NBC.Shared" },
                 { "NBC.Shared.Net", "NBC.Shared" },
+                { "NBC.Protocol", "NBC.Protocol" },
                 { "NBC.Game", "NBC.Game" },
                 { "NBC.Boot", "NBC.Boot" },
                 { "NBC.Model", "NBC.Model" }

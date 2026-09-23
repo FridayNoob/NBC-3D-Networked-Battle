@@ -3,9 +3,11 @@
     "rootNamespace": "NBC.EditorTools",
     "references": [
         "NBC.Framework",
+        "NBC.Framework.Net",
         "NBC.Framework.UI",
         "NBC.Game",
         "NBC.Model",
+        "NBC.Protocol",
         "NBC.Boot",
         "Unity.TextMeshPro"
     ],
