@@ -7,7 +7,9 @@
         "NBC.Framework.YooAsset",
         "NBC.Game",
         "NBC.Model",
+        "Unity.TextMeshPro",
         "UnityEngine.TestRunner",
+        "UnityEngine.UI",
         "UnityEditor.TestRunner"
     ],
     "includePlatforms": [],

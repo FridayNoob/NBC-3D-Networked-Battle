@@ -6,7 +6,8 @@
         "NBC.Framework.UI",
         "NBC.Game",
         "NBC.Model",
-        "NBC.Boot"
+        "NBC.Boot",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [
         "Editor"
