@@ -383,11 +383,19 @@ namespace NBC.Tests.EditMode
 
             Assert.IsFalse(wolves[0].IsAlive, "第一只应当已被打死");
             Assert.AreEqual(wolves[1].InstanceId, m_session.CurrentTargetInstanceId,
-                "下一次按键应当已经自动换到第二只");
+                "打完这一帧就该换到第二只（**不是等下一次按键**）：" +
+                "否则 UI 会显示一个已经不在场上的目标");
             Assert.AreEqual(300, wolves[1].Hp, "换目标之前不该误伤第二只");
 
             Press(tick);
             Assert.AreEqual(180, wolves[1].Hp);
+
+            // 把第二只也打死 -> 场上没活怪了，目标应当回到 0（不变量：0 或活怪）
+            Press(tick + 1);
+            Press(tick + 2);
+
+            Assert.AreEqual(0, m_session.CurrentTargetInstanceId, "没活怪了就该是 0");
+            Assert.AreEqual(0, m_session.World.AliveMonsterCount);
         }
 
         // ====================================================================

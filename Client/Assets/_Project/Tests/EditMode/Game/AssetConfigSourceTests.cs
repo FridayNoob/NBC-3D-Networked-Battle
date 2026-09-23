@@ -124,8 +124,10 @@ namespace NBC.Tests.EditMode
         [Test]
         public void LoadTable_WithoutProvider_ReportsMissingCompositionRoot()
         {
-            AssetManager.Instance.SetProvider(null);
-
+            // ⚠️ **不要**写 `AssetManager.Instance.SetProvider(null)` —— 框架会抛
+            //    ArgumentNullException（不让静默卸加载器，那会把旧加载器持有的资源变成孤儿）。
+            //    本用例靠的是 `SetUp` 里的 `SingletonRegistry.ResetAll()`：
+            //    重置之后 `AssetManager` 是全新的，**本来就没有加载器**。
             string failure = null;
             m_source.LoadTable("Hero", asset => Assert.Fail("不该成功"), reason => failure = reason);
 
@@ -169,11 +171,14 @@ namespace NBC.Tests.EditMode
         {
             InstallFakeProvider();
 
-            // 放进一个**类型对不上**的资产：地址是 HeroConfig，资产却是 SkillConfig
-            // （这正是"句柄成功、资产为 null"那种假成功的成因）
-            SkillConfig wrong = ScriptableObject.CreateInstance<SkillConfig>();
-            m_created.Add(wrong);
-            m_provider.Put("HeroConfig", wrong);
+            // ⚠️ 这条要模拟的是"**底层报成功、但没给资产**"这种自相矛盾的加载 ——
+            //    M1-B5 我就是被它骗过（打出过 "✅ 取到句柄（Asset = null）"）。
+            //    第一版我用"放一个类型不对的资产"来造这个场景，**造不出来**：
+            //    来源请求的是 `ScriptableObject`，任何 SO 都是它的实例，
+            //    所以 `IsInstanceOfType` 为真、加载**真的成功了**，用例反而红。
+            //    正确做法是让假加载器**故意矛盾**（状态说成功、资产给 null）——
+            //    这正是 `IsValid` 要挡的形状。
+            m_provider.PutSucceededWithoutAsset("HeroConfig");
 
             string failure = null;
             m_source.LoadTable("Hero", asset => Assert.Fail("资产是 null 时不该算成功"), reason => failure = reason);
@@ -203,8 +208,15 @@ namespace NBC.Tests.EditMode
         public void LoadTable_Failure_ReleasesHandle()
         {
             InstallFakeProvider();
-            m_source.LoadTable("Quest", null, null);
 
+            // ⚠️ **必须给失败回调**：`IConfigSource` 的契约是"两个回调至少来一个"，
+            //    而这个来源在"没人接失败"时会打 `Debug.LogError`。
+            //    在 Unity 测试里**一条意外的 LogError 就算失败**（LogAssert）——
+            //    第一版这里传了 null，于是用例红在一句"没人接失败回调"上。
+            string failure = null;
+            m_source.LoadTable("Quest", null, reason => failure = reason);
+
+            Assert.IsNotNull(failure);
             Assert.AreEqual(0, m_source.HeldHandleCount, "失败时不该持有句柄");
         }
 
@@ -258,6 +270,9 @@ namespace NBC.Tests.EditMode
             /// <summary>地址 → 资产。</summary>
             private readonly Dictionary<string, Object> m_assets = new Dictionary<string, Object>(StringComparer.Ordinal);
 
+            /// <summary>这些地址要"**状态说成功、资产给 null**"（模拟自相矛盾的底层）。</summary>
+            private readonly HashSet<string> m_succeededWithoutAsset = new HashSet<string>(StringComparer.Ordinal);
+
             /// <summary>是否已初始化。</summary>
             public bool IsInitialized { get; private set; }
 
@@ -267,6 +282,13 @@ namespace NBC.Tests.EditMode
             public void Put(string location, Object asset)
             {
                 m_assets[location] = asset;
+            }
+
+            /// <summary>让这个地址"报成功但不给资产"（见 <see cref="AssetHandle{T}.IsValid"/> 的讨论）。</summary>
+            /// <param name="location">地址。</param>
+            public void PutSucceededWithoutAsset(string location)
+            {
+                m_succeededWithoutAsset.Add(location);
             }
 
             /// <summary>初始化（假实现：立刻成功）。</summary>
@@ -284,7 +306,13 @@ namespace NBC.Tests.EditMode
             /// <returns>加载操作。</returns>
             public IAssetLoadOperation LoadAsync(string location, Type assetType)
             {
-                return new FakeOperation(location, assetType, Resolve(location, assetType));
+                // "报成功但不给资产"这条要单独造：它模拟的是底层自相矛盾时的形状
+                if (m_succeededWithoutAsset.Contains(location))
+                {
+                    return new FakeOperation(location, assetType, null, true);
+                }
+
+                return new FakeOperation(location, assetType, Resolve(location, assetType), false);
             }
 
             /// <summary>同步加载（同异步）。</summary>
@@ -352,14 +380,26 @@ namespace NBC.Tests.EditMode
             /// <param name="location">地址。</param>
             /// <param name="assetType">期望类型。</param>
             /// <param name="asset">结果资产。</param>
-            public FakeOperation(string location, Type assetType, Object asset)
+            /// <param name="succeedWithoutAsset">
+            /// true = **故意矛盾**：状态报成功、资产给 null（用来验 `IsValid` 那道防线）。
+            /// </param>
+            public FakeOperation(string location, Type assetType, Object asset, bool succeedWithoutAsset = false)
             {
                 Location = location;
                 m_asset = asset;
-                m_error = asset == null
-                    ? "假加载器：地址「" + location + "」没有可用的 " + assetType.Name + " 资产。"
-                    : string.Empty;
-                Status = asset == null ? AssetStatus.Failed : AssetStatus.Succeeded;
+
+                if (asset != null)
+                {
+                    Status = AssetStatus.Succeeded;
+                    m_error = string.Empty;
+                    return;
+                }
+
+                // 两种"没资产"要区分开：正常的失败 vs 自相矛盾的成功
+                Status = succeedWithoutAsset ? AssetStatus.Succeeded : AssetStatus.Failed;
+                m_error = succeedWithoutAsset
+                    ? "假加载器：故意报成功但不给资产（模拟底层自相矛盾）"
+                    : "假加载器：地址「" + location + "」没有可用的 " + assetType.Name + " 资产。";
             }
 
             /// <summary>地址。</summary>

@@ -251,8 +251,11 @@ namespace NBC.Game.GameFlow
 
         /// <summary>
         /// 处理一帧输入：把"本帧新按下"的技能键放出去。
-        /// <para>⚠️ 释放完技能后会**自动选下一个活着的目标** —— 目标死了还接着打它
-        /// 会抛异常（世界层：不在场即错误），而"打死了就换下一个"才是玩家期望的。</para>
+        /// <para>
+        /// ⚠️ **不变量：`CurrentTargetInstanceId` 要么是 0，要么指向一只活怪。**
+        /// 所以打完这一帧之后如果目标死了，**当场**就换下一个（而不是等下一次按键）——
+        /// 否则 UI 会显示"当前目标 #2"，而 #2 已经不在场上了（一个查起来很费劲的显示 bug）。
+        /// </para>
         /// </summary>
         /// <param name="command">这一帧的输入命令。</param>
         /// <param name="results">释放结果会追加进来（可以为 null）。</param>
@@ -269,7 +272,15 @@ namespace NBC.Game.GameFlow
                 }
             }
 
-            return m_caster.Handle(command, m_targetInstanceId, results);
+            int cast = m_caster.Handle(command, m_targetInstanceId, results);
+
+            // 打死了就当场换目标（维持上面那条不变量）
+            if (cast > 0 && !IsAliveTarget(m_targetInstanceId))
+            {
+                SelectFirstAliveMonster();
+            }
+
+            return cast;
         }
 
         /// <summary>把一局的状态拼成一段文本（控制台/HUD 用）。</summary>
