@@ -122,6 +122,71 @@ namespace NBC.Boot
         [SerializeField] private KeyCode m_resetKey = KeyCode.R;
 
         /// <summary>
+        /// 可选：拖一个字体进来给**左上角那块 OnGUI HUD** 用。
+        /// <para>
+        /// ⚠️ 为什么 HUD 要单独管字体：`OnGUI` 走的是 **IMGUI + 系统动态字体**，
+        /// **完全不经过 TMP** —— 所以"TMP 字体资产接好了"对它没有任何帮助，中文照样是方框。
+        /// 两条路：
+        ///   · 把 `Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.otf` 拖到这里（最稳，跨平台）
+        ///   · **不拖也行**：本类会自动去系统字体里找一个中文字体兜底（见 `EnsureGuiFont`），
+        ///     那只保证**开发机**上正常 —— 正式界面（M3）会换成 TMP，这条路本来就会退场
+        /// </para>
+        /// </summary>
+        [Tooltip("可选：OnGUI HUD 用的字体（拖那份 .otf 进来）；不拖会自动找系统中文字体兜底")]
+        // 显式 `= null`：序列化字段由 Unity 赋值，代码里从不赋值会让编译器报 CS0649（闸门要求 0 警告）
+        [SerializeField] private Font m_guiFont = null;
+
+        /// <summary>
+        /// 保证 HUD 有中文字体（只做一次）。
+        /// <para>
+        /// ⚠️ **`OnGUI` 和 TMP 是两套完全独立的字体系统**：
+        /// TMP 用我们生成的 SDF 字体资产；而 IMGUI 用的是**系统动态字体**——
+        /// 所以你就算把 TMP 那边配好了，`OnGUI` 的中文照样是方框。
+        /// </para>
+        /// <para>
+        /// 顺序：① Inspector 上拖的字体（最稳，跨平台）→ ② 从**操作系统**里找一个中文字体兜底
+        /// （`Font.CreateDynamicFontFromOSFont`，只在开发机上有效，但这块 HUD 本来就是开发期临时显示）。
+        /// </para>
+        /// </summary>
+        private void EnsureGuiFont()
+        {
+            if (m_guiFontReady)
+            {
+                return;
+            }
+
+            m_guiFontReady = true;
+
+            if (m_guiFont != null)
+            {
+                GUI.skin.font = m_guiFont;
+                Debug.Log("[M2演示] HUD 字体：用 Inspector 上指定的那个。");
+                return;
+            }
+
+            // 系统字体兜底：按"最可能存在的"顺序试，谁先命中用谁
+            string[] candidates = { "Microsoft YaHei", "微软雅黑", "SimHei", "黑体", "SimSun", "Arial Unicode MS" };
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                Font font = Font.CreateDynamicFontFromOSFont(candidates[i], 16);
+
+                if (font != null)
+                {
+                    GUI.skin.font = font;
+                    Debug.Log("[M2演示] HUD 字体：系统里找到了「" + candidates[i] + "」并用上了" +
+                              "（想固定下来就把 `Assets/_Project/Art/Fonts/` 里那份 .otf 拖到「Gui Font」字段上）。");
+                    return;
+                }
+            }
+
+            Debug.LogWarning("[M2演示] HUD 没找到中文字体，中文可能显示成方框。\n" +
+                             "把 `Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.otf` " +
+                             "拖到这个组件新出现的「Gui Font」字段上即可。\n" +
+                             "（注意：这只影响左上角这块 **OnGUI** HUD；任务面板走 TMP，是另一套。）");
+        }
+
+        /// <summary>
         /// 可选：把场景里的任务面板拖进来，演示时它就会显示任务列表。
         /// <para>
         /// ⚠️ 不拖也能跑（左上角有 `OnGUI` 的状态显示）。拖了的话，本壳子会替它调一次
@@ -130,9 +195,7 @@ namespace NBC.Boot
         /// </para>
         /// </summary>
         [Tooltip("可选：任务面板（见 Docs\\22 D 组的预制体清单）；不拖就只看左上角的 OnGUI")]
-        // ⚠️ 显式写 `= null`：序列化字段由 Unity 赋值，C# 代码里从不赋值，
-        //    于是编译器报 **CS0649**（"从未对字段赋值"）。编译闸门要求 **0 警告**，
-        //    所以显式初始化一次 —— 这不影响 Unity 序列化（Inspector 上的值照样生效）。
+        // 同样显式 `= null`（理由同上：Unity 赋值的序列化字段会让编译器报 CS0649）
         [SerializeField] private QuestPanel m_questPanel = null;
 
         /// <summary>装配好的一局（null = 还没装配好）。</summary>
@@ -149,6 +212,9 @@ namespace NBC.Boot
 
         /// <summary>装配是否已开始（防止 Start 里跑两次）。</summary>
         private bool m_assembling;
+
+        /// <summary>HUD 字体是否已经处理过（`OnGUI` 每帧都会调，这件事只该做一次）。</summary>
+        private bool m_guiFontReady;
 
         /// <summary>装配失败时的原因（画在界面上）。</summary>
         private string m_failure;
@@ -567,6 +633,8 @@ namespace NBC.Boot
         /// <summary>把状态画在屏幕上（没有模型/动画，就先这么看）。</summary>
         private void OnGUI()
         {
+            EnsureGuiFont();
+
             GUILayout.BeginArea(new Rect(12, 12, 560, 480), GUI.skin.box);
 
             GUILayout.Label("=== M2 演示：单机 PVE + 任务系统 ===");
