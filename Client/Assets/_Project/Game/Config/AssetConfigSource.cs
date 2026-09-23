@@ -147,10 +147,16 @@ namespace NBC.Game.Config
         {
             return "[AssetConfigSource] 读配置表「" + tableName + "」失败（地址「" + address + "」）。\n" +
                    (string.IsNullOrEmpty(reason) ? string.Empty : "底层原因：" + reason + "\n") +
-                   "三个常见原因：\n" +
-                   "  ① **还没把表导入成资产** —— 点一次 `Tools/NBC/配置表/导入 TSV → ScriptableObject`\n" +
-                   "  ② **资产没被打进包** —— 收集配置（`BundleCollectorSetting`）里 `config` 组要收 `Assets/_Project/Configs`\n" +
-                   "  ③ **地址规则对不上** —— 地址是表名 + 后缀（`" + address + "`）；" +
+                   "四个常见原因（**从最可能的开始看**）：\n" +
+                   "  ① **资产没被打进包 / 模拟清单里没有它** —— 尤其是**新加的表**：" +
+                   "M2 加了 Monster/Quest/QuestCondition/Reward 四张，旧的包与旧的模拟清单里都没有它们。\n" +
+                   "      · 用 EditorSimulate：`YooAsset → Bundle Builder` → Pipeline 选 " +
+                   "`EditorSimulateBuildPipeline` → 绿色 `Click Build`\n" +
+                   "      · 用 Offline：Pipeline 选 `ScriptableBuildPipeline` → 构建一次" +
+                   "（见 Docs\\18 §七）\n" +
+                   "  ② **还没把表导入成资产** —— 点一次 `Tools/NBC/配置表/导入 TSV → ScriptableObject`\n" +
+                   "  ③ **收集配置没包含它** —— `BundleCollectorSetting` 里 `config` 组要收 `Assets/_Project/Configs`\n" +
+                   "  ④ **地址规则对不上** —— 地址是表名 + 后缀（`" + address + "`）；" +
                    "收集器若用了别的地址规则，改 `AssetConfigSource` 的构造参数";
         }
 

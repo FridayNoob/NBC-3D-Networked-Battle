@@ -66,12 +66,23 @@ namespace NBC.Boot
     public sealed class M2DemoBehaviour : MonoBehaviour
     {
         /// <summary>资源运行模式。</summary>
-        [Tooltip("EditorSimulate = 免打包；Offline = 读 StreamingAssets 里的内容包（要先打包）")]
+        [Tooltip("EditorSimulate = 免打包（推荐，但要先做过一次模拟构建）；Offline = 读 StreamingAssets 里打好的包")]
         [SerializeField] private AssetRuntimeMode m_mode = AssetRuntimeMode.EditorSimulate;
 
-        /// <summary>编辑器模拟模式的清单目录（只有 EditorSimulate 用得上）。</summary>
-        [Tooltip("只有 EditorSimulate 模式需要：模拟构建的输出目录；留空表示用默认")]
-        [SerializeField] private string m_simulatePackageRoot = string.Empty;
+        /// <summary>
+        /// 编辑器模拟模式的清单目录（只有 EditorSimulate 用得上）。
+        /// <para>
+        /// ⚠️ 默认值就是 YooAsset 的约定路径，**不是猜的**（2026-09-22 读源码 + 看磁盘确认）：
+        /// `BundleSimulateBuilder.SimulateBuild` 里写死 `PackageVersion = "Simulate"`，
+        /// 而 `BundleBuilderHelper.GetDefaultBuildOutputRoot()` = `&lt;工程根&gt;/Bundles`，
+        /// 于是输出落在 `Bundles/&lt;平台&gt;/&lt;包名&gt;/Simulate`。
+        /// 本机是 Windows，平台段就是 `StandaloneWindows64`
+        /// （与 `YooAssetAdapterSmokeTests` 用的是同一个约定 —— 那个测试也是这么拼的）。
+        /// </para>
+        /// <para>相对路径会按**工程根**（`Application.dataPath` 的上一级）解析。</para>
+        /// </summary>
+        [Tooltip("模拟构建的输出目录（相对工程根或绝对路径）。默认就是 YooAsset 的约定路径")]
+        [SerializeField] private string m_simulatePackageRoot = "Bundles/StandaloneWindows64/DefaultPackage/Simulate";
 
         /// <summary>用哪个英雄当玩家（`Hero` 表主键）。</summary>
         [Tooltip("Hero 表主键：1001 剑士（火球/冰箭）、1002 法师（穿心箭）")]
@@ -141,19 +152,87 @@ namespace NBC.Boot
 
             try
             {
-                Say("① 装配资源层：" + m_mode);
-                await AssetBootstrapper.InstallAsync(m_mode, AssetBootstrapper.DefaultPackageName,
-                                                     m_simulatePackageRoot);
+                // -------- 出门前的检查：把"必然会失败"的情况拦在这儿 --------
+                // ⚠️ 为什么要自己先查：底层报错只说"必须提供模拟清单目录"，
+                //    而真正该做的是"做一次模拟构建" —— 报错方向不对，人就卡住了。
+                //    （2026-09-22 实测：负责人就是在这一步卡住的。）
+                if (m_mode == AssetRuntimeMode.EditorSimulate)
+                {
+                    string root = ResolveSimulatePackageRoot();
+
+                    if (!System.IO.Directory.Exists(root))
+                    {
+                        Fail(
+                            "找不到编辑器模拟清单目录：\n  " + root + "\n\n" +
+                            "先做一次『模拟构建』（免打包模式需要它）：\n" +
+                            "  ① 菜单 `YooAsset → Bundle Builder`\n" +
+                            "  ② 窗口**顶部**的 Pipeline 下拉框，选 `EditorSimulateBuildPipeline`\n" +
+                            "  ③ 点那个绿色的 `Click Build` 按钮\n" +
+                            "输出就会落在上面那个目录（约定：`Bundles/<平台>/<包名>/Simulate`）。\n\n" +
+                            "或者改走另一条路：把 Mode 改成 `Offline`（读打好的包，见 Docs\\18 §七）。");
+                        return;
+                    }
+                }
+
+                Say("① 装配资源层：" + m_mode +
+                    (m_mode == AssetRuntimeMode.EditorSimulate
+                        ? "（⚠️ 模拟清单是**快照**：若它是加表之前做的，得重做一次 —— " +
+                          "`Bundle Builder` → Pipeline 选 `EditorSimulateBuildPipeline` → 绿色 `Click Build`）"
+                        : string.Empty));
+
+                string simulateRoot = m_mode == AssetRuntimeMode.EditorSimulate
+                    ? ResolveSimulatePackageRoot()
+                    : string.Empty;
+
+                await AssetBootstrapper.InstallAsync(m_mode, AssetBootstrapper.DefaultPackageName, simulateRoot);
 
                 Say("② 设置配置来源 + 预加载 " + GameTables.All.Length + " 张表");
                 ConfigMgr.Instance.SetSource(new AssetConfigSource());
-                GameTables.PreloadAll(OnConfigsReady, reason => Fail("预加载配置表失败：" + reason));
+                GameTables.PreloadAll(OnConfigsReady, reason => Fail("预加载配置表失败：\n" + reason));
             }
             catch (Exception exception)
             {
-                Fail("装配资源层失败：" + exception.Message +
-                     "\n（Offline 模式要先打一次包；EditorSimulate 要先配模拟清单目录 —— 见 Docs\\18 §七）");
+                Fail("装配资源层失败：" + exception.Message + ModeHint());
             }
+        }
+
+        /// <summary>把模拟清单目录解析成绝对路径（相对路径按工程根算）。</summary>
+        /// <returns>绝对路径。</returns>
+        private string ResolveSimulatePackageRoot()
+        {
+            if (string.IsNullOrEmpty(m_simulatePackageRoot))
+            {
+                return string.Empty;
+            }
+
+            // 已经是绝对路径就直接用（`Path.IsPathRooted` 对 "C:\..." 与 "/..." 都给 true）
+            if (System.IO.Path.IsPathRooted(m_simulatePackageRoot))
+            {
+                return m_simulatePackageRoot;
+            }
+
+            // 工程根 = Assets 的上一级
+            string projectRoot = Application.dataPath.Substring(
+                0, Application.dataPath.Length - "/Assets".Length);
+
+            return System.IO.Path.Combine(projectRoot, m_simulatePackageRoot).Replace('\\', '/');
+        }
+
+        /// <summary>装配失败时按模式给一句"下一步做什么"。</summary>
+        /// <returns>提示文本。</returns>
+        private string ModeHint()
+        {
+            if (m_mode == AssetRuntimeMode.EditorSimulate)
+            {
+                return "\n\n下一步：菜单 `YooAsset → Bundle Builder` → **顶部 Pipeline 下拉框**选 " +
+                       "`EditorSimulateBuildPipeline` → 点绿色 `Click Build`，然后重新进播放模式。\n" +
+                       "（M2 加过 4 张新表，**旧的模拟清单里没有它们** —— 必须重做一次。\n" +
+                       " 完整操作单：Docs\\16 §B3 的 10.4.2；输出约定：Bundles/<平台>/<包名>/Simulate）";
+            }
+
+            return "\n\n下一步：菜单 `YooAsset → Bundle Builder` → **顶部 Pipeline 下拉框**选 " +
+                   "`ScriptableBuildPipeline` → 构建一次，把内容包拷进 StreamingAssets（见 Docs\\18 §七）。\n" +
+                   "（M2 加过 4 张新表，**旧的内容包里没有它们** —— 必须重打一次。）";
         }
 
         /// <summary>配置表就绪：装配一局、接任务、进关卡。</summary>
