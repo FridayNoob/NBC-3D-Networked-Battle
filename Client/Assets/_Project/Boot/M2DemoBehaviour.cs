@@ -144,8 +144,14 @@ namespace NBC.Boot
         /// 所以你就算把 TMP 那边配好了，`OnGUI` 的中文照样是方框。
         /// </para>
         /// <para>
-        /// 顺序：① Inspector 上拖的字体（最稳，跨平台）→ ② 从**操作系统**里找一个中文字体兜底
-        /// （`Font.CreateDynamicFontFromOSFont`，只在开发机上有效，但这块 HUD 本来就是开发期临时显示）。
+        /// ⚠️⚠️ **字体必须挂在 `GUIStyle` 上，光设 `GUI.skin.font` 没用**（2026-09-23 实测踩到）：
+        /// 默认皮肤里 `label` / `box` 这些样式**各自带着内置 Arial 字体**，
+        /// 它们**不会**继承 `GUI.skin.font` —— 于是出现"**日志说字体找到了，屏幕上还是方框**"。
+        /// 所以这里建两个带字体的样式，`OnGUI` 全程只用它们。
+        /// </para>
+        /// <para>
+        /// 字体来源顺序：① Inspector 上拖的字体（最稳、跨平台）→ ② 从**操作系统**里找一个中文字体
+        /// （`Font.CreateDynamicFontFromOSFont`，只在开发机上有效；但这块 HUD 本来就是开发期临时显示）。
         /// </para>
         /// </summary>
         private void EnsureGuiFont()
@@ -157,32 +163,48 @@ namespace NBC.Boot
 
             m_guiFontReady = true;
 
-            if (m_guiFont != null)
+            Font font = m_guiFont;
+            string source = "Inspector 上指定的字体";
+
+            if (font == null)
             {
-                GUI.skin.font = m_guiFont;
-                Debug.Log("[M2演示] HUD 字体：用 Inspector 上指定的那个。");
-                return;
-            }
+                // 按"最可能存在的"顺序试，谁先命中用谁
+                string[] candidates = { "Microsoft YaHei", "微软雅黑", "SimHei", "黑体", "SimSun", "Arial Unicode MS" };
 
-            // 系统字体兜底：按"最可能存在的"顺序试，谁先命中用谁
-            string[] candidates = { "Microsoft YaHei", "微软雅黑", "SimHei", "黑体", "SimSun", "Arial Unicode MS" };
-
-            for (int i = 0; i < candidates.Length; i++)
-            {
-                Font font = Font.CreateDynamicFontFromOSFont(candidates[i], 16);
-
-                if (font != null)
+                for (int i = 0; i < candidates.Length && font == null; i++)
                 {
-                    GUI.skin.font = font;
-                    Debug.Log("[M2演示] HUD 字体：系统里找到了「" + candidates[i] + "」并用上了" +
-                              "（想固定下来就把 `Assets/_Project/Art/Fonts/` 里那份 .otf 拖到「Gui Font」字段上）。");
-                    return;
+                    font = Font.CreateDynamicFontFromOSFont(candidates[i], 16);
+
+                    if (font != null)
+                    {
+                        source = "系统字体「" + candidates[i] + "」";
+                    }
                 }
             }
 
-            Debug.LogWarning("[M2演示] HUD 没找到中文字体，中文可能显示成方框。\n" +
+            // ⚠️ 关键：把字体挂到**样式**上（见上面那段说明），而不是只设 GUI.skin.font
+            s_labelStyle = new GUIStyle(GUI.skin.label);
+            s_labelStyle.font = font;
+            s_labelStyle.fontSize = 14;
+            s_labelStyle.wordWrap = false;
+
+            m_boxStyle = new GUIStyle(GUI.skin.box);
+            m_boxStyle.font = font;
+
+            if (font != null)
+            {
+                // 顺带也设一下皮肤字体（无害；某些内置控件会用它）
+                GUI.skin.font = font;
+
+                Debug.Log("[M2演示] HUD 字体：" + source + "（已挂到 GUIStyle 上）。\n" +
+                          "想固定下来、不依赖开发机的系统字体，就把 `Assets/_Project/Art/Fonts/` " +
+                          "里那份 .otf 拖到「Gui Font」字段上。");
+                return;
+            }
+
+            Debug.LogWarning("[M2演示] HUD 没找到中文字体，中文会显示成方框。\n" +
                              "把 `Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.otf` " +
-                             "拖到这个组件新出现的「Gui Font」字段上即可。\n" +
+                             "拖到这个组件上的「Gui Font」字段即可。\n" +
                              "（注意：这只影响左上角这块 **OnGUI** HUD；任务面板走 TMP，是另一套。）");
         }
 
@@ -215,6 +237,15 @@ namespace NBC.Boot
 
         /// <summary>HUD 字体是否已经处理过（`OnGUI` 每帧都会调，这件事只该做一次）。</summary>
         private bool m_guiFontReady;
+
+        /// <summary>
+        /// HUD 的文字样式（**中文字体挂在这上面**）。
+        /// <para>⚠️ 做成 `static` 是因为 `Label(string)` 那个小助手是静态方法，取不到实例成员。</para>
+        /// </summary>
+        private static GUIStyle s_labelStyle;
+
+        /// <summary>HUD 外框样式（同样挂着中文字体 —— 否则框上的内置字体仍会让中文变方框）。</summary>
+        private GUIStyle m_boxStyle;
 
         /// <summary>装配失败时的原因（画在界面上）。</summary>
         private string m_failure;
@@ -635,27 +666,27 @@ namespace NBC.Boot
         {
             EnsureGuiFont();
 
-            GUILayout.BeginArea(new Rect(12, 12, 560, 480), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(12, 12, 640, 480), m_boxStyle);
 
-            GUILayout.Label("=== M2 演示：单机 PVE + 任务系统 ===");
-            GUILayout.Label("J = 放技能    K = 交付任务    R = 重置");
+            Label("=== M2 演示：单机 PVE + 任务系统 ===");
+            Label("J = 放技能    K = 交付任务    R = 重置");
 
             if (m_failure != null)
             {
-                GUILayout.Label("❌ " + m_failure);
+                Label("❌ " + m_failure);
                 GUILayout.EndArea();
                 return;
             }
 
             if (m_session == null)
             {
-                GUILayout.Label("… 正在装配（看 Console 的 ① ② ③ ④ 步骤）");
+                Label("… 正在装配（看 Console 的 ① ② ③ ④ 步骤）");
             }
             else
             {
-                GUILayout.Label("玩家：" + m_session.Hero);
-                GUILayout.Label("场上活怪：" + m_session.World.AliveMonsterCount +
-                                "，当前目标 #" + m_session.CurrentTargetInstanceId);
+                Label("玩家：" + m_session.Hero);
+                Label("场上活怪：" + m_session.World.AliveMonsterCount +
+                      "，当前目标 #" + m_session.CurrentTargetInstanceId);
                 GUILayout.Space(6);
 
                 List<QuestTracking> trackings = new List<QuestTracking>();
@@ -663,32 +694,39 @@ namespace NBC.Boot
 
                 if (trackings.Count == 0)
                 {
-                    GUILayout.Label("（没有接取中的任务）");
+                    Label("（没有接取中的任务）");
                 }
 
                 for (int i = 0; i < trackings.Count; i++)
                 {
                     QuestTracking tracking = trackings[i];
-                    GUILayout.Label("【" + tracking.QuestId + "】" + tracking.Name + "（" + tracking.State + "）");
+                    Label("【" + tracking.QuestId + "】" + tracking.Name + "（" + tracking.State + "）");
 
                     for (int c = 0; c < tracking.Conditions.Count; c++)
                     {
                         QuestConditionLine line = tracking.Conditions[c];
-                        GUILayout.Label("    · " + line.Description + "   " +
-                                        line.Current + "/" + line.Required + (line.IsMet ? "  ✅" : string.Empty));
+                        Label("    · " + line.Description + "   " +
+                              line.Current + "/" + line.Required + (line.IsMet ? "  ✅" : string.Empty));
                     }
                 }
             }
 
             GUILayout.Space(6);
-            GUILayout.Label("—— 日志 ——");
+            Label("—— 日志 ——");
 
             for (int i = m_log.Count - 1; i >= 0; i--)
             {
-                GUILayout.Label(m_log[i]);
+                Label(m_log[i]);
             }
 
             GUILayout.EndArea();
+        }
+
+        /// <summary>用**带中文字体**的样式画一行（样式由 `EnsureGuiFont` 建好）。</summary>
+        /// <param name="text">文字。</param>
+        private static void Label(string text)
+        {
+            GUILayout.Label(text, s_labelStyle);
         }
 
         // ====================================================================
