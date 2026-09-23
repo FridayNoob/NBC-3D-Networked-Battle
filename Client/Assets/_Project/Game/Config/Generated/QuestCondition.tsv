@@ -4,3 +4,5 @@ id	eventType	targetId	requiredCount	note
 4003	CollectItem	7002	2	采集草药
 4004	ReachArea	1	1	抵达幽暗森林
 4005	KillMonster	6003	1	击杀狼王
+4007	KillMonster	6001	3	清剿野狼
+4008	ReachArea	1	1	抵达一号区域

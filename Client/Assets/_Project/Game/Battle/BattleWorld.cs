@@ -210,6 +210,33 @@ namespace NBC.Game.Battle
             return m_agents.TryGetValue(instanceId, out agent);
         }
 
+        /// <summary>
+        /// 把所有**还活着的怪**复制进一个列表（目标选择、AI、UI 遍历用）。
+        /// <para>
+        /// ⚠️ 刻意**不把内部字典交出去**（M1 的 P-11 教训：把容器交出去 = 外部也能改它）。
+        /// 这个"复制进调用方给的 buffer"的形状和 `QuestRuntime.CopyActiveQuestIds` 一致，
+        /// 而且**不产生每帧分配**（列表由调用方复用）。
+        /// </para>
+        /// </summary>
+        /// <param name="buffer">目标列表（会先 Clear）。</param>
+        public void CopyAliveMonsters(List<BattleAgent> buffer)
+        {
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            buffer.Clear();
+
+            foreach (KeyValuePair<int, BattleAgent> pair in m_agents)
+            {
+                if (pair.Value.Kind == EBattleAgentKind.Monster && pair.Value.IsAlive)
+                {
+                    buffer.Add(pair.Value);
+                }
+            }
+        }
+
         /// <summary>按**配置编号**找第一只还在场的怪（演示/关卡脚本用）。</summary>
         /// <param name="monsterId">怪物配置编号。</param>
         /// <param name="agent">找到的单位。</param>
