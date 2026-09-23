@@ -94,6 +94,24 @@ namespace NBC.Game.UI
         [Tooltip("行模板的物体名（规范：Button_XXX）")]
         [SerializeField] private string m_rowTemplateControl = RowTemplateControl;
 
+        /// <summary>
+        /// 可选：这个面板里**所有文字**用哪个 TMP 字体资产。
+        /// <para>
+        /// ⚠️ 为什么要有这个字段（2026-09-23 实测踩到）：中文一开始是方框。
+        /// 那时我们靠的是"**兜底链**"（TMP 默认字体 → LiberationSans 的兜底列表 → 项目级兜底），
+        /// 任何一环没接上、或者已摆好的组件没参与兜底，就是方框，**而且不给任何提示**。
+        /// 这个字段把"字体"变成**显式指定**，一次解决：它会把字体**直接写给**面板上的每个文字
+        /// （含运行时克隆出来的行）。
+        /// </para>
+        /// <para>
+        /// 留空时退到 **TMP 的默认字体**（`TMP_Settings.defaultFontAsset`）——
+        /// 于是"跑过一次中文字体菜单"的工程不用再拖；两者都没有才用组件自己的字体。
+        /// </para>
+        /// </summary>
+        [Tooltip("可选：面板文字用的 TMP 字体（留空 = 用 TMP 默认字体）。中文方框就把它设上")]
+        // 显式 `= null`：序列化字段由 Unity 赋值，代码里从不赋值会让编译器报 CS0649（闸门要求 0 警告）
+        [SerializeField] private TMP_FontAsset m_panelFont = null;
+
         /// <summary>标题（可能是 UGUI `Text`，也可能是 `TextMeshProUGUI`）。</summary>
         private LabelRef m_title;
 
@@ -126,6 +144,12 @@ namespace NBC.Game.UI
 
         /// <summary>订阅过任务事件没有（退订要用）。</summary>
         private bool m_subscribed;
+
+        /// <summary>字体日志打过没有（只打一次，免得每帧刷屏）。</summary>
+        private bool m_fontLogged;
+
+        /// <summary>没字体时的警告打过没有。</summary>
+        private bool m_fontWarned;
 
         /// <summary>最近一次刷新生成了几行（两份列表合计）。</summary>
         public int SpawnedRowCount
@@ -171,6 +195,10 @@ namespace NBC.Game.UI
 
             // 模板只是用来克隆的，本体不能显示、也不能被点到
             m_rowTemplate.gameObject.SetActive(false);
+
+            // ⚠️ **行模板上的文字也要应用字体**：行是**克隆模板**出来的，
+            //    字体跟着模板走 —— 模板没应用的话，克隆出来的行照样是方框。
+            ApplyFont(m_rowTemplateLabel);
         }
 
         /// <summary>按钮点击：只做转发（动作与文案都在模型里）。</summary>
@@ -388,7 +416,56 @@ namespace NBC.Game.UI
                     "请给它挂一个文字组件，或者把面板上对应的控件名改成另一个物体的名字。");
             }
 
+            ApplyFont(label);
             return label;
+        }
+
+        /// <summary>
+        /// 把一个字体**直接写给**一个文字控件（**不再依赖 TMP 的兜底链**）。
+        /// <para>
+        /// 取值顺序：① Inspector 上拖的 `m_panelFont` → ② TMP 的默认字体（`TMP_Settings.defaultFontAsset`）→
+        /// ③ 什么都不做（用组件自己的字体）。
+        /// </para>
+        /// <para>
+        /// ⚠️ 第一次成功解析时打一条日志（**带字体名与模式**）—— 中文方框这类问题，
+        /// 有这一行就能立刻判断"是没接上字体"还是"字体本身没字形"。
+        /// </para>
+        /// </summary>
+        /// <param name="label">文字控件（可以为 null）。</param>
+        private void ApplyFont(LabelRef label)
+        {
+            if (label == null)
+            {
+                return;
+            }
+
+            TMP_FontAsset font = m_panelFont != null ? m_panelFont : TMP_Settings.defaultFontAsset;
+
+            if (font == null)
+            {
+                if (!m_fontWarned)
+                {
+                    m_fontWarned = true;
+                    Debug.LogWarning(
+                        "[QuestPanel] 没有可用的 TMP 字体（Inspector 上没拖、TMP 默认字体也是空的）——\n" +
+                        "中文可能显示成方框。两条路：① 把中文字体资产拖到面板的「Panel Font」字段上；\n" +
+                        "② 跑一次 `Tools/NBC/UI/② 设为 TMP 默认字体 + 加为兜底字体`。");
+                }
+
+                return;
+            }
+
+            label.SetFont(font);
+
+            if (!m_fontLogged)
+            {
+                m_fontLogged = true;
+                Debug.Log("[QuestPanel] 文字字体 = " + font.name +
+                          "（模式 " + font.atlasPopulationMode + "）；源字体 = " +
+                          (font.sourceFontFile != null ? font.sourceFontFile.name : "（空）") + "。\n" +
+                          "若中文仍是方框，且那份 .asset 里 `m_UsedGlyphRects` 一直是空的 —— " +
+                          "那是**字体文件/模式**的问题（TMP 动态加载取不到字形），不是接线问题。");
+            }
         }
 
         /// <summary>任务有任何变化就重画。</summary>
@@ -448,6 +525,19 @@ namespace NBC.Game.UI
                 if (m_legacy != null)
                 {
                     m_legacy.text = text;
+                }
+            }
+
+            /// <summary>
+            /// 指定字体（**只对 TMP 有效**；UGUI 的 `Text` 用的是 `Font`，两套不通用 —— 这里刻意不管它）。
+            /// <para>⚠️ 只能改 TMP 组件的**字体资产**；它自己在 prefab 上的材质会跟着字体走。</para>
+            /// </summary>
+            /// <param name="font">TMP 字体资产。</param>
+            public void SetFont(TMP_FontAsset font)
+            {
+                if (m_tmp != null && font != null)
+                {
+                    m_tmp.font = font;
                 }
             }
 
