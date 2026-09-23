@@ -3,8 +3,10 @@
     "rootNamespace": "NBC.Game",
     "references": [
         "NBC.Framework",
+        "NBC.Framework.UI",
         "NBC.Model",
-        "NBC.Shared"
+        "NBC.Shared",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

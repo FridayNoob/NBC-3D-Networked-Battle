@@ -58,6 +58,7 @@ using NBC.Game.Battle;
 using NBC.Game.Config;
 using NBC.Game.GameFlow;
 using NBC.Game.Quest;
+using NBC.Game.UI;
 using UnityEngine;
 
 namespace NBC.Boot
@@ -119,6 +120,20 @@ namespace NBC.Boot
 
         /// <summary>重置用的键（重接任务 + 重刷怪）。</summary>
         [SerializeField] private KeyCode m_resetKey = KeyCode.R;
+
+        /// <summary>
+        /// 可选：把场景里的任务面板拖进来，演示时它就会显示任务列表。
+        /// <para>
+        /// ⚠️ 不拖也能跑（左上角有 `OnGUI` 的状态显示）。拖了的话，本壳子会替它调一次
+        /// `Initialize()` —— 正常流程里这一步该由 `UIManager` 做（M3 的启动链会接上），
+        /// M2 的演示为了少一层依赖就手动调了。
+        /// </para>
+        /// </summary>
+        [Tooltip("可选：任务面板（见 Docs\\22 D 组的预制体清单）；不拖就只看左上角的 OnGUI")]
+        // ⚠️ 显式写 `= null`：序列化字段由 Unity 赋值，C# 代码里从不赋值，
+        //    于是编译器报 **CS0649**（"从未对字段赋值"）。编译闸门要求 **0 警告**，
+        //    所以显式初始化一次 —— 这不影响 Unity 序列化（Inspector 上的值照样生效）。
+        [SerializeField] private QuestPanel m_questPanel = null;
 
         /// <summary>装配好的一局（null = 还没装配好）。</summary>
         private BattleSession m_session;
@@ -419,12 +434,33 @@ namespace NBC.Boot
                 Say("④ 接任务 " + m_questId + " + 进关卡");
                 StartLevel();
 
+                BindQuestPanel();
+
                 Say("就绪：J = 放技能，K = 交付任务，R = 重置");
             }
             catch (Exception exception)
             {
                 Fail("装配一局失败：" + exception.Message);
             }
+        }
+
+        /// <summary>如果 Inspector 上拖了任务面板，就把它绑到这一局（没拖就什么都不做）。</summary>
+        private void BindQuestPanel()
+        {
+            if (m_questPanel == null)
+            {
+                return;
+            }
+
+            // 面板的初始化入口是公开方法（A9 的设计：**EditMode 下 Unity 不会调 Awake**）。
+            // 正常流程里由 `UIManager` 调；这里手动调一次，注释里写清原因。
+            if (!m_questPanel.IsInitialized)
+            {
+                m_questPanel.Initialize();
+            }
+
+            m_questPanel.Bind(new QuestPanelModel(m_session.Quests));
+            Say("任务面板已绑定（接取/追踪/交付都在上面）");
         }
 
         /// <summary>接任务 + 进关卡（顺序有讲究：**先接任务，区域事件才计得进条件**，见文件头缺口）。</summary>

@@ -170,6 +170,37 @@ namespace NBC.Game.Quest
         public bool IsMet;
     }
 
+    /// <summary>一个**可接任务**（配置里有、玩家还没接）的展示信息。</summary>
+    public readonly struct QuestOffer
+    {
+        /// <summary>任务编号。</summary>
+        public readonly int QuestId;
+
+        /// <summary>任务名。</summary>
+        public readonly string Name;
+
+        /// <summary>任务描述。</summary>
+        public readonly string Description;
+
+        /// <summary>造一条可接信息（只有 `QuestRuntime` 会造）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="name">任务名。</param>
+        /// <param name="description">描述。</param>
+        internal QuestOffer(int questId, string name, string description)
+        {
+            QuestId = questId;
+            Name = name;
+            Description = description;
+        }
+
+        /// <summary>转成一句人话。</summary>
+        /// <returns>描述。</returns>
+        public override string ToString()
+        {
+            return "[" + QuestId + "] " + Name;
+        }
+    }
+
     /// <summary>一个任务的追踪视图（给 UI 用）。</summary>
     public sealed class QuestTracking
     {

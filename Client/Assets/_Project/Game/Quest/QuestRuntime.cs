@@ -125,6 +125,46 @@ namespace NBC.Game.Quest
             return m_states.TryGetValue(questId, out state) ? state : EQuestState.None;
         }
 
+        /// <summary>
+        /// 把所有**可接任务**（配置里有、玩家状态是 None）复制进一个列表。
+        /// <para>
+        /// ⚠️ 为什么这个方法在运行时，而不是让 UI 自己去翻配置表：
+        /// "哪些能接"是**玩法规则**（后面前置条件、等级限制、日常限次都会进来），
+        /// 而 UI 只该问"现在能接什么"。规则放这里，变化时不会漏到 UI 里去。
+        /// </para>
+        /// <para>顺序 = 配置表里的顺序（策划排的顺序就是 UI 的顺序）。</para>
+        /// </summary>
+        /// <param name="buffer">目标列表（会先 Clear）。</param>
+        public void CopyOffers(List<QuestOffer> buffer)
+        {
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            buffer.Clear();
+
+            List<Config_Quest> rows = m_quests.rows;
+
+            if (rows == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                Config_Quest row = rows[i];
+
+                // 接过（含"已完成待交付"与"已交付"）的就不再是"可接"
+                if (StateOf(row.id) != EQuestState.None)
+                {
+                    continue;
+                }
+
+                buffer.Add(new QuestOffer(row.id, row.name, row.desc));
+            }
+        }
+
         /// <summary>把"已接取的任务编号"复制进一个列表（UI 遍历用；顺序 = 接取顺序）。</summary>
         /// <param name="buffer">目标列表（会先 Clear）。</param>
         public void CopyActiveQuestIds(List<int> buffer)

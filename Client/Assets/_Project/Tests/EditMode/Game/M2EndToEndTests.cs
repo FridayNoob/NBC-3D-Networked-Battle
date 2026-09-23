@@ -36,16 +36,16 @@ namespace NBC.Tests.EditMode
     public sealed class M2EndToEndTests
     {
         /// <summary>演示任务的编号（击杀 3 只野狼 + 抵达一号区域）。</summary>
-        private const int DemoQuest = 3004;
+        private const int DemoQuest = GameTestTables.DemoQuest;
 
         /// <summary>演示任务的两条条件。</summary>
-        private const int KillWolfCondition = 4007;
+        private const int KillWolfCondition = GameTestTables.KillWolfCondition;
 
         /// <summary>演示任务的区域条件。</summary>
-        private const int ReachAreaCondition = 4008;
+        private const int ReachAreaCondition = GameTestTables.ReachAreaCondition;
 
         /// <summary>演示任务的奖励。</summary>
-        private const int DemoReward = 5001;
+        private const int DemoReward = GameTestTables.DemoReward;
 
         /// <summary>任务表。</summary>
         private QuestConfig m_quests;
@@ -135,81 +135,12 @@ namespace NBC.Tests.EditMode
             InputActionId.ResetDeclarationsForTests();
         }
 
-        /// <summary>造任务 / 条件 / 奖励三张表。</summary>
+        /// <summary>造任务 / 条件 / 奖励三张表（**共用夹具**，见 `GameTestTables`）。</summary>
         private void BuildQuestTables()
         {
-            m_conditions = ScriptableObject.CreateInstance<QuestConditionConfig>();
-            m_conditions.rows = new List<Config_QuestCondition>
-            {
-                Condition(KillWolfCondition, NBC.Shared.Condition.EConditionEvent.KillMonster,
-                          BattleTestTables.Wolf, 3),
-                Condition(ReachAreaCondition, NBC.Shared.Condition.EConditionEvent.ReachArea, 1, 1)
-            };
-            m_conditions.RebuildIndex();
-
-            m_rewards = ScriptableObject.CreateInstance<RewardConfig>();
-            m_rewards.rows = new List<Config_Reward> { Reward(DemoReward, 100, 50, 7001, 2) };
-            m_rewards.RebuildIndex();
-
-            m_quests = ScriptableObject.CreateInstance<QuestConfig>();
-            m_quests.rows = new List<Config_Quest>
-            {
-                Quest(DemoQuest, "清剿野狼", new[] { KillWolfCondition, ReachAreaCondition }, DemoReward)
-            };
-            m_quests.RebuildIndex();
-        }
-
-        /// <summary>造一行条件。</summary>
-        /// <param name="id">编号。</param>
-        /// <param name="eventType">事件类型。</param>
-        /// <param name="targetId">目标编号。</param>
-        /// <param name="required">需要数量。</param>
-        /// <returns>行。</returns>
-        private static Config_QuestCondition Condition(int id, NBC.Shared.Condition.EConditionEvent eventType,
-                                                      int targetId, int required)
-        {
-            Config_QuestCondition row = new Config_QuestCondition();
-            row.id = id;
-            row.eventType = eventType;
-            row.targetId = targetId;
-            row.requiredCount = required;
-            row.note = "端到端测试";
-            return row;
-        }
-
-        /// <summary>造一行奖励。</summary>
-        /// <param name="id">编号。</param>
-        /// <param name="exp">经验。</param>
-        /// <param name="gold">金币。</param>
-        /// <param name="itemId">物品编号。</param>
-        /// <param name="itemCount">物品数量。</param>
-        /// <returns>行。</returns>
-        private static Config_Reward Reward(int id, int exp, int gold, int itemId, int itemCount)
-        {
-            Config_Reward row = new Config_Reward();
-            row.id = id;
-            row.exp = exp;
-            row.gold = gold;
-            row.itemId = itemId;
-            row.itemCount = itemCount;
-            return row;
-        }
-
-        /// <summary>造一行任务。</summary>
-        /// <param name="id">编号。</param>
-        /// <param name="name">名称。</param>
-        /// <param name="conditionIds">条件编号。</param>
-        /// <param name="rewardId">奖励编号。</param>
-        /// <returns>行。</returns>
-        private static Config_Quest Quest(int id, string name, int[] conditionIds, int rewardId)
-        {
-            Config_Quest row = new Config_Quest();
-            row.id = id;
-            row.name = name;
-            row.desc = name;
-            row.conditionIds = conditionIds;
-            row.rewardId = rewardId;
-            return row;
+            m_conditions = GameTestTables.CreateQuestConditions();
+            m_rewards = GameTestTables.CreateRewards();
+            m_quests = GameTestTables.CreateQuests();
         }
 
         /// <summary>记录任务完成。</summary>
