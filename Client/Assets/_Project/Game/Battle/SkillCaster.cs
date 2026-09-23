@@ -40,12 +40,14 @@
 //  不需要键盘、不需要帧循环（A7 那条"把键盘变成可传输的值"的回报）。
 //  真要接运行时，装配处订阅 `InputManager.CommandGenerated` 即可。
 //
-//  ⚠️ "这个技能属于谁"**不在这里判**（这里只判"技能表里有没有"）
+//  ⚠️ "这个技能属于谁"由 `BattleWorld.CasterOwnsSkill` **一处实现**，但有两个调用点
 //  ---------------------------------------------------------------------------
-//  归属校验（`Hero.skillIds` / `Monster.skillIds`）在 `BattleWorld.CastSkill` 里，
-//  只有那一处 —— **一条规则只写在一个地方**。
-//  实际装配时，绑定是**按配置循环 Bind** 出来的，所以正常流程根本绑不错；
-//  真绑错了，`CastSkill` 会当场抛异常（不会静默放出一个别的职业技能）。
+//      · `Bind`（**装配期**）：绑错了当场报错 —— 别等玩家按下按钮
+//      · `CastSkill`（**结算期**）：兜底 —— 防的是"绕过 SkillCaster 直接调世界"
+//
+//  这不叫"两套规则"，叫 **fail early + fail loud**：规则只有一份实现，
+//  但值得在两个时间点各问一次。
+//  实际装配时，绑定是**按配置循环 Bind** 出来的，所以正常流程根本绑不错。
 // ============================================================================
 
 using System;
@@ -156,6 +158,21 @@ namespace NBC.Game.Battle
                 throw new InvalidOperationException(
                     "[SkillCaster] 技能表 `Skill` 里没有编号 " + skillId + "（动作 " + action + "）。\n" +
                     "先确认 ConfigKit 生成过、并且点过 `Tools/NBC/配置表/导入 TSV` 菜单。");
+            }
+
+            // ⚠️ 归属也要在**装配期**查（这正是"早检查"的意义）：
+            //    第一版我只查了"技能表里有没有"，没查"这个英雄会不会"，
+            //    于是"给法师绑了剑士的穿心箭"要等到**玩家按下按钮**才炸。
+            //    这条是负责人跑测试时红出来的（`Handle_TwoActionsPressed_CastsBoth`）——
+            //    红的是用例，但**暴露的是这里少了一半检查**。
+            if (!m_world.CasterOwnsSkill(m_casterInstanceId, skillId))
+            {
+                throw new InvalidOperationException(
+                    "[SkillCaster] 施法者（实例 #" + m_casterInstanceId + "）的技能列表里没有技能 " +
+                    skillId + "（动作 " + action + "）。\n" +
+                    "技能归属来自配置（`Hero.skillIds` / `Monster.skillIds`）。\n" +
+                    "正常装配应当**按配置循环 Bind**（配置里有几个技能就绑几条），" +
+                    "所以走到这里多半是手写死了一个不属于它的技能编号。");
             }
 
             m_bindings.Add(new Binding(action, skillId));

@@ -199,15 +199,23 @@ namespace NBC.Tests.EditMode
         [Test]
         public void Handle_TwoActionsPressed_CastsBoth()
         {
-            m_caster.Bind(m_skill1, BattleTestTables.PiercingArrow);   // 120
-            m_caster.Bind(m_skill2, BattleTestTables.IceArrow);        // 80
+            // ⚠️ **必须用真的会这两个技能的英雄**：剑士（1001）的技能列表是 {火球 2001, 冰箭 2002}。
+            //    第一版这里用的是 SetUp 里的法师（1002，只有穿心箭 2003），
+            //    却给它绑了冰箭 —— 归属校验当场把它拒了（负责人跑测试时红在这条）。
+            //    修的办法不是"把校验放宽"，而是**让用例用它该用的英雄**。
+            BattleAgent knight = m_world.SpawnHero(BattleTestTables.Knight);   // 1200 血
+            SkillCaster caster = new SkillCaster(m_world, knight.InstanceId);
+
+            caster.Bind(m_skill1, BattleTestTables.Fireball);    // 100
+            caster.Bind(m_skill2, BattleTestTables.IceArrow);    // 80
 
             List<SkillCastOutcome> results = new List<SkillCastOutcome>();
-            int cast = m_caster.Handle(Command(m_skill1, m_skill2), m_wolf.InstanceId, results);
+            int cast = caster.Handle(Command(m_skill1, m_skill2), m_wolf.InstanceId, results);
 
             Assert.AreEqual(2, cast);
             Assert.AreEqual(2, results.Count);
-            Assert.AreEqual(100, m_wolf.Hp, "300 - 120 - 80 = 100");
+            Assert.AreEqual(120, m_wolf.Hp, "300 - 100 - 80 = 120");
+            Assert.AreEqual(2, caster.CastCount);
         }
 
         /// <summary>反复按同一个键：怪会被打死，死亡事件照常广播。</summary>
@@ -266,6 +274,27 @@ namespace NBC.Tests.EditMode
                 Assert.Throws<System.InvalidOperationException>(() => m_caster.Bind(m_skill1, 9999));
 
             StringAssert.Contains("9999", exception.Message);
+        }
+
+        /// <summary>
+        /// 绑一个**这个英雄不会**的技能：**装配时就报错**。
+        /// <para>
+        /// ⚠️ 这条用例是补出来的：第一版 `Bind` 只查了"技能表里有没有"，
+        /// 没查"这个英雄会不会" —— 于是"给法师绑剑士的技能"要等到**玩家按下按钮**才炸。
+        /// 负责人跑测试时红在 `Handle_TwoActionsPressed_CastsBoth`，暴露的就是这半个检查。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void Bind_SkillNotOwnedByCaster_ThrowsAtBindTime()
+        {
+            // SetUp 里的 m_caster 是法师（1002），配置里只有穿心箭 2003
+            System.InvalidOperationException exception =
+                Assert.Throws<System.InvalidOperationException>(
+                    () => m_caster.Bind(m_skill1, BattleTestTables.IceArrow));
+
+            StringAssert.Contains("2002", exception.Message);
+            StringAssert.Contains("技能列表", exception.Message);
+            Assert.AreEqual(0, m_caster.BindCount, "校验失败时不该留下半条绑定");
         }
 
         /// <summary>施法者不在场：构造时就报错。</summary>

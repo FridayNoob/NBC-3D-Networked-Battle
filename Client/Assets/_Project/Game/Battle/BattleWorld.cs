@@ -238,6 +238,22 @@ namespace NBC.Game.Battle
             return m_skills.TryGet(skillId, out row);
         }
 
+        /// <summary>
+        /// 这个单位会这个技能吗（技能归属来自配置表 `Hero.skillIds` / `Monster.skillIds`）。
+        /// <para>
+        /// ⚠️ 它是**公开的**，因为"绑定动作"那一侧（`SkillCaster`）需要在**装配期**就问一遍 ——
+        /// 归属规则本身只有一份实现（本方法），但会有**两个调用点**：
+        /// 装配时早检查一次，结算时再兜一次底。这不叫"两套规则"，叫 fail early + fail loud。
+        /// </para>
+        /// </summary>
+        /// <param name="instanceId">单位实例编号（必须在场）。</param>
+        /// <param name="skillId">技能编号。</param>
+        /// <returns>会就返回 true。</returns>
+        public bool CasterOwnsSkill(int instanceId, int skillId)
+        {
+            return OwnsSkill(RequireAgent(instanceId), skillId);
+        }
+
         /// <summary>这个单位会这个技能吗（技能归属来自配置表）。</summary>
         /// <param name="agent">单位。</param>
         /// <param name="skillId">技能编号。</param>
