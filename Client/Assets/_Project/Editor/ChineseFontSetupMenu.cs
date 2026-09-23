@@ -52,8 +52,19 @@ namespace NBC.EditorTools
     /// <summary>中文字体接入（TMP 字体资产生成与接线）。</summary>
     public static class ChineseFontSetupMenu
     {
-        /// <summary>源字体（拷进仓库的那份；见同目录的 `README-字体来源与授权.txt`）。</summary>
-        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.otf";
+        /// <summary>
+        /// 源字体（拷进仓库的那份；见同目录的 `README-字体来源与授权.txt`）。
+        /// <para>
+        /// ⚠️ **必须是 `.ttf`，不能用 `.otf`**（2026-09-23 实测踩到）：
+        /// 第一版用的是 `.otf`（14.9 MB），字体资产建出来了、默认字体与兜底也都接上了，
+        /// 但 TMP **一个字形都没加进去**（资产里 `m_UsedGlyphRects` 一直是空的），
+        /// 屏幕上就是方框。TMP 的动态字形加载走 FreeType，**对 OTF（CFF 轮廓）支持不佳**。
+        /// 旁证：负责人另一个工程 RPG2 里那份**能用**的同名字体资产，
+        /// 它的 `m_SourceFontFileGUID` 指的正是 **`.ttf`**。
+        /// </para>
+        /// <para>代价：`.ttf` 比 `.otf` 大（21.7 MB vs 14.9 MB）—— M5 打包优化时按用到的字子集化。</para>
+        /// </summary>
+        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-RegularL3.ttf";
 
         /// <summary>生成的 TMP 字体资产放在哪。</summary>
         public const string OutputFolder = "Assets/_Project/Art/Fonts";
@@ -106,6 +117,14 @@ namespace NBC.EditorTools
             asset.name = Path.GetFileNameWithoutExtension(OutputPath);
 
             Directory.CreateDirectory(OutputFolder);
+
+            // ⚠️ 先删旧资产：同一个路径已经存在资产时，`CreateAsset` 不一定会安静覆盖
+            //    （而且换源字体必须重建 —— 否则会留下一个"指着旧字体"的资产）
+            if (AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(OutputPath) != null)
+            {
+                AssetDatabase.DeleteAsset(OutputPath);
+            }
+
             AssetDatabase.CreateAsset(asset, OutputPath);
 
             // ⚠️ 图集与材质必须**作为子资产**存进同一个文件 —— 否则重新打开工程后引用会丢，
@@ -128,10 +147,11 @@ namespace NBC.EditorTools
 
             Debug.Log(
                 "[中文字体] ✅ 已生成：" + OutputPath + "\n" +
+                "  源字体 = " + SourceFontPath + "（**必须是 .ttf**，见该常量上的说明）\n" +
                 "  模式 = Dynamic（按需加字形，配置表里的新字也能显示）\n" +
                 "  图集 = " + AtlasSize + "×" + AtlasSize + "，采样 " + SamplingPointSize + "px，允许多图集\n" +
                 "下一步：跑 `Tools/NBC/UI/② 设为 TMP 默认字体 + 加为兜底字体`，" +
-                "**已有的文字才会一起变中文**。");
+                "**已有的文字才会一起变中文**（资产是重建的，引用要重接）。");
         }
 
         /// <summary>② 设为 TMP 默认字体，并加进拉丁字体的兜底列表。</summary>
@@ -210,9 +230,57 @@ namespace NBC.EditorTools
                 AssetDatabase.SaveAssets();
             }
 
+            // -------- ③ 项目级兜底列表（TMP Settings）--------
+            //  ⚠️ 前面那两条管的是"某个字体资产/新建组件"，而 `TMP_Settings.fallbackFontAssets`
+            //     是**项目级**兜底：任何 TMP 文字找不到字形时都会来这里找。三条一起做才不留缝。
+            if (settings != null)
+            {
+                SerializedObject serialized = new SerializedObject(settings);
+                SerializedProperty fallback = serialized.FindProperty("m_fallbackFontAssets");
+
+                if (fallback == null || !fallback.isArray)
+                {
+                    Debug.LogWarning("[中文字体] TMP Settings 里没有 `m_fallbackFontAssets` 数组，跳过项目级兜底。");
+                }
+                else
+                {
+                    bool already = false;
+
+                    for (int i = 0; i < fallback.arraySize; i++)
+                    {
+                        if (fallback.GetArrayElementAtIndex(i).objectReferenceValue == chinese)
+                        {
+                            already = true;
+                            break;
+                        }
+                    }
+
+                    if (already)
+                    {
+                        Debug.Log("[中文字体] 项目级兜底列表里已经有它了，不重复加。");
+                    }
+                    else
+                    {
+                        fallback.InsertArrayElementAtIndex(fallback.arraySize);
+                        fallback.GetArrayElementAtIndex(fallback.arraySize - 1).objectReferenceValue = chinese;
+                        serialized.ApplyModifiedProperties();
+                        EditorUtility.SetDirty(settings);
+                        changed = true;
+                        Debug.Log("[中文字体] ✅ 已加进 **TMP Settings 的项目级兜底列表**。");
+                    }
+                }
+            }
+
+            if (changed)
+            {
+                AssetDatabase.SaveAssets();
+            }
+
             Debug.Log("[中文字体] 完成。回到播放模式看一眼中文是否正常（任务名/条件描述/按钮）。\n" +
                       "⚠️ 动态模式是**按需加字形**：第一次显示某个字时会现场烤进图集，" +
-                      "所以字可能有一瞬间的延迟（之后走缓存）。");
+                      "所以字可能有一瞬间的延迟（之后走缓存）。\n" +
+                      "⚠️ 想确认它真的在加字形：看那份 .asset 里 `m_UsedGlyphRects` 是不是空数组 ——" +
+                      "**空 = 一个字形都没加进去**（那就是字体文件或模式的问题，不是接线问题）。");
         }
     }
 }
