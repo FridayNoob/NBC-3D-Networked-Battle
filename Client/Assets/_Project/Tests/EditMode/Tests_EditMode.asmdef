@@ -4,6 +4,7 @@
     "references": [
         "NBC.Framework",
         "NBC.Framework.UI",
+        "NBC.Framework.Net",
         "NBC.Shared",
         "NBC.Game",
         "NBC.Model",

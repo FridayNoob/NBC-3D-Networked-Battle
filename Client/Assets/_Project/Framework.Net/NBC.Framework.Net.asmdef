@@ -1,0 +1,16 @@
+{
+    "name": "NBC.Framework.Net",
+    "rootNamespace": "NBC.Framework.Net",
+    "references": [
+        "NBC.Shared"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

@@ -55,10 +55,17 @@ namespace NBC.Tests.EditMode
                 { "UnityEngine.UI", "UnityEngine.UI" },
                 { "UnityEngine.EventSystems", "UnityEngine.UI" },
                 { "NBC.Framework.UI", "NBC.Framework.UI" },
+                { "NBC.Framework.Net", "NBC.Framework.Net" },
+                // ⚠️ 适配层的**子命名空间**也要各占一行 —— 否则"用了适配层、却只引了接缝程序集"
+                //    这类错（Boot 少写一行 `NBC.Framework.YooAsset` 就会 CS0246）会从表里漏过去。
+                //    表是按**命名空间全名**精确匹配的，`NBC.Framework.X` 不会顺带覆盖 `NBC.Framework.X.Adapter`。
+                { "NBC.Framework.Asset.Adapter", "NBC.Framework.YooAsset" },
+                { "NBC.Framework.Net.Adapter", "NBC.Framework.Net" },
                 { "NBC.Framework.Asset", "NBC.Framework" },
                 { "NBC.Framework.Input", "NBC.Framework" },
                 { "NBC.Framework", "NBC.Framework" },
                 { "NBC.Shared", "NBC.Shared" },
+                { "NBC.Shared.Net", "NBC.Shared" },
                 { "NBC.Game", "NBC.Game" },
                 { "NBC.Boot", "NBC.Boot" },
                 { "NBC.Model", "NBC.Model" }
@@ -151,6 +158,11 @@ namespace NBC.Tests.EditMode
             // 负向对照四：表里没有的命名空间不管
             Assert.IsFalse(NeedsReference("using System.Text;", "NBC.Game", new List<string>()),
                 "BCL 命名空间不在表里，不该报");
+
+            // 适配层的子命名空间：只引了接缝程序集也要报（M3-S2b 补上的一行）
+            Assert.IsTrue(NeedsReference("using NBC.Framework.Net.Adapter;", "NBC.Boot",
+                new List<string> { "NBC.Framework", "NBC.Shared" }),
+                "用了 TcpTransport（适配层）却只引了 NBC.Framework —— 应当被检出");
         }
 
         // ====================================================================
