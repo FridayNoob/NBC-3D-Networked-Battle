@@ -23,11 +23,29 @@
   </ItemGroup>
 
   <!-- ========================================================================
-       第三方依赖（M0 阶段先不引入）
-       M3 接入时取消注释：
-       <ItemGroup>
-         <PackageReference Include="protobuf-net" Version="3.2.*" />
-       </ItemGroup>
+       ★ 协议（M3-S1）：protoc 从 Protocol/*.proto 生成，【两端引用同一批源码】
+         客户端那边是 Client\Assets\_Project\Protocol\（自己的 asmdef `NBC.Protocol`）。
+         生成产物【入库】，日常 clone / 编译不需要跑 protoc；改协议才跑
+         （命令见 Protocol\nbc_m3.proto 顶部 / Docs\11 §5.2）。
        ======================================================================== -->
+  <ItemGroup>
+    <Compile Include="..\..\Client\Assets\_Project\Protocol\**\*.cs" />
+  </ItemGroup>
+
+  <!-- ========================================================================
+       Google.Protobuf 3.21.1 —— 用【仓库里那份 DLL】（Assets\ThirdParty\GoogleProtobuf\）
+
+       ⚠️ 不能用 PackageReference：本沙箱还原不了 NuGet（NU1301，见 Docs\11）
+       ⚠️ 必须与 protoc 【同版本】（3.21.1）：混版本会得到"生成代码编译不过 / 运行期报错"，
+          而且报错【不会】提示是版本问题
+       ⚠️ 下面那段是 M0 时期的 protobuf-net 注释，2026-09-20 已换成 Google.Protobuf
+          （原因：D17 实测 protobuf-net 在 IL2CPP 下含 repeated 字段必崩）—— 别再照着它做
+       ======================================================================== -->
+  <ItemGroup>
+    <Reference Include="Google.Protobuf">
+      <HintPath>..\..\Client\Assets\ThirdParty\GoogleProtobuf\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
 
 </Project>

@@ -1,0 +1,233 @@
+// ============================================================================
+//  nbc_m3.proto —— M3 正式协议（房间 / 状态同步 / 副本 / 掉落）
+//  项目：3D联网战斗Demo（NBC）
+//
+//  CONTRACT_VERSION: 1
+//  ⚠️ **改这个文件时，若改的是"不兼容"的改动（删字段、改类型、改语义），
+//     必须把上面这行的版本号 +1**，并同步 `Shared/Net/NetContract.cs` 里的常量。
+//     —— 有一条机械检查盯着这两处是否一致
+//     （`Tests\EditMode\Net\ProtocolTests.cs`：直接读本文件比对）。
+//
+//  ---------------------------------------------------------------------------
+//  一、为什么协议是"唯一来源 + 生成物入库"
+//  ---------------------------------------------------------------------------
+//  需求文档 §4.2 定的：**协议的唯一来源是 `Protocol/*.proto`**，
+//  两端都用 `protoc` 从**同一份** `.proto` 生成 C#，**生成产物提交进仓库**。
+//  手写协议类不再存在 —— 那样两端一定会漂移，而漂移不报错（和 D1 那条同一个道理）。
+//
+//  ---------------------------------------------------------------------------
+//  二、生成命令（⚠️ protoc 与运行时**必须配对**）
+//  ---------------------------------------------------------------------------
+//      cd /d <仓库根>                       ← 工作目录走 Unicode API，中文路径没问题
+//      "E:\U3D Projects\TeachNet\Protobuf\protoc.exe" ^
+//          --proto_path=Protocol ^
+//          --csharp_out=Client/Assets/_Project/Protocol ^
+//          Protocol/nbc_m3.proto
+//
+//  ⚠️ 三条硬约束（`Docs\11` §5.2 有完整说明）：
+//    ① protoc **3.21.1** ←→ Google.Protobuf **3.21.1**（混版本会得到"编译不过/运行期报错"，
+//       而且报错**不会**提示是版本问题）
+//    ② **绝不要给 protoc 传含中文的路径**（argv 走 ANSI 代码页，中文路径会被破坏）
+//    ③ 参数只给相对路径、工作目录设成仓库根
+//
+//  ---------------------------------------------------------------------------
+//  三、这一版协议覆盖什么（对应 Docs\25 的切片）
+//  ---------------------------------------------------------------------------
+//      S3 握手 + 心跳         Handshake / HandshakeAck / Ping / Pong
+//      S4 房间与席位          JoinRoomRequest / RoomState / RoomMember
+//      S5 状态同步            PlayerInput（客户端只发**意图**）/ WorldSnapshot / EntitySnapshot
+//      S6/S7 事件与掉落       ServerEvent（伤害/死亡/掉落）
+//
+//  ⚠️ 客户端**只发意图**（`PlayerInput`），位置、伤害、掉落**全部由服务端算**（服务器权威）。
+//     M3 **不做客户端预测**（`Docs\25` D4）—— 所以操作会有延迟，这是**有意**的取舍。
+// ============================================================================
+
+syntax = "proto3";
+
+package nbc.m3;
+
+// 生成的 C# 命名空间（不写会按 package 推导成 Nbc.M3）
+option csharp_namespace = "NBC.Protocol";
+
+// ============================================================================
+//  握手与心跳（S3）
+// ============================================================================
+
+/// 客户端连上之后发的第一条消息。
+message Handshake
+{
+    int32  protocol_version = 1;   // = .proto 顶部的 CONTRACT_VERSION（不一致服务端直接拒绝）
+    string client_version   = 2;   // 客户端构建标识，只用于日志排查
+    string player_name      = 3;   // 玩家名（M3 还没有账号系统）
+}
+
+/// 握手结果。
+message HandshakeAck
+{
+    bool   accepted         = 1;
+    int32  protocol_version = 2;   // 服务端的版本（accepted=false 时用来对比）
+    string server_version   = 3;
+    int64  player_id        = 4;   // 服务端分配的玩家 id（> 0）
+    string reason           = 5;   // accepted=false 时说清为什么（人话）
+    int32  tick_hz          = 6;   // 服务端 tick 频率（M3 = 30）
+}
+
+/// 心跳（客户端主动发；服务端回 Pong 时不带内容）。
+message Ping { int64 client_time_ms = 1; }
+message Pong { int64 client_time_ms = 1; int64 server_time_ms = 2; }
+
+// ============================================================================
+//  房间与席位（S4）
+// ============================================================================
+
+/// 房间阶段。
+enum RoomPhase
+{
+    ROOM_PHASE_WAITING  = 0;   // 等人（还没开打）
+    ROOM_PHASE_RUNNING  = 1;   // 副本进行中
+    ROOM_PHASE_FINISHED = 2;   // 已结束（BOSS 死了 / 全灭）
+}
+
+/// 请求进房。M3 的模型是 **一个房间 = 一个副本实例**（`Docs\25` D6）。
+message JoinRoomRequest
+{
+    string room_id    = 1;   // 留空 = 让服务端分配一个（进大厅的简化版）
+    int32  dungeon_id = 2;   // 想打哪个副本（`Dungeon` 表主键）
+}
+
+/// 房间里的一个席位。
+message RoomMember
+{
+    int64  player_id   = 1;
+    string player_name = 2;
+    bool   is_host     = 3;   // 房主（M3 里房主只是标记，暂时没有特权）
+    bool   ready       = 4;
+}
+
+/// 房间状态（**每次有变化就整份下发**，2~4 人量级不值得做差分）。
+message RoomState
+{
+    string             room_id    = 1;
+    int32              dungeon_id = 2;
+    repeated RoomMember members   = 3;
+    int32              capacity   = 4;
+    RoomPhase          phase      = 5;
+}
+
+// ============================================================================
+//  输入：客户端**只发意图**（S5）
+// ============================================================================
+
+/// 一帧的输入命令。
+/// ⚠️ 沿用 A7 的量化约定（`InputCommand`）：移动轴 -1000..1000、动作是**位掩码**。
+///    这样"客户端采集 → 过网线 → 服务端重建"是**同一个值**，不需要浮点。
+message PlayerInput
+{
+    int64  player_id           = 1;
+    int32  client_tick         = 2;   // 客户端自己的帧号（日志/对账用，不是权威）
+    int32  move_x              = 3;   // -1000..1000（= -1..+1）
+    int32  move_y              = 4;
+    uint32 action_bits         = 5;   // 本帧**新按下**的动作（第 i 位 = 动作 i）
+    uint32 action_release_bits = 6;   // 本帧**新松开**的动作
+    int32  target_entity_id    = 7;   // 当前目标（服务端会校验它是否合法）
+}
+
+// ============================================================================
+//  世界快照：服务端 → 客户端（S5）
+// ============================================================================
+
+/// 一个战斗单位的快照。
+///
+/// ⚠️ 这里同时有 `entity_id` 与 `config_id`，**不是冗余**（M2 的教训）：
+///     · `config_id` = 配置表编号（6001 = 野狼）→ 表现层用它找模型、UI 用它显示名字
+///     · `entity_id` = 运行时实例编号 → 定位"这一个具体的怪"
+///     合并两者的话，"同一个 6001 刷两只"就会撞号（M2-B 已记过原因）。
+message EntitySnapshot
+{
+    int32 entity_id  = 1;
+    int32 config_id  = 2;
+    int32 kind       = 3;   // 0 = 英雄，1 = 怪物（对应 `EBattleAgentKind`）
+    int32 hp         = 4;
+    int32 max_hp     = 5;
+    int32 pos_x_mm   = 6;   // 位置（**毫米**，整数）；M3 先在平面上跑，Y 轴留空
+    int32 pos_z_mm   = 7;
+    int32 facing_deg = 8;   // 朝向（度，0..359）
+    bool  alive      = 9;
+}
+
+/// 一帧的世界快照。
+message WorldSnapshot
+{
+    int32                   server_tick = 1;   // 服务端帧号（单调递增）
+    repeated EntitySnapshot entities    = 2;
+}
+
+// ============================================================================
+//  事件：快照之外"发生了一件事"（S5~S7）
+// ============================================================================
+
+/// 造成了伤害。
+message DamageEvent
+{
+    int32 attacker_id  = 1;
+    int32 target_id    = 2;
+    int32 applied      = 3;   // **实际扣掉**的血（不是打出去的伤害值）
+    int32 remaining_hp = 4;
+}
+
+/// 一个单位死了。
+message DeathEvent
+{
+    int32 entity_id = 1;
+    int32 config_id = 2;
+    int32 kind      = 3;   // 0 = 英雄，1 = 怪物
+    int32 killer_id = 4;   // 0 = 没有击杀者（环境）
+}
+
+/// 掉落了物品（**服务端掷的**，客户端只负责显示）。
+message DropEvent
+{
+    int32 item_id          = 1;
+    int32 count            = 2;
+    int64 winner_player_id = 3;   // 归谁（M3 先做"击杀者获得"）
+}
+
+/// 服务端事件（用 oneof：一条消息只承载一件事）。
+message ServerEvent
+{
+    oneof event
+    {
+        DamageEvent damage = 1;
+        DeathEvent  death  = 2;
+        DropEvent   drop   = 3;
+    }
+}
+
+// ============================================================================
+//  信封：一条消息 = 一个 payload（**帧格式另行加长度前缀**，见 Docs\25 D1）
+// ============================================================================
+
+/// 服务端 → 客户端。
+message ServerMessage
+{
+    oneof payload
+    {
+        HandshakeAck  handshake_ack = 1;
+        Pong          pong          = 2;
+        RoomState     room_state    = 3;
+        WorldSnapshot snapshot      = 4;
+        ServerEvent   event         = 5;
+    }
+}
+
+/// 客户端 → 服务端。
+message ClientMessage
+{
+    oneof payload
+    {
+        Handshake       handshake = 1;
+        Ping            ping      = 2;
+        JoinRoomRequest join_room = 3;
+        PlayerInput     input     = 4;
+    }
+}
