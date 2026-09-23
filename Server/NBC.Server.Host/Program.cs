@@ -74,6 +74,11 @@ internal static class Program
         // 心跳：显式注册（这就是 NET-02 要的"注册表"长什么样）
         router.Register(ClientMessage.PayloadOneofCase.Ping, HandlePing);
 
+        // 房间与席位（S4）：规则在 `RoomRegistry`，接线与广播在 `RoomService`
+        var rooms = new RoomService(transport, new RoomRegistry());
+        rooms.RegisterHandlers(router);
+        rooms.Note += line => Log(quiet, "[房间] " + line);
+
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
 
         transport.SessionOpened += session =>
@@ -99,7 +104,8 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
-        Console.WriteLine($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping");
+        Console.WriteLine($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom");
+        Console.WriteLine($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
         Console.WriteLine("       按 Ctrl+C 退出。");
         Console.WriteLine();
 
@@ -138,6 +144,7 @@ internal static class Program
         Console.WriteLine($"[统计] 接受连接 {transport.TotalAccepted}，断开 {transport.TotalClosed}，" +
                           $"握手成功 {pump.HandshakesAccepted}，被拒 {pump.HandshakesRejected}，" +
                           $"踢出 {pump.Kicks}，解不出 {pump.Undecodable}");
+        Console.WriteLine($"[统计] 房间 {rooms.Registry.RoomCount} 个，席位表广播 {rooms.StateBroadcasts} 份");
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

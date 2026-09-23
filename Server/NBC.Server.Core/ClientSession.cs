@@ -30,6 +30,13 @@ public sealed class ClientSession
     /// <summary>登录成功后的玩家 ID；未登录为 0。</summary>
     public long PlayerId { get; set; }
 
+    /// <summary>
+    /// 玩家名（M3 没有账号系统，握手时客户端直接报一个名字）。
+    /// <para>⚠️ M3-S4 才加：房间席位表要显示名字，而"名字"是**握手时拿到**的 ——
+    /// 存在会话上比让房间再去问一遍协议对象要简单，也不会两份不一致。</para>
+    /// </summary>
+    public string PlayerName { get; set; } = string.Empty;
+
     /// <summary>登录成功后的账号 ID；未登录为 0。</summary>
     public long AccountId { get; set; }
 

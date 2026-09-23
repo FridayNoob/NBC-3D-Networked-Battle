@@ -242,6 +242,7 @@ public sealed class ServerMessageRouter
         // M3 还没有账号系统：player_id 就是"第几个连上来的"。
         // （S4 接数据库/账号时换成真实玩家 id —— 那时这个计数器就该删掉）
         session.PlayerId = _nextPlayerId++;
+        session.PlayerName = string.IsNullOrEmpty(hello.PlayerName) ? "玩家" + session.PlayerId : hello.PlayerName;
         session.Phase = SessionPhase.InLobby;
 
         var accepted = new HandshakeAck
