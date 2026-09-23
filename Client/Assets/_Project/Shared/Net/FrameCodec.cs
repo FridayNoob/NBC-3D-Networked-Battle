@@ -100,6 +100,28 @@ namespace NBC.Shared.Net
             return Encode(payload, 0, payload == null ? 0 : payload.Length);
         }
 
+        /// <summary>
+        /// 把一段载荷包成帧（**span 版**）。
+        /// <para>
+        /// 为什么要有它：服务端的 `INetTransport.Send(long, ReadOnlySpan&lt;byte&gt;)` 拿到的就是 span，
+        /// 没有这一版就得先 `ToArray()` —— 每条消息白复制一次（30Hz × N 人 × 每条快照）。
+        /// </para>
+        /// </summary>
+        /// <param name="payload">载荷（可以为空 —— 那就是一条 0 长度帧）。</param>
+        /// <returns>可以直接写进 socket 的字节。</returns>
+        public static byte[] Encode(ReadOnlySpan<byte> payload)
+        {
+            byte[] frame = new byte[NetContract.FrameLengthPrefixBytes + payload.Length];
+            WriteLength(frame, 0, payload.Length);
+
+            if (payload.Length > 0)
+            {
+                payload.CopyTo(frame.AsSpan(NetContract.FrameLengthPrefixBytes));
+            }
+
+            return frame;
+        }
+
         /// <summary>读一处长度前缀（**小端**）。给测试与排错用。</summary>
         /// <param name="buffer">字节。</param>
         /// <param name="offset">起点。</param>

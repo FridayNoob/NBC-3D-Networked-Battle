@@ -25,6 +25,28 @@
     <ProjectReference Include="..\NBC.Server.Game\NBC.Server.Game.csproj" />
   </ItemGroup>
 
+  <!-- ========================================================================
+       ★ Google.Protobuf：**必须直接引一份**（2026-09-23 被编译器抓住）
+
+       `NBC.Server.Core` 已经引了它，但 **ProjectReference 的引用不传递** ——
+       本工程用到 `ClientMessage.Parser`（签名里有 `MessageParser<>`）和
+       `ToByteArray()`（`Google.Protobuf` 里的扩展方法）时，编译器报：
+
+           error CS0012: 类型"MessageParser<>"在未引用的程序集中定义。
+                         必须添加对程序集"Google.Protobuf, Version=3.21.1.0…"的引用。
+
+       📌 这和 Unity 侧 asmdef 那条规律**是同一条**（"引用不传递"，本项目已记过 8 次）：
+          只是这次发生在 csproj 的第三方 DLL 上。
+       📌 `Private=true`：Host 是**要运行的**进程，DLL 必须复制到输出目录；
+          只在编译期引用的工程（`Private=false`）跑起来会报"找不到程序集"。
+       ======================================================================== -->
+  <ItemGroup>
+    <Reference Include="Google.Protobuf">
+      <HintPath>..\..\Client\Assets\ThirdParty\GoogleProtobuf\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <!-- 配置文件要随进程输出，且支持运行时修改（不嵌入） -->
     <None Update="appsettings.json">

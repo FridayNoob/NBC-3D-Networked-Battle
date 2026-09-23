@@ -14,6 +14,11 @@ _api-probe/
 # 为什么值得单开一个：共享层的卖点是"双端同一份源码"，
 # 而"能在 .NET 8 上真跑"这件事，只有跑一遍才算数（Unity 侧跑的是 Mono/IL2CPP）。
 _condition-probe/
+# M3-S3 起：端到端**网络**探针（真 socket + 真 protobuf）。
+# 服务端用的是生产代码（TcpServerTransport / ServerMessagePump），客户端用的是
+# Unity 侧那份 TcpTransport 源码 —— 它验的是"两个进程真的能说话"，
+# 而这件事只有真跑才算数（权威用例仍在 Unity 侧 NUnit）。
+_net-probe/
 
 # --- 这些目录下的 NuGet 还原产物（体积大、可重建，不应进仓库） ---
 #

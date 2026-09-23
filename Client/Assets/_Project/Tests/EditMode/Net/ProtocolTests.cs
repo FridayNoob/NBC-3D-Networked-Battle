@@ -206,5 +206,27 @@ namespace NBC.Tests.EditMode
             Assert.Greater(NetContract.MaxFrameBytes, 0, "上限必须是正数，否则'防吃内存'那条就是摆设");
             Assert.GreaterOrEqual(NetContract.MaxRoomMembers, 2, "至少得能两个人（M3 的验收就是 2 人）");
         }
+
+        /// <summary>
+        /// 协议 tick 率与共享层的逻辑帧率必须**相等**（30Hz 这件事现在有两处写着）。
+        /// <para>
+        /// ⚠️ 这条测试是被编译器"逼"出来的：M3-S3 我本来在服务端启动时写了一段
+        /// "两者不一致就警告"的运行时检查，编译器直接报
+        /// **CS0162 无法访问的代码** —— 两个都是 `const`，比较在编译期就有答案，
+        /// 那段检查**永远不执行**。这正是"走不到的分支比没有分支更糟"：
+        /// 看着很负责，其实是个摆设。
+        /// </para>
+        /// <para>
+        /// 该待的地方就是这里：把两个常量钉成相等。将来有人只改了一处，这条会当场红。
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TickRate_MatchesSharedLayerLogicRate()
+        {
+            Assert.AreEqual(NBC.Shared.SharedInfo.LogicTickRate, NetContract.TickRate,
+                "共享层 `SharedInfo.LogicTickRate` 与协议 `NetContract.TickRate` 必须相等：\n" +
+                "客户端逻辑帧与服务端 tick 对不上时，帧同步必然失败（DET-03），\n" +
+                "而那种错配**不会**在单端测试里暴露。");
+        }
     }
 }
