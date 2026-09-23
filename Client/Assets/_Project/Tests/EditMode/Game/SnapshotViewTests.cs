@@ -111,7 +111,14 @@ namespace NBC.Tests.EditMode
         //  二、查询与清理
         // ====================================================================
 
-        /// <summary>按实例编号查得到（表现层要靠它把数据贴到模型上）。</summary>
+        /// <summary>
+        /// 按实例编号查得到（表现层要靠它把数据贴到模型上）。
+        /// <para>
+        /// ⚠️ 2026-09-23 这条用例**红过一次**：我把 `PosXMm` 写成了 1000，而辅助方法里的约定是
+        /// `PosXMm = 1000 × 实例号` —— 实例 2 就是 **2000**。红的是我的算术，不是被测代码。
+        /// 这正是本项目那条"**断言里的数字必须算出来**"（第 5 次：E1 ×3、M2-B、本次）。
+        /// </para>
+        /// </summary>
         [Test]
         public void Find_ReturnsEntityById()
         {
@@ -120,7 +127,10 @@ namespace NBC.Tests.EditMode
 
             Assert.IsNotNull(view.Find(2));
             Assert.AreEqual(77, view.Find(2).Hp);
-            Assert.AreEqual(1000, view.Find(2).PosXMm);
+
+            // 辅助方法里 `PosXMm = 1000 × 实例号` → 实例 2 的位置是 2000mm（不是 1000，我第一版就写错了）
+            Assert.AreEqual(1000 * 2, view.Find(2).PosXMm);
+
             Assert.IsNull(view.Find(99), "不存在的实例应当返回 null，而不是随便给一个");
         }
 
@@ -158,6 +168,10 @@ namespace NBC.Tests.EditMode
         /// <param name="tick">服务端帧号。</param>
         /// <param name="entities">单位（实例号、类型、血量、是否活着）。</param>
         /// <returns>快照。</returns>
+        /// <remarks>
+        /// ⚠️ 约定的三个派生值（用例里断言它们时**照这个写**，别再手抄一个数）：
+        /// `ConfigId = 6000 + 实例号`、`PosXMm = 1000 × 实例号`、`MaxHp = 300`、`PosZMm = 0`。
+        /// </remarks>
         private static WorldSnapshot Snapshot(int tick, params (int Id, int Kind, int Hp, bool Alive)[] entities)
         {
             var snapshot = new WorldSnapshot { ServerTick = tick };
