@@ -291,6 +291,52 @@ public sealed class ServerTables
     public SkillRow? FindSkill(int id)
         => _skills.TryGetValue(id, out SkillRow row) ? row : (SkillRow?)null;
 
+    /// <summary>有掉落配置的怪（按编号升序）—— 启动日志逐条打印用。</summary>
+    public IReadOnlyList<int> MonsterIdsWithDrops
+    {
+        get
+        {
+            var ids = new List<int>(_drops.Keys);
+            ids.Sort();
+            return ids;
+        }
+    }
+
+    /// <summary>
+    /// 把一个怪的掉落串成人话（例：`怪 6001 → 物品 9001×1~2@10000、9002×1~1@10000`）。
+    /// <para>⚠️ 为什么值得在启动时打出来：服务端读的是**源 CSV**、而 Unity 侧读的是**SO（生成物）** ——
+    /// 两处来源一旦不一致，"改了表却没生效"就会表现为"打死了什么都不掉"，而且**没有任何报错**。
+    /// 把服务端真正读到的值印在启动日志里，这个问题从"猜"变成"看一眼"。</para>
+    /// </summary>
+    /// <param name="monsterId">怪编号。</param>
+    /// <returns>人话。</returns>
+    public string DescribeDropsOf(int monsterId)
+    {
+        IReadOnlyList<DropRow> rows = FindDrops(monsterId);
+
+        if (rows.Count == 0)
+        {
+            return "怪 " + monsterId + " → （无掉落配置）";
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append("怪 ").Append(monsterId).Append(" → ");
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (i > 0)
+            {
+                text.Append('、');
+            }
+
+            text.Append("物品 ").Append(rows[i].ItemId)
+                .Append('×').Append(rows[i].CountMin).Append('~').Append(rows[i].CountMax)
+                .Append('@').Append(rows[i].ChancePerTenThousand);
+        }
+
+        return text.ToString();
+    }
+
     /// <summary>一句人话（启动日志用）。</summary>
     /// <returns>描述。</returns>
     public string Describe()

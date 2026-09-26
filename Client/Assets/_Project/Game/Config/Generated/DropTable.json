@@ -2,8 +2,8 @@
   "table": "DropTable",
   "fields": ["id", "monsterId", "itemId", "countMin", "countMax", "chancePerTenThousand"],
   "rows": [
-    { "id": 1, "monsterId": 6001, "itemId": 9001, "countMin": 1, "countMax": 2, "chancePerTenThousand": 5000 },
-    { "id": 2, "monsterId": 6001, "itemId": 9002, "countMin": 1, "countMax": 1, "chancePerTenThousand": 3000 },
+    { "id": 1, "monsterId": 6001, "itemId": 9001, "countMin": 1, "countMax": 2, "chancePerTenThousand": 10000 },
+    { "id": 2, "monsterId": 6001, "itemId": 9002, "countMin": 1, "countMax": 1, "chancePerTenThousand": 10000 },
     { "id": 3, "monsterId": 6002, "itemId": 9001, "countMin": 1, "countMax": 3, "chancePerTenThousand": 7000 },
     { "id": 4, "monsterId": 6003, "itemId": 9003, "countMin": 1, "countMax": 1, "chancePerTenThousand": 10000 },
     { "id": 5, "monsterId": 6003, "itemId": 9001, "countMin": 2, "countMax": 5, "chancePerTenThousand": 10000 }

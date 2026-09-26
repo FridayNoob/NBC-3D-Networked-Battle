@@ -83,6 +83,14 @@ internal static class Program
 
         Console.WriteLine($"[Check] {tables.Describe()}");
 
+        // ⚠️ 把"服务端**真正读到**的掉落配置"印出来（2026-09-23 负责人踩过这个坑）：
+        //    服务端读的是 `Configs\Design\*.csv`（真源），而 Unity 侧读的是生成的 SO ——
+        //    只改 SO 的话服务端**看不到**，表现是"打死了什么都不掉"，且不报任何错。
+        foreach (int monsterId in tables.MonsterIdsWithDrops)
+        {
+            Console.WriteLine($"        掉落：{tables.DescribeDropsOf(monsterId)}");
+        }
+
         var transport = new TcpServerTransport(port);
         var router = new ServerMessageRouter($"nbc-server/{version}");
         var pump = new ServerMessagePump(transport, router);

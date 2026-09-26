@@ -18,13 +18,13 @@ MonoBehaviour:
     itemId: 9001
     countMin: 1
     countMax: 2
-    chancePerTenThousand: 5000
+    chancePerTenThousand: 10000
   - id: 2
     monsterId: 6001
     itemId: 9002
     countMin: 1
     countMax: 1
-    chancePerTenThousand: 3000
+    chancePerTenThousand: 10000
   - id: 3
     monsterId: 6002
     itemId: 9001
