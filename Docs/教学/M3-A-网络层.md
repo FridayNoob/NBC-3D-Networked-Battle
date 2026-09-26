@@ -263,3 +263,123 @@ dotnet run --project Server\_net-probe\NetProbe.csproj --no-build -- --session=7
 > 验证上我不满足于"能编过"：**45 条共享层/传输层探针 + 17 条端到端探针（真 socket + 真 protobuf）
 > + 两个真进程互通**，客户端会话还额外对着真服务端跑了一遍；Unity 侧 **628 条 EditMode 用例**。
 > 版本不一致会被拒、没握手会被踢、撒谎的长度前缀会断开，这些都是**负向对照**，专门证明检查在工作。
+
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+**这张图解决什么问题**：M3-A 的源码散在四个程序集里，而且两端的传输**故意不是同一个接口**：客户端 `ITransport.cs:60`、
+服务端 `INetTransport.cs:43` 是两个形状；分帧则住在共享层、两端编同一份（`FrameCodec.cs:60` / `:166`）。
+
+```mermaid
+classDiagram
+    class ITransport {
+        <<interface>>
+        +Send(byte[] payload) void
+        +Pump() void
+    }
+    class TcpTransport {
+        -FrameDecoder m_decoder
+        +Pump() void
+    }
+    class INetTransport {
+        <<interface>>
+        +Pump() void
+        +Send(long sessionId, ReadOnlySpan~byte~ payload) bool
+        +MessageReceived Action
+    }
+    class TcpServerTransport {
+        -List~Connection~ _connections
+        +Pump() void
+        -DispatchFrames(Connection conn) void
+    }
+    class ServerMessagePump {
+        -ServerMessageRouter _router
+        -Queue _inbox
+        +Pump() void
+        +DrainInbox() void
+    }
+    class ServerMessageRouter {
+        -Dictionary _handlers
+        +Register(kind, handler) void
+        +Dispatch(ClientSession session, ClientMessage message) DispatchResult
+    }
+    class ClientSession {
+        +PlayerId long
+        +Phase SessionPhase
+    }
+    class FrameCodec {
+        +Encode(ReadOnlySpan~byte~ payload) byte[]
+        +ReadLength(byte[] buffer, int offset) int
+    }
+    class FrameDecoder {
+        -string m_fatalReason
+        +Append(byte[] buffer, int offset, int count) void
+        +TryDequeue(out byte[] frame, out string error) bool
+    }
+    class NetContract {
+        +FrameLengthPrefixBytes int
+        +MaxFrameBytes int
+    }
+    class NetErrors {
+        +RoomFull int
+    }
+    ITransport <|.. TcpTransport : 实现
+    INetTransport <|.. TcpServerTransport : 实现
+    TcpTransport *-- FrameDecoder : 私有拆帧器
+    TcpServerTransport *-- FrameDecoder : 每连接一份拆帧状态
+    ServerMessagePump *-- INetTransport : 持有传输
+    ServerMessagePump *-- ServerMessageRouter : 持有路由
+    ServerMessagePump ..> ClientSession : 队列里带着来源会话
+    ServerMessageRouter ..> ClientSession : 握手时写 PlayerId 与 Phase
+    ServerMessageRouter ..> NetContract : 比对协议版本
+    TcpTransport ..> FrameCodec : 发送前 Encode
+    TcpServerTransport ..> FrameCodec : 发送前 Encode
+    FrameDecoder ..> FrameCodec : 借 ReadLength 读长度前缀
+    TcpTransport ..> NetContract : 读单帧上限
+```
+
+**看图时最容易画错的 6 处**
+
+| # | 容易画错 | 事实 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 把两端画成共用一个传输接口 | 客户端 `ITransport` 与服务端 `INetTransport` 是**两个接口** | `ITransport.cs:60`、`INetTransport.cs:43` |
+| 2 | 把拆帧画成 `FrameCodec` 的静态方法 | 有状态的是 **`FrameDecoder`**（缓冲、起点、终点、fatal 原因） | `FrameCodec.cs:166`、`:172`~`:181` |
+| 3 | 把 `DispatchResult` 画成 class | 它是 **`readonly struct`**，三种结果靠静态工厂产出 | `ServerMessageRouter.cs:43`、`:64`~`:83` |
+| 4 | 把 `ServerMessageRouter` 画成直接碰 socket | `Dispatch` **不碰 socket**：回包/断开由调用方按结果执行 | `ServerMessageRouter.cs:151`~`:158` |
+| 5 | 漏掉消息泵里的「先入队」 | 收包回调**只 `_inbox.Enqueue`**，处理在 `Pump` 返回之后 | `ServerMessagePump.cs:74`、`:79`、`:91` |
+| 6 | 把服务端每会话的拆帧器画在传输上 | 拆帧器在**私有嵌套类 `Connection`** 上，每连接一个 | `TcpServerTransport.cs:296`、`:618` |
+
+**一条消息从客户端字节到服务端回包的完整路径**（`[4 字节小端][载荷]` 的分帧与粘包/拆包都在 `FrameDecoder` 里被吃掉）：
+
+```mermaid
+sequenceDiagram
+    participant CT as TcpTransport
+    participant FC as FrameCodec
+    participant ST as TcpServerTransport
+    participant FD as FrameDecoder
+    participant SP as ServerMessagePump
+    participant RT as ServerMessageRouter
+    CT->>FC: Send 时 Encode 出长度前缀加载荷
+    CT->>CT: m_pending.Enqueue 后 FlushPending 写出
+    ST->>ST: Pump 里 AcceptPending 与 ReceivePending
+    ST->>FD: Decoder.Append(buffer, 0, received)
+    loop 一直 TryDequeue 到数据不够
+        FD-->>ST: 一帧完整载荷 0 长度帧也算一帧
+        ST->>SP: MessageReceived(session, payload)
+        SP->>SP: _inbox.Enqueue 这里只入队
+    end
+    SP->>SP: DrainInbox 里 ClientMessage.Parser.ParseFrom
+    SP->>RT: Dispatch(session, message)
+    RT-->>SP: DispatchResult 三种结果
+    SP->>ST: Send(sessionId, reply.ToByteArray()) 先回包
+    SP->>ST: Disconnect(sessionId, kickReason) 再断开
+    ST-->>CT: 对端收到 0 字节 转成 Closed(reason)
+```
+
+**面试版怎么讲（4 句）**
+
+- 「两端**分帧同一份、形状各自一份**：客户端 `ITransport`（一条连接）、服务端 `INetTransport`（N 条连接 + `sessionId` + 踢人），分帧都是共享层的 `FrameCodec` / `FrameDecoder`。」
+- 「分帧是 `[4 字节小端长度][载荷]`：长度**手写字节**不用 `BitConverter`（它依赖宿主字节序），0 长度帧合法（protobuf 空消息就是 0 字节），超 `MaxFrameBytes` 直接判协议违规断开、**不照着谎言攒内存**（`FrameCodec.cs:53`、`:56`、`:142`、`:280`）。」
+- 「服务端是**拉模式**：`Pump()` 收字节 → `FrameDecoder` 拆帧 → `MessageReceived` **只入队** → `DrainInbox()` 解包 → `Dispatch` 返回 `DispatchResult` → **先回包、再断开**。」
+- 「`ServerMessagePump` 的存在理由是**一处规则两个调用点**：服务端进程与端到端探针都用它，否则探针验的是抄本（`ServerMessagePump.cs:8`~`:13`）。」

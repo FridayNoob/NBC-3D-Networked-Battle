@@ -174,3 +174,123 @@ Unity 侧：`Tests_EditMode` 应为 **655 全绿**；窗口 `Tools/NBC/网络/�
 > 这一课我最想说的两个坑：① **"纯 C#"要看整条依赖链** —— A10 状态机通过 `EventId` 间接依赖 UnityEngine；
 > ② **概率和帧数必须算** —— 我断言"狼必掉"（其实 35% 什么都不掉）、也按错循环次数（冷却 15 帧只够打 2 下）。
 > 这两次都是**我的期望值错、不是代码错**，而它们**只能在真跑的时候才暴露**。
+
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+**这张图解决什么问题**：M3-C 的四个决定（表驱动 / 纯 C# AI / 确定性 PRNG / 序列化一次发全房）落在**三个不同层**里，
+很容易画成「一个类干完」。真去看源码：读表是 `ServerTables`（带一批 `readonly struct` 行类型），建副本是
+`DungeonBattle.FromDungeon` 这个静态工厂，AI 是 `BossBrain` 持有 `StateMachine<EBossState>`，而伤害结算
+**不在服务端** —— 它调共享层的 `DamageMath.Resolve`（`DungeonBattle.cs:745`、`DamageMath.cs:125`）。
+
+```mermaid
+classDiagram
+    class ServerTables {
+        -Dictionary _dungeons
+        -Dictionary _drops
+        +TryLoad(string directory, out ServerTables tables, out string error) bool
+        +FindDrops(int monsterId) IReadOnlyList~DropRow~
+    }
+    class DungeonRow {
+        <<struct>>
+        +Id int
+        +Monsters int[]
+    }
+    class MonsterRow {
+        <<struct>>
+        +Id int
+        +Hp int
+    }
+    class HeroRow {
+        <<struct>>
+        +Id int
+        +MoveSpeedMmPerSec int
+    }
+    class SkillRow {
+        <<struct>>
+        +Id int
+        +Damage int
+    }
+    class DropRow {
+        <<struct>>
+        +MonsterId int
+        +ChancePerTenThousand int
+    }
+    class DungeonBattle {
+        -List~BattleEntity~ _entities
+        -BattleRandom _random
+        +Step() void
+        +ApplyDamage(int targetId, int damage, int attackerId) DamageResult
+        +RollDrops(ServerTables tables, int monsterConfigId, long winnerPlayerId) int
+        +FromDungeon(string roomId, int dungeonId, ServerTables tables, out string error) DungeonBattle
+    }
+    class BossBrain {
+        -StateMachine~EBossState~ _fsm
+        -BattleEntity _boss
+        +Think(DungeonBattle battle) void
+    }
+    class StateMachine~EBossState~ {
+        +Register(EBossState id, IState~EBossState~ state) void
+    }
+    class BattleRandom {
+        -uint m_state
+        +NextPerTenThousand() int
+    }
+    class DamageMath {
+        +Resolve(int currentHp, int damage) DamageOutcome
+    }
+    ServerTables *-- DungeonRow : 一张表一份行类型
+    ServerTables *-- MonsterRow : 一张表一份行类型
+    ServerTables *-- DropRow : 按怪分组的列表
+    DungeonBattle ..> ServerTables : 查副本 怪 英雄 技能 掉落
+    DungeonBattle *-- BossBrain : BOSS 由状态机驱动
+    DungeonBattle *-- BattleRandom : 每局一个确定性 PRNG
+    BossBrain *-- StateMachine~EBossState~ : 私有字段 _fsm
+    DungeonBattle ..> DamageMath : ApplyDamage 调 Resolve
+    DamageMath ..> DamageOutcome : 返回结算结果
+```
+
+**看图时最容易画错的 6 处**
+
+| # | 容易画错 | 事实 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 把行类型画成 `class` | `DungeonRow` / `MonsterRow` / `HeroRow` / `SkillRow` / `DropRow` **全是 `readonly struct`** | `ServerTables.cs:50`、`:79`、`:113`、`:152`、`:191` |
+| 2 | 把服务端读表画成读生成的 `Config_<表>.cs` | 服务端读的是**源 CSV**（`CsvSheet.LoadMany`，表名 `Dungeon`/`Monster`/`Hero`/`Skill`/`DropTable`） | `ServerTables.cs:15`、`:368`、`:523`、`:529` |
+| 3 | 把「建副本」画成构造函数 | 它是**静态工厂** `FromDungeon(...)`，失败返回 null + 人话 `error` | `DungeonBattle.cs:915`、`:919`~`:925` |
+| 4 | 把 BOSS 单独画一个类 | BOSS 也是 `BattleEntity`（`IsBoss = true`），驱动它的是另一个类 `BossBrain` | `DungeonBattle.cs:995`、`:1001`、`BossBrain.cs:65` |
+| 5 | 把三个状态画成 `BossBrain` 的字段 | `IdleState` / `ChaseState` / `AttackState` 是它的 **private 嵌套类** | `BossBrain.cs:82`~`:85`、`:128`、`:155` |
+| 6 | 把掷骰画成 `System.Random`，或把伤害画进服务端 | 自己写 **xorshift32**、概率是**万分比**；伤害结算在共享层 | `BattleRandom.cs:34`、`:71`、`DungeonBattle.cs:745` |
+
+**`Dungeon.csv` 到客户端 `DropReceived` 的完整链路**（掉落是**服务端掷、序列化一次、全房同一份字节**）：
+
+```mermaid
+flowchart TD
+    A["Configs 下的 Dungeon.csv 与 Monster.csv 与 DropTable.csv"] --> B["ServerTables.TryLoad 里 CsvSheet.LoadMany 读源 CSV"]
+    B --> D["RoomBattleService.EnsureBattle 第一次按 DungeonId 建"]
+    D --> E["DungeonBattle.FromDungeon 查不到就返回 null 并说明原因"]
+    E --> F["AddEntity 摆普通怪与 BOSS 数量与血量全来自表"]
+    F --> G["BOSS 再 new BossBrain(bossEntity) 三态 Idle 与 Chase 与 Attack"]
+    G --> H["每帧 Step 后 TryBasicAttack 命中才 ApplyDamage"]
+    H --> I["DamageMath.Resolve(target.Hp, damage) 共享层那一份规则"]
+    I --> K["_pendingHits.Add 记的是 Applied 不是传进来的 damage"]
+    K --> L{"wasAlive 且 现在 Alive 为 false"}
+    L -->|"否 只是掉血"| M["结束 没有死亡也没有掉落"]
+    L -->|"是 从活着打到死"| N["_pendingDeaths.Add 后 kind 为 1 时 RollDrops"]
+    N --> O["BattleRandom.NextPerTenThousand 与 ChancePerTenThousand 比大小"]
+    O --> P["_pendingDrops.Add 后 BroadcastDrops 取走并清空"]
+    P --> Q["ServerEvent Drop 的 ToByteArray 只做一次 再 SendToRoom"]
+    Q --> R["NetSession 解出 Drop 后 HandleDrop 发 DropReceived"]
+    R --> S["ServerEventBridge.OnDrop 只在归我时转发 ItemDropped"]
+```
+
+M4-S1 之后新增的 `ServerEventBridge`（`Game\Battle\ServerEventBridge.cs`）把 `NetSession` 的
+`DamageReceived` / `DeathReceived` / `DropReceived` 接进了 `EventCenter`（`ServerEventBridge.cs:87`~`:89`、`:134`、`:146`、`:171`）
+—— 于是**联机打死怪、任务进度也会涨**，而任务模块一行都不用改、也完全不认识网络。
+
+**面试版怎么讲（4 句）**
+
+- 「关卡阵容与数值全来自**源 CSV**（`Dungeon` / `Monster` / `Hero` / `Skill` / `DropTable`），`ServerTables` 读成一批 `readonly struct` 行；**加表不改一行工具代码**。代价如实记：这是第二份读表实现，靠探针读真表防漂移（`ServerTables.cs:15`~`:19`、`:36`~`:37`）。」
+- 「建副本是静态工厂 `DungeonBattle.FromDungeon`：副本人不在表里、怪编号查不到、英雄普攻算出来是 0 —— 三种都**返回 null + 人话原因**，绝不静默开一个空世界（`DungeonBattle.cs:919`~`:957`）。」
+- 「BOSS 用 `StateMachine<EBossState>` 三态 Idle/Chase/Attack，时间用**逻辑帧号**不是真实时间；状态里只做判定与调用，改世界一律回 `DungeonBattle`（`BossBrain.cs:109`~`:112`）。」
+- 「掉落是**服务端权威 + 确定性 PRNG**：自己写 xorshift32（`System.Random` 的算法在 .NET 版本之间变过），概率用万分比，只有**从活着打到死**那一下才掷；掷完**序列化一次、同一份字节发全房**，客户端只显示 —— 『两边一致』靠同一份字节，不是『两边各掷一次碰巧一样』。」

@@ -438,3 +438,121 @@ Handle_TwoActionsPressed_CastsBoth 红：
 | `.NET 8` 探针 | **30/30**（含 8 条伤害边界） |
 | 编译闸门 | **0 警告 0 错误**（产物字符串表正对照确认新类型真的编进去了） |
 | 配置表 | **没动**（M2-B 没有新增表；复用 `Monster` / `Hero` / `Skill`） |
+
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+**这张图解决什么问题**：M2-B 只有四个文件，但**谁改血**、**谁发事件**、**谁做校验**三件事是分开的，画错一处结论就反了。
+最容易画错的：让 `BattleAgent` 发事件（它**不发**，只改自己的血，广播是 `BattleWorld` 的事）；让 `BattleWorld` 自己算伤害
+（它调**共享层**的 `DamageMath.Resolve`）；把 `DamageOutcome` 画成 `class`（`readonly struct`）；
+以及把技能归属校验画在一处（它是**一处实现、两个调用点**：装配期 + 结算期）。
+
+```mermaid
+classDiagram
+    class BattleWorld {
+        -Dictionary~int, BattleAgent~ m_agents
+        +SpawnMonster(int monsterId) BattleAgent
+        +ApplyDamage(int attackerInstanceId, int targetInstanceId, int damage) DamageOutcome
+        +CastSkill(int casterInstanceId, int skillId, int targetInstanceId) SkillCastOutcome
+        -OnAgentKilled(BattleAgent agent, int killerInstanceId) void
+    }
+    class BattleAgent {
+        -int m_instanceId
+        -EBattleAgentKind m_kind
+        +InstanceId int
+        +Hp int
+        +ApplyDamage(int damage) DamageOutcome
+    }
+    class EBattleAgentKind {
+        <<enumeration>>
+        Monster
+        Hero
+    }
+    class SkillCaster {
+        -BattleWorld m_world
+        -List~Binding~ m_bindings
+        +Bind(InputActionId action, int skillId) void
+        +Handle(InputCommand command, int targetInstanceId, List~SkillCastOutcome~ results) int
+    }
+    class SkillCastOutcome {
+        <<struct>>
+        +AppliedDamage int
+        +Killed bool
+    }
+    class BattleEvents {
+        +MonsterDied EventId
+        +HeroDied EventId
+        +DamageDealt EventId
+    }
+    class DamageMath {
+        +Resolve(int currentHp, int damage) DamageOutcome
+    }
+    class DamageOutcome {
+        <<struct>>
+        +Applied int
+        +RemainingHp int
+        +Overkill int
+        +IsLethal bool
+    }
+    BattleWorld *-- BattleAgent : 在场单位字典 实例编号到单位
+    BattleWorld ..> SkillCastOutcome : CastSkill 的返回值
+    BattleWorld ..> DamageOutcome : ApplyDamage 的返回值
+    BattleWorld ..> DamageMath : ApplyDamage 调共享层 Resolve
+    BattleWorld ..> BattleEvents : Trigger 四个事件标识
+    BattleAgent ..> DamageMath : 改血的唯一入口
+    DamageMath ..> DamageOutcome : 返回结算结果
+    SkillCaster *-- BattleWorld : 私有字段 m_world
+    SkillCaster ..> InputCommand : 只读本帧新按下的位
+```
+
+⚠️ 一处**未读到**：`InputCommand`（`MoveX` / `ActionBits` 等）与 `InputActionId` 是 A7 的产物，本篇只读到**用法**（`NetSession.cs:521`~`:523`、`SkillCaster.cs:216`），没读到定义文件，所以图上没有它们的成员。
+
+**看图时最容易画错的 6 处**
+
+| # | 容易画错 | 事实 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 让 `BattleAgent` 发事件 | 它**只改自己的血**，注释明写「不广播事件（那是 `BattleWorld` 的事）」 | `BattleAgent.cs:157`~`:168` |
+| 2 | 让 `BattleWorld` 自己写伤害公式 | 它调共享层 `DamageMath.Resolve`（双端同一份） | `BattleWorld.cs:320`、`BattleAgent.cs:165`、`DamageMath.cs:125` |
+| 3 | 把 `DamageOutcome` / `SkillCastOutcome` 画成 `class` | 两个都是 **`readonly struct`** | `DamageMath.cs:54`、`BattleWorld.cs:62` |
+| 4 | 把技能归属校验画在一处 | **一处实现两个调用点**：装配期 `Bind` + 结算期 `CastSkill` | `BattleWorld.cs:288`、`:361`、`SkillCaster.cs:142`、`:156` |
+| 5 | 把死亡事件画成一个带 `kind` 的 | **两个事件** `MonsterDied` / `HeroDied`，按 `Kind` 分派 | `BattleWorld.cs:440`~`:448`、`BattleEvents.cs:39`、`:42` |
+| 6 | 把「先摘掉再广播」画反，或让「打 0 血」走致死 | 先 `m_agents.Remove` **再**广播；`currentHp == 0` 直接返回 `(0, 0, 0, false)` | `BattleWorld.cs:435`~`:438`、`DamageMath.cs:144`~`:149` |
+
+**一次 `CastSkill` 的顺序契约**，以及 `DamageMath.Resolve` 的四个输出（顺序反了条件系统就会「先看到击杀、再看到命中」）：
+
+```mermaid
+sequenceDiagram
+    participant SC as SkillCaster
+    participant BW as BattleWorld
+    participant EC as EventCenter
+    participant BA as BattleAgent
+    participant DM as DamageMath
+    SC->>SC: 遍历 m_bindings 只看 command.HasAction 本帧新按下
+    SC->>BW: CastSkill(casterInstanceId, skillId, targetInstanceId)
+    BW->>BW: RequireAgent 施法者与目标 不在场直接抛
+    BW->>BW: m_skills.TryGet 再 OwnsSkill 归属校验
+    BW->>EC: Trigger(BattleEvents.SkillHit, SkillHitPayload)
+    Note over EC: 契约第一段 打中了
+    BW->>BW: ApplyDamage(casterInstanceId, targetInstanceId, skill.damage)
+    BW->>BA: target.ApplyDamage(damage)
+    BA->>DM: Resolve(m_hp, damage)
+    DM-->>BA: DamageOutcome
+    Note over DM: 四个输出 Applied 与 RemainingHp 与 Overkill 与 IsLethal
+    BA-->>BW: outcome 同时把 m_hp 改成 RemainingHp
+    BW->>EC: Trigger(BattleEvents.DamageDealt, DamageDealtPayload)
+    Note over EC: 契约第二段 扣了多少 记的是 Applied
+    alt outcome.IsLethal 为真
+        BW->>BW: OnAgentKilled 先从 m_agents 摘掉
+        BW->>EC: Trigger(BattleEvents.MonsterDied 或 HeroDied)
+        Note over EC: 契约第三段 它死了 只在致死那一下
+    end
+    BW-->>SC: SkillCastOutcome
+```
+
+**面试版怎么讲（4 句）**
+
+- 「战斗内核只有三件东西：`BattleWorld`（在场单位 + 结算入口）、`BattleAgent`（一个单位的数据）、`SkillCaster`（动作到技能的绑定），配上共享层的 `DamageMath.Resolve`。**谁改血只有一个入口**，而它是纯函数 —— 所以能单独测、能放进共享层、服务端也编同一份。」
+- 「三条写死的规则：HP **钳在 0**；**过量伤害单独算出来**（`Overkill` 给飘字与以后的斩杀技能用）；**打 0 血的目标什么都不发生、也不算致死** —— 最后这条是因为击杀数按『致死』累加，尸体能再死一次统计就会慢慢偏，顺带还堵掉 `damage >= hp` 在 `0 >= 0` 时为真的边界。」
+- 「事件顺序是**契约**：`SkillHit` → `DamageDealt` →（致死时）`MonsterDied` / `HeroDied`；而且死亡是**两个事件**不是一个带 `kind` 的 —— 合用一个的话桥里那句『不是怪物就给 0』会撞上『0 = 任意目标』，于是『玩家死了』会让任何击杀类任务涨进度。」
+- 「有一处我刻意多写了一点：技能归属是**一处实现、两个调用点**（装配期早报错 + 结算期兜底），这不是两套规则，是 fail early + fail loud；另外我把『**在场 ⇒ 活着**』变成不变量，死掉的单位当场从世界摘掉，所以『目标已经死了就什么都不做』那个分支根本走不到 —— **走不到的分支比没有分支更糟**。」

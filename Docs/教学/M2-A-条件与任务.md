@@ -509,3 +509,122 @@ tracker.Notify(KillMonster, 6001, 1);   // ← 喂的是**另一个条件**的�
 | ConfigKit 自测 | **49/49**（未受影响） |
 | 编译闸门 | **0 警告 0 错误**（并用产物字符串表正对照确认新类型真的编进去了） |
 | 配置导出 | 0 错误 0 警告；**旧三张表生成物一字未变**（重跑幂等） |
+
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+**这张图解决什么问题**：这一课的关键是**分层与方向** —— 事件从 `EventCenter` 流向条件系统、再从条件系统流向任务系统，
+中间**没有任何一个模块知道它的下游**。最容易画错的三处：把 `ConditionDef` / `ConditionProgress` / `QuestActionResult`
+画成 `class`（都是 `readonly struct`）；把「达成」画成 `ConditionTracker` 里的一个 `bool`（它靠**钳位**让
+`!before.IsMet && after.IsMet` 就够了，**没有标志位**）；以及把 `ConditionTracker` 画成认识 `EventCenter`
+（它在共享层，只暴露 C# 事件，翻译全在客户端那座 `ConditionEventBridge` 上）。
+
+```mermaid
+classDiagram
+    class ConditionDef {
+        <<struct>>
+        +EventType EConditionEvent
+        +RequiredCount int
+        +TryCreate(EConditionEvent eventType, int targetId, int requiredCount, out ConditionDef def, out string error) bool
+    }
+    class ConditionProgress {
+        <<struct>>
+        +Current int
+        +IsMet bool
+    }
+    class EConditionEvent {
+        <<enumeration>>
+        KillMonster
+        CollectItem
+        ReachArea
+    }
+    class IConditionProgressStore {
+        <<interface>>
+        +GetProgress(int conditionKey) int
+    }
+    class InMemoryConditionProgressStore {
+        -Dictionary~int, int~ m_progress
+        +GetProgress(int conditionKey) int
+    }
+    class ConditionTracker {
+        -IConditionProgressStore m_store
+        -Dictionary~int, ConditionDef~ m_registered
+        +ConditionMet Action
+        +Register(int conditionKey, ConditionDef def, bool resetProgress) void
+    }
+    class ConditionEventBridge {
+        -ConditionTracker m_tracker
+        +Bind(id, EConditionEvent conditionEvent, Func targetIdOf) void
+        +Dispose() void
+    }
+    class QuestRuntime {
+        -ConditionTracker m_tracker
+        -IQuestRewardSink m_rewardSink
+        +Accept(int questId) QuestActionResult
+        +Submit(int questId) QuestActionResult
+        -OnConditionMet(int conditionKey, ConditionProgress progress) void
+    }
+    class IQuestRewardSink {
+        <<interface>>
+        +Grant(int questId, QuestReward reward) void
+    }
+    class QuestActionResult {
+        <<struct>>
+        +Ok bool
+        +Reason string
+    }
+    IConditionProgressStore <|.. InMemoryConditionProgressStore : 实现
+    ConditionTracker *-- IConditionProgressStore : 私有字段 m_store
+    ConditionTracker *-- ConditionDef : 登记表的值
+    ConditionTracker ..> ConditionProgress : Notify 里钳位后写回
+    ConditionEventBridge *-- ConditionTracker : 只依赖它 不认识任务
+    ConditionEventBridge ..> EventCenter : AddEventListener 与 RemoveEventListener
+    QuestRuntime *-- ConditionTracker : 订阅两个通知
+    QuestRuntime *-- IQuestRewardSink : 私有字段 m_rewardSink
+    QuestRuntime ..> EventCenter : 广播 Accepted 与 Completed 等
+```
+
+**看图时最容易画错的 6 处**
+
+| # | 容易画错 | 事实 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 把 `ConditionDef` / `ConditionProgress` 画成 `class` | 都是 **`readonly struct`**（`QuestActionResult` 也是） | `ConditionDef.cs:61`、`ConditionProgress.cs:55`、`QuestTypes.cs:48` |
+| 2 | 在 `ConditionTracker` 里画一个「已达成」标志位 | **没有标志位**：钳位让判定退化成 `!before.IsMet && after.IsMet` | `ConditionProgress.cs:66`~`:73`、`ConditionTracker.cs:336`~`:346` |
+| 3 | 把 `ConditionTracker` 画成认识 `EventCenter` | 它在共享层，只暴露 C# 事件（`Notify` 也只收朴素三参数） | `ConditionTracker.cs:97`、`:109`、`:271`、`ConditionEventBridge.cs:111` |
+| 4 | 把桥画成写死的 `switch` | `Bind<T>` 是**注册映射**：`payload => m_tracker.Notify(...)` | `ConditionEventBridge.cs:84`、`:111`~`:115` |
+| 5 | 把 `Notify` 画成「边遍历边回调」 | 它是**两段式**：先读+写进度并收集 `changed` / `completed`，**再**派发 | `ConditionTracker.cs:301`~`:307`、`:354`~`:375` |
+| 6 | 把 `QuestRuntime` 画成「条件一满就自动发奖」 | `OnConditionMet` 只把状态改成 `Completed` 并广播，**发奖要玩家 `Submit`** | `QuestRuntime.cs:452`~`:456`、`:261`、`:299` |
+
+⚠️ 一处**未读到**：`EConditionEvent` 的 `ConditionEvents.Count = 5`（`EConditionEvent.cs:90`），但只在 `KeyOf` / `Describe` 里读到 `KillMonster` / `CollectItem` / `ReachArea` 三个成员（`:123`~`:125`、`:139`~`:141`），图上只画了这三个。
+
+**从 `EventCenter` 到「奖励真的发下去」的数据流**：
+
+```mermaid
+flowchart TD
+    A["EventCenter.Instance.Trigger 例如 BattleEvents.MonsterDied"] --> C["ConditionTracker.Notify(conditionEvent, targetIdOf(payload), 1)"]
+    C --> E["遍历 m_registered 只读与写进度"]
+    E --> F{"def.Matches(eventType, targetId)"}
+    F -->|"不匹配"| E
+    F -->|"匹配"| G{"before 大于等于 RequiredCount"}
+    G -->|"已经达成 不再累计"| E
+    G -->|"还没满"| H["new ConditionProgress(before 加 count, RequiredCount) 构造里钳位"]
+    H --> J{"after.IsMet"}
+    J -->|"否"| E
+    J -->|"是"| K["completed.Add 收集 正好达成的"]
+    K --> E
+    E --> L["第二段派发 先全部 ProgressChanged 再全部 ConditionMet"]
+    L --> N["RaiseConditionMet 逐个触发 ConditionMet 事件"]
+    N --> O["QuestRuntime.OnConditionMet 查 m_ownerOfCondition"]
+    O --> P["StateOf 等于 Accepted 且 AreAllConditionsMet"]
+    P --> Q["m_states 改成 Completed 广播 QuestEvents.Completed"]
+    Q --> R["玩家点交付 QuestRuntime.Submit(questId)"]
+    R --> T["先查 Reward 表 查不到就整体不交付 再 m_rewardSink.Grant"]
+```
+
+**面试版怎么讲（4 句）**
+
+- 「任务拆两层：**条件系统只管「做到了没有」**（`ConditionTracker`：注册定义 → `Notify` 喂事件 → 钳位 → 达成回调一次），**任务系统只管「该不该发奖」**（`QuestRuntime`：`Accept` / `Submit` / 发奖）。M4 的成就与任务共用中间那层，唯一差别是 `Register` 的第三个参数 `resetProgress`（任务 `true`、成就 `false`）。」
+- 「条件系统住**共享层**，因为 M4 服务端要**重新校验**任务进度：客户端说自己打了 3 只不算数。代价是不许碰 `UnityEngine`、不许有浮点、不许用事件中心，所以只能暴露朴素的 `Notify(事件类型, 目标, 次数)` —— 『怎么从游戏事件翻译过来』就落成客户端那座 `ConditionEventBridge`。」
+- 「三个语义是写死的：① 进度**钳位**，于是『达成只回调一次』**不需要标志位**；② `Register(resetProgress: false)` 且注册时已达成要**当场回调**，否则成就要等玩家再打一只；③ 一次 `Notify` 只认『派发开始那一刻』的登记表（先收集、后派发）。」
+- 「`Accept` 与 `Submit` 都是**全有或全无**：`Accept` 先解析全部条件再统一登记（否则留下「UI 看不见、后台却在涨进度」的半接取任务），`Submit` 先查奖励表再改状态（否则玩家处于『任务没了、奖励也没到』）。」

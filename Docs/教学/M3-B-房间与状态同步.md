@@ -329,3 +329,123 @@ Unity 里打开 `Tools/NBC/网络/网络调试窗口` → 「连接」→「加�
 > 但**凡是影响数值的东西都必须由服务端持有**：真要做地形阻挡，我会给服务端**导出一份简化的几何数据**，
 > 而不是让客户端上报碰撞结果（那样就变成"客户端权威"，等于把作弊的门打开）。
 
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+**这张图解决什么问题**：M3-B 只有两件事 ——「房间里谁在」与「世界里现在是什么样」。源码把它们拆成三层
+（纯规则的 `RoomRegistry`、接线的 `RoomService`、权威世界的 `RoomBattleService` + `DungeonBattle`），
+客户端那侧**只有一份只读副本** `SnapshotView`。最容易画错的是把 `Room` 画成持有 `DungeonBattle`
+（对应关系其实在 `RoomBattleService.cs:85` 那个以 `RoomId` 为键的字典里），以及把客户端画成「有自己那份世界」。
+
+```mermaid
+classDiagram
+    class RoomRegistry {
+        -Dictionary~string, Room~ _rooms
+        +Create(int dungeonId) Room
+        +Join(ClientSession session, string playerName, string requestedRoomId, int dungeonId) RoomJoinResult
+        +Leave(ClientSession session) Room
+    }
+    class Room {
+        -List~RoomSeat~ _seats
+        +RoomId string
+        +Add(ClientSession session, string playerName) RoomSeat
+        +Remove(ClientSession session) bool
+    }
+    class RoomSeat {
+        +Session ClientSession
+        +IsHost bool
+    }
+    class RoomService {
+        -RoomRegistry _registry
+        +RegisterHandlers(ServerMessageRouter router) void
+        +BroadcastState(Room room) int
+    }
+    class RoomBattleService {
+        -RoomRegistry _registry
+        -Dictionary~string, DungeonBattle~ _battles
+        +InputFreshTicks int
+        +Tick() void
+        -ReconcileHeroes(DungeonBattle battle, Room room) void
+        -ApplyInputs(DungeonBattle battle, Room room) void
+        -BroadcastCombatEvents(DungeonBattle battle, Room room) int
+        -BroadcastSnapshot(DungeonBattle battle, Room room) int
+    }
+    class DungeonBattle {
+        -List~BattleEntity~ _entities
+        +Tick long
+        +Step() void
+        +ToSnapshot() WorldSnapshot
+    }
+    class BattleEntity {
+        +Id int
+        +Kind int
+        +PlayerId long
+        +Hp int
+    }
+    class NetSession {
+        -SnapshotView m_world
+        +PlayerId long
+        +World SnapshotView
+    }
+    class SnapshotView {
+        -List~EntitySnapshot~ m_entities
+        +ServerTick long
+        +StaleIgnored long
+        +Apply(WorldSnapshot snapshot) bool
+    }
+    class ServerEventBridge {
+        -NetSession m_session
+        +Dispose() void
+    }
+    RoomRegistry *-- Room : 房间表持有房间
+    Room *-- RoomSeat : 席位表按进房顺序
+    RoomSeat --> ClientSession : 席位上有会话
+    RoomService *-- RoomRegistry : 只读房间规则
+    RoomBattleService *-- RoomRegistry : 遍历房间
+    RoomBattleService *-- DungeonBattle : 一个房号一个世界
+    DungeonBattle *-- BattleEntity : 世界持有单位
+    NetSession *-- SnapshotView : 客户端唯一的世界来源
+    NetSession ..> ServerEventBridge : 伤害 死亡 掉落事件转出去
+    ServerEventBridge ..> EventCenter : 转发成游戏事件
+```
+
+**看图时最容易画错的 6 处**
+
+| # | 容易画错 | 事实 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 把 `Room` 画成持有 `DungeonBattle` | 对应关系在 `_battles`（键 `RoomId`），`Room` 只认 `DungeonId` | `RoomBattleService.cs:85`、`:203`~`:218`、`RoomRegistry.cs:80` |
+| 2 | 把 `RoomService` 画成装规则的 | 规则全在 `RoomRegistry`；它只注册处理器、整份广播、断线退房 | `RoomService.cs:80`~`:89`、`:96`~`:112`、`:66` |
+| 3 | 把英雄与怪画成两个类 | 只有一个 `BattleEntity`，`Kind`（0 英雄 / 1 怪）+ `PlayerId`（0 = 无主）区分 | `DungeonBattle.cs:50`、`:58`~`:65` |
+| 4 | 把「补/删英雄」画在 `Room.Add` / `Remove` 上 | 它在**每帧幂等**的 `ReconcileHeroes` 里：缺的补、走的删 | `RoomBattleService.cs:236`、`:239`~`:274` |
+| 5 | 把快照画成「每人算一份」 | `ToSnapshot().ToByteArray()` **只做一次**，同一份 `byte[]` 发每个席位 | `RoomBattleService.cs:437`、`:416`~`:429` |
+| 6 | 漏掉 `SnapshotView.Apply` 的「旧快照直接丢」 | `ServerTick <= ServerTick` 时 `StaleIgnored++` 并 `return false`，**不覆盖** | `SnapshotView.cs:110`~`:115` |
+
+**一个 30Hz 逻辑帧里服务端做的 6 件事**，以及客户端收到快照后的**覆盖式更新**：
+
+```mermaid
+flowchart TD
+    A["Tick 每逻辑帧一次"] --> C["EnsureBattle(room) 第一次按 DungeonId 建世界"]
+    C --> D["ReconcileHeroes 缺的补 走的删 幂等"]
+    D --> E["ApplyInputs 只留最新一条 超过 InputFreshTicks 当没按"]
+    E --> F["DungeonBattle.Step 实体推进 再 BossBrain.Think"]
+    F --> G["BroadcastCombatEvents 先 DamageEvent 再 DeathEvent"]
+    G --> H["BroadcastDrops CopyPendingDrops 后清空"]
+    H --> I["BroadcastSnapshot ToSnapshot 与 ToByteArray 只做一次"]
+    I --> J["SendToRoom 同一份 byte 数组发房里每个席位"]
+    J --> K["NetSession 解出 Snapshot 后 HandleSnapshot"]
+    K --> L["SnapshotView.Apply 先判 ServerTick 是不是旧的"]
+    L -->|"旧快照"| M["StaleIgnored 加一 直接丢弃 画面不倒退"]
+    L -->|"新快照"| N["m_entities.Clear() 后整份复制 覆盖式"]
+    J --> P["同一帧的伤害 死亡 掉落事件"]
+    P --> R["ServerEventBridge 转成 EventCenter 的 DamageDealt 与 MonsterDied 与 ItemDropped"]
+    R --> S["ConditionEventBridge 再喂给 ConditionTracker 联机打死怪任务进度会涨"]
+```
+
+**面试版怎么讲（4 句）**
+
+- 「服务端三层：`RoomRegistry`（纯逻辑，判据是**里面出现 `Send` 就是放错了地方**）、`RoomService`（注册进房/离房、整份广播席位表、`SessionClosed` 自动退房）、`RoomBattleService` + `DungeonBattle`（权威世界）。」
+- 「每逻辑帧六件事，**顺序是契约**：`ReconcileHeroes` → `ApplyInputs` → `Step` → `BroadcastCombatEvents` → `BroadcastDrops` → `BroadcastSnapshot`；对齐必须在吃输入之前，否则**刚进房那一帧的输入会静默丢掉**（`RoomBattleService.cs:15`、`:184`~`:189`）。」
+- 「三路广播共用 `SendToRoom`：`ToByteArray()` **只做一次**、同一份 `byte[]` 发给全房 ——『每 tick 全量』说的是内容完整，**不是每人算一遍**（`RoomBattleService.cs:408`~`:416`）。」
+- 「客户端只有 `SnapshotView`：`Apply` 是**覆盖式**（先 `Clear` 再整份复制），`ServerTick` 不比当前新的**旧快照直接丢弃**；M4-S1 之后 `ServerEventBridge` 把 `NetSession` 的伤害/死亡/掉落事件接进了 `EventCenter`，于是**联机打死怪任务进度会涨**，而任务模块依旧不认识网络（`ServerEventBridge.cs:19`~`:21`、`:87`~`:89`）。」
+
