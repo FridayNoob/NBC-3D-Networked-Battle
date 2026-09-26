@@ -143,4 +143,5 @@ Select-String -Path 'Client\Logs\unity-batch-compile.log' -Pattern 'error CS|Scr
 > 编译类问题我只做两件事：**先读报错原文**（`CS0012` 会点名程序集，`CS0246` 不会），
 > **再判断是"代码问题"还是"程序集边界问题"** —— 我们有一个把全部源码编进单程序集的编译闸门，
 > 所以"闸门绿、Unity 红"就一定是**边界**问题，而 Unity 的 asmdef **引用不传递**，
-> 每个程序集必须显式引用它直接用到的东西。现在我还能用 `Unity -batchmode` 真编一遍来兜底。
+> 每个程序集必须显式引用它直接用到的东西。兜底的办法是**在 Unity 里真编一遍**
+> （要人手做；也可以自己用 `Unity -batchmode` 在命令行编，命令见 §五）。
