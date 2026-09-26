@@ -102,7 +102,7 @@ namespace NBC.Game.GameFlow
         public BattleSession(QuestConfig quests, QuestConditionConfig conditions, RewardConfig rewards,
                              MonsterConfig monsters, HeroConfig heroes, SkillConfig skills,
                              int heroId, IQuestRewardSink rewardSink)
-            : this(quests, conditions, rewards, monsters, heroes, skills, null, heroId, rewardSink)
+            : this(quests, conditions, rewards, monsters, heroes, skills, null, heroId, rewardSink, null)
         {
         }
 
@@ -123,7 +123,7 @@ namespace NBC.Game.GameFlow
         public BattleSession(QuestConfig quests, QuestConditionConfig conditions, RewardConfig rewards,
                              MonsterConfig monsters, HeroConfig heroes, SkillConfig skills,
                              AchievementConfig achievements,
-                             int heroId, IQuestRewardSink rewardSink)
+                             int heroId, IQuestRewardSink rewardSink, IRewardLedger rewardLedger)
         {
             // -------- ① 造依赖（顺序就是依赖顺序） --------
             m_world = new BattleWorld(monsters, heroes, skills);
@@ -139,9 +139,13 @@ namespace NBC.Game.GameFlow
             // ⚠️ 顺序：成就必须在**桥接线之前**造好。成就是"构造即登记全部条件"，
             //    而桥一旦开始喂事件，还没登记的条件就会被漏掉 —— 这个洞很隐蔽
             //    （表现是"成就好像少算了前几只怪"）。
+            // ⚠️ 台账：`null` 时给一个内存版（**单机/演示够用**）。
+            //    接了持久化就必须传持久化实现 —— 否则"重启不重复发奖"是假的
+            //    （`InMemoryRewardLedger` 的文件头写明了这一点）。
             m_achievements = achievements == null
                 ? null
-                : new AchievementRuntime(achievements, conditions, rewards, m_conditions, rewardSink);
+                : new AchievementRuntime(achievements, conditions, rewards, m_conditions, rewardSink,
+                                         rewardLedger ?? new InMemoryRewardLedger());
 
             m_caster = new SkillCaster(m_world, m_hero.InstanceId);
 
@@ -186,8 +190,15 @@ namespace NBC.Game.GameFlow
         /// </summary>
         /// <param name="heroId">玩家用哪个英雄。</param>
         /// <param name="rewardSink">发奖实现。</param>
+        /// <param name="rewardLedger">
+        /// 已发奖励台账。**传 null 表示用内存版**。
+        /// <para>⚠️ 客户端这一侧**暂时只能是内存版**：进度还在本地（M4-S3 只做了服务端数据层），
+        /// 所以"跨进程不重复发奖"在这里本来就不成立。等成就挪到服务端权威时，
+        /// 这里必须换成持久化实现 —— `InMemoryRewardLedger` 的文件头写明了它的边界。</para>
+        /// </param>
         /// <returns>装配好的一局。</returns>
-        public static BattleSession FromConfigMgr(int heroId, IQuestRewardSink rewardSink)
+        public static BattleSession FromConfigMgr(int heroId, IQuestRewardSink rewardSink,
+                                                 IRewardLedger rewardLedger = null)
         {
             AchievementConfig achievements;
             ConfigMgr.Instance.TryGet<AchievementConfig>(out achievements);
@@ -201,7 +212,8 @@ namespace NBC.Game.GameFlow
                 ConfigMgr.Instance.Get<SkillConfig>(),
                 achievements,
                 heroId,
-                rewardSink);
+                rewardSink,
+                rewardLedger);
         }
 
         /// <summary>任务运行时（UI 要接它的状态与事件）。</summary>

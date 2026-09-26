@@ -82,6 +82,15 @@ namespace NBC.Game.Achievement
         private readonly ConditionTracker m_tracker;
 
         /// <summary>
+        /// 已发奖励台账（**必填**，见下面那条"为什么必填"）。
+        /// <para>⚠️ 它防的是"重启后把已完成的成就再发一遍奖"（`Docs\27` §11.5）。
+        /// 做成**必填**而不是给默认值，是为了让"我没接台账"变成**编译期就看得见**的决定 ——
+        /// 给个 `InMemoryRewardLedger` 默认值看起来更友好，但那会让"服务端重启重复发奖"
+        /// 这个 bug **静默地**留在代码里（而它只在重启时才出现）。</para>
+        /// </summary>
+        private readonly IRewardLedger m_ledger;
+
+        /// <summary>
         /// 发奖的地方。
         /// <para>⚠️ 类型名叫 `IQuestRewardSink`（历史遗留，见那个文件头）：它本质是一道
         /// **通用的"奖励接缝"**，成就是第二个使用者。这里刻意**不新建一个同形状的接口** ——
@@ -112,10 +121,12 @@ namespace NBC.Game.Achievement
         /// <param name="rewards">奖励表（不能为 null）。</param>
         /// <param name="tracker">条件系统（不能为 null；**应当与任务用的是同一个**）。</param>
         /// <param name="rewardSink">发奖的地方（不能为 null）。</param>
+        /// <param name="ledger">已发奖励台账（不能为 null；见字段上那条"为什么必填"）。</param>
         /// <exception cref="ArgumentNullException">有参数为 null。</exception>
         /// <exception cref="InvalidOperationException">配置有错（缺条件行 / 条件解析失败 / 缺奖励行 / 两个成就抢同一条条件）。</exception>
         public AchievementRuntime(AchievementConfig achievements, QuestConditionConfig conditions,
-                                  RewardConfig rewards, ConditionTracker tracker, IQuestRewardSink rewardSink)
+                                  RewardConfig rewards, ConditionTracker tracker, IQuestRewardSink rewardSink,
+                                  IRewardLedger ledger)
         {
             if (achievements == null) { throw new ArgumentNullException(nameof(achievements), "[AchievementRuntime] 成就表是 null。"); }
             if (conditions == null) { throw new ArgumentNullException(nameof(conditions), "[AchievementRuntime] 条件表是 null。"); }
@@ -131,11 +142,20 @@ namespace NBC.Game.Achievement
                 throw new ArgumentNullException(nameof(rewardSink), "[AchievementRuntime] 发奖实现是 null。");
             }
 
+            if (ledger == null)
+            {
+                throw new ArgumentNullException(nameof(ledger),
+                    "[AchievementRuntime] 台账是 null。\n" +
+                    "它防的是「重启后重复发奖」（持久化之后必然发生的那个 bug）。\n" +
+                    "单机/测试里传 `new InMemoryRewardLedger()`；接了数据库就传持久化实现。");
+            }
+
             m_achievements = achievements;
             m_conditions = conditions;
             m_rewards = rewards;
             m_tracker = tracker;
             m_rewardSink = rewardSink;
+            m_ledger = ledger;
 
             // 订阅必须在登记**之前** —— 因为 `resetProgress: false` 的登记会当场回调（见类头）。
             m_tracker.ProgressChanged += OnConditionProgressChanged;
@@ -539,6 +559,26 @@ namespace NBC.Game.Achievement
                 return;
             }
 
+            // ---- ⚠️ 台账守卫：**发过就不再发**（`Docs\27` §11.5）----
+            // 走到这里有两种情况，必须分开处理：
+            //   ① 这一局真的刚达成 → 该发奖
+            //   ② **重启后**从持久化进度里读回"早就达成了" → 该点亮成就，**但不该再发奖**
+            // 判别依据就是台账。
+            if (m_ledger.HasGranted(ERewardOwnerKind.Achievement, row.id))
+            {
+                // ⚠️ **仍然要标记成已解锁**：玩家看到的状态必须是"解锁了"（那是对的），
+                //    不发的只是奖励。而**刻意不广播 `Unlocked`** ——
+                //    那是"刚刚解锁"的庆祝信号，重启时重放一遍会让玩家以为又拿了一次。
+                //    ⇒ "**恢复状态**"与"**发生事件**"是两件事（同 M3-B：移动是状态、动作是事件）。
+                if (m_unlocked.Add(row.id))
+                {
+                    m_unlockedOrder.Add(row.id);
+                }
+
+                m_lastProblem = null;
+                return;
+            }
+
             m_unlocked.Add(row.id);
             m_unlockedOrder.Add(row.id);
             m_lastProblem = null;
@@ -551,6 +591,12 @@ namespace NBC.Game.Achievement
             //    而发奖可能触发订阅方（比如背包满、UI 弹窗）再反过来查"这个成就解锁了吗"——
             //    那时必须已经是"已解锁"。
             m_rewardSink.Grant(row.id, reward);
+
+            // ⚠️ 顺序：**先发奖、再记账**。
+            //    反过来的话，`Grant` 抛异常就变成"记了账但没发" ⇒ 玩家**永远拿不到**。
+            //    现在这个顺序最坏是"发了但没记上" ⇒ 下次重启会**补发一次**（多给，不少给）。
+            //    两个方向都不完美，但**少给玩家**比多给更糟（而且多给还能从日志查出来）。
+            m_ledger.MarkGranted(ERewardOwnerKind.Achievement, row.id, reward.RewardId);
 
             EventCenter.Instance.Trigger(AchievementEvents.Unlocked,
                 new AchievementUnlockedPayload(row.id, reward.RewardId));

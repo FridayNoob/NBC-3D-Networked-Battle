@@ -59,6 +59,14 @@ namespace NBC.Tests.EditMode
         /// <summary>发奖实现（内存版）。</summary>
         private InMemoryQuestRewardSink m_sink;
 
+        /// <summary>
+        /// 已发奖励台账（内存版）。
+        /// <para>⚠️ 用**同一个**实例跨"两次构造"传下去，就是模拟"进程重启"：
+        /// 内存版在这一组测试里是够的 —— 我们要验的是**台账的判定逻辑**，
+        /// 不是"台账本身能不能活过重启"（那是持久化实现的事）。</para>
+        /// </summary>
+        private InMemoryRewardLedger m_ledger;
+
         /// <summary>被测对象。</summary>
         private AchievementRuntime m_runtime;
 
@@ -80,6 +88,7 @@ namespace NBC.Tests.EditMode
             m_store = new InMemoryConditionProgressStore();
             m_tracker = new ConditionTracker(m_store);
             m_sink = new InMemoryQuestRewardSink();
+            m_ledger = new InMemoryRewardLedger();
 
             BuildTables();
 
@@ -239,7 +248,7 @@ namespace NBC.Tests.EditMode
             m_achievements.rows = new List<Config_Achievement>(rows);
             m_achievements.RebuildIndex();
 
-            m_runtime = new AchievementRuntime(m_achievements, m_conditions, m_rewards, m_tracker, m_sink);
+            m_runtime = new AchievementRuntime(m_achievements, m_conditions, m_rewards, m_tracker, m_sink, m_ledger);
             return m_runtime;
         }
 
@@ -508,6 +517,139 @@ namespace NBC.Tests.EditMode
                 CreateRuntime(AchievementRow(9001, "空条件", new int[0], 5001)));
 
             StringAssert.Contains("一条条件都没有", error.Message);
+        }
+
+        // ====================================================================
+        //  ⑤之二 台账：**重启之后不再重复发奖**（M4-S3 的核心）
+        // ====================================================================
+
+        /// <summary>
+        /// **先证明 bug 是真的**：不带台账（每次都给一个新台账 = 每次都像"全新进程"），
+        /// 同一个"已达成"的进度会让成就**重复发奖** —— 这正是"进度一旦落库、
+        /// 服务端每重启一次就再发一遍奖"那条（`Docs\\27` §11.5）。
+        /// <para>⚠️ 这条不是可有可无的：**如果它不红，说明 bug 不存在，</para>
+        /// 那下面那条"带台账就不重复发"的用例就是**假绿**。
+        /// 先有阳性对照，阴性对照才算数（本项目的规矩）。</para>
+        /// </summary>
+        [Test]
+        public void WithoutLedger_AlreadyMetProgress_GrantsAgainOnEveryStartup()
+        {
+            // 模拟"上次已经打够了"
+            m_store.SetProgress(4009, 2);
+
+            // 第 1 次启动
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+            Assert.AreEqual(1, m_sink.GrantCount, "第一次启动该发一次奖");
+            m_runtime.Dispose();
+
+            // 第 2 次启动：**换一个全新的内存台账**（模拟"没接持久化台账"）
+            m_ledger = new InMemoryRewardLedger();
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+
+            Assert.AreEqual(2, m_sink.GrantCount,
+                "⚠️ 没有持久化台账时，重启会**再发一次** —— 这就是本片要修的那个 bug（阳性对照）");
+            Assert.IsTrue(m_runtime.IsUnlocked(9001), "并且它确实是解锁状态");
+        }
+
+        /// <summary>
+        /// **修好了**：台账说"发过了" → 重启后**点亮但不重发**。
+        /// <para>⚠️ 判据是"生成状态对 + 奖励不重复"，两条都要：
+        /// 只看"没重复发"会漏掉"成就显示成没解锁"（那是另一种错）。</para>
+        /// </summary>
+        [Test]
+        public void WithLedger_AlreadyMetProgress_MarksUnlockedButDoesNotPayAgain()
+        {
+            m_store.SetProgress(4009, 2);
+
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+            Assert.AreEqual(1, m_sink.GrantCount, "第一次启动该发一次奖");
+            m_runtime.Dispose();
+
+            // 第 2 次启动：**台账还是同一个**（模拟"从库里读回了台账"）
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+
+            Assert.AreEqual(1, m_sink.GrantCount, "有台账时**不该**再发一次");
+            Assert.IsTrue(m_runtime.IsUnlocked(9001), "但状态必须仍然是**已解锁**（玩家看到的是对的）");
+        }
+
+        /// <summary>
+        /// **恢复状态 ≠ 发生事件**：重启时不能重放"刚解锁"的庆祝信号。
+        /// <para>否则玩家每次上线都看到一次"🏆 成就解锁"。</para>
+        /// </summary>
+        [Test]
+        public void WithLedger_RestoredUnlock_DoesNotReplayUnlockEvent()
+        {
+            m_store.SetProgress(4009, 2);
+
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+            m_received.Clear();     // 只看"第二次启动"期间发生了什么
+            m_runtime.Dispose();
+
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+
+            for (int i = 0; i < m_received.Count; i++)
+            {
+                Assert.IsFalse(m_received[i].StartsWith("unlocked:"),
+                    "重启时重放了「刚解锁」事件：" + m_received[i]);
+            }
+
+            Assert.IsTrue(m_runtime.IsUnlocked(9001), "状态还是要恢复成已解锁");
+        }
+
+        /// <summary>
+        /// **崩溃在中间能自愈**：进度说"已达成"、台账说"没发过" → **应当补发**。
+        /// <para>这条是台账的第二个好处（也是它比"按次数记账"更好的地方）：
+        /// "进度落库"与"发奖"是两步，中间崩了不会**少给**玩家。</para>
+        /// </summary>
+        [Test]
+        public void WithLedger_MetButNeverGranted_PaysOnRecovery()
+        {
+            // 进度已达成，但台账里**没有**记录（模拟"上次落完进度就崩了，奖还没发"）
+            m_store.SetProgress(4009, 2);
+            Assert.IsFalse(m_ledger.HasGranted(ERewardOwnerKind.Achievement, 9001), "前置：台账里本来没有");
+
+            CreateRuntime(AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001));
+
+            Assert.AreEqual(1, m_sink.GrantCount, "欠玩家的那一次要补上");
+            Assert.IsTrue(m_ledger.HasGranted(ERewardOwnerKind.Achievement, 9001), "补发之后要记账");
+        }
+
+        /// <summary>台账是**必填**的：传 null 要当场报错（而不是静默退回"会重复发奖"的行为）。</summary>
+        [Test]
+        public void NullLedger_Throws()
+        {
+            m_achievements.rows = new List<Config_Achievement>
+            {
+                AchievementRow(9001, "初出茅庐", new[] { 4009 }, 5001)
+            };
+            m_achievements.RebuildIndex();
+
+            ArgumentNullException error = Assert.Throws<ArgumentNullException>(() =>
+                new AchievementRuntime(m_achievements, m_conditions, m_rewards, m_tracker, m_sink, null));
+
+            StringAssert.Contains("台账", error.Message);
+        }
+
+        /// <summary>台账**幂等**：同一个成就重复记账不会变成两条。</summary>
+        [Test]
+        public void Ledger_MarkGranted_IsIdempotent()
+        {
+            m_ledger.MarkGranted(ERewardOwnerKind.Achievement, 9001, 5001);
+            m_ledger.MarkGranted(ERewardOwnerKind.Achievement, 9001, 5001);
+            m_ledger.MarkGranted(ERewardOwnerKind.Achievement, 9001, 5001);
+
+            Assert.AreEqual(1, m_ledger.Count, "重复记账只算一笔");
+        }
+
+        /// <summary>**任务与成就的台账互不干扰**（同一个编号在两个种类下是两回事）。</summary>
+        [Test]
+        public void Ledger_SeparatesQuestAndAchievement()
+        {
+            m_ledger.MarkGranted(ERewardOwnerKind.Achievement, 9001, 5001);
+
+            Assert.IsTrue(m_ledger.HasGranted(ERewardOwnerKind.Achievement, 9001), "成就有记录");
+            Assert.IsFalse(m_ledger.HasGranted(ERewardOwnerKind.Quest, 9001),
+                "同编号的**任务**不该被算成发过（编号空间是分开的）");
         }
 
         // ====================================================================
