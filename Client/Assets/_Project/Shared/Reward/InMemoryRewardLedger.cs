@@ -26,7 +26,7 @@
 
 using System.Collections.Generic;
 
-namespace NBC.Game.Quest
+namespace NBC.Shared.Reward
 {
     /// <summary>内存版台账（**跨进程不管用**，见文件头）。</summary>
     public sealed class InMemoryRewardLedger : IRewardLedger

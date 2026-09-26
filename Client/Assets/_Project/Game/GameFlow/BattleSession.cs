@@ -49,6 +49,7 @@ using NBC.Game.Config;
 using NBC.Game.Quest;
 using NBC.Game.World;
 using NBC.Shared.Condition;
+using NBC.Shared.Reward;
 
 namespace NBC.Game.GameFlow
 {

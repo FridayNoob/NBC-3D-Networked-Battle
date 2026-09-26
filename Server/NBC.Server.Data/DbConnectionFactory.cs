@@ -215,8 +215,8 @@ namespace NBC.Server.Data
     {
         /// <summary>造一个。</summary>
         /// <param name="message">人话（已含"该怎么办"）。</param>
-        /// <param name="inner">原始异常（**不吞掉证据**）。</param>
-        public DatabaseUnavailableException(string message, Exception inner)
+        /// <param name="inner">原始异常（**不吞掉证据**；没有底层异常时可为 null）。</param>
+        public DatabaseUnavailableException(string message, Exception? inner)
             : base(message, inner)
         {
         }

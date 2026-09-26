@@ -63,6 +63,7 @@ using NBC.Framework;
 using NBC.Game.Config;
 using NBC.Game.Quest;
 using NBC.Shared.Condition;
+using NBC.Shared.Reward;
 
 namespace NBC.Game.Achievement
 {

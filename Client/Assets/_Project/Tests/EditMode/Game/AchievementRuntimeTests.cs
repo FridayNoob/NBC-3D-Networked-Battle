@@ -33,6 +33,7 @@ using NBC.Game.Achievement;
 using NBC.Game.Config;
 using NBC.Game.Quest;
 using NBC.Shared.Condition;
+using NBC.Shared.Reward;
 using NUnit.Framework;
 using UnityEngine;
 
