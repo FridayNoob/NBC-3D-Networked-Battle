@@ -8,6 +8,7 @@
         "NBC.Game",
         "NBC.Model",
         "NBC.Protocol",
+        "NBC.Shared",
         "NBC.Boot",
         "Unity.TextMeshPro"
     ],

@@ -27,6 +27,20 @@
 //  · 引擎/包程序集**真实名字**与命名空间的对应关系靠下面那张表维护（不够就加一行）
 //
 //  ---------------------------------------------------------------------------
+//  ⚠️ 2026-09-26：它**漏过一条真实的编译错误**（老实现按"命名空间全名"精确匹配）
+//  ---------------------------------------------------------------------------
+//  我在 `NBC.Editor\NetDebugWindow.cs` 里加了 `using NBC.Shared.Condition;`（M4-S1 的任务条件区），
+//  但 `NBC.Editor.asmdef` 没引 `NBC.Shared` ⇒ **Unity 报两个编译错误**（CS0234 + CS0246）。
+//  本守卫当时**没红**，因为它的表是**按命名空间全名精确匹配**的，而表里只有 `NBC.Shared`、
+//  没有 `NBC.Shared.Condition` ⇒ 查不到 ⇒ **静默跳过**。
+//
+//  根子不是"少写了一行表"，而是**判据写窄了**：子命名空间每加一个就得记得补一行。
+//  已改成**最长前缀匹配**（`NBC.Shared.Condition` → 归 `NBC.Shared` 那一条），
+//  于是"忘了给子命名空间加行"这一整类漏检**一次消失**。
+//  ⚠️ 同时它解释了另一条老规律为什么必须留着：**闸门绿 ≠ Unity 绿** ——
+//  `Server\_api-probe` 把所有代码编进**一个**程序集，看不到程序集边界。
+//
+//  ---------------------------------------------------------------------------
 //  ⚠️ 老规矩：机械检查必须带**阳性对照**，而且**要剥注释**
 //  ---------------------------------------------------------------------------
 //  "机械检查命中注释"本项目管理史上栽过 6 次，所以这里：
@@ -108,9 +122,9 @@ namespace NBC.Tests.EditMode
                 {
                     string required;
 
-                    if (!NamespaceToAssembly.TryGetValue(used[u], out required))
+                    if (!TryResolveRequiredAssembly(used[u], out required))
                     {
-                        continue;   // 表里没有的命名空间（BCL、引擎模块…）不管
+                        continue;   // 表里没有这个（根）命名空间（BCL、引擎模块…）不管
                     }
 
                     // ⚠️ 自己程序集里的命名空间不用"引用自己"
@@ -164,6 +178,22 @@ namespace NBC.Tests.EditMode
             Assert.IsTrue(NeedsReference("using NBC.Framework.Net.Adapter;", "NBC.Boot",
                 new List<string> { "NBC.Framework", "NBC.Shared" }),
                 "用了 TcpTransport（适配层）却只引了 NBC.Framework —— 应当被检出");
+
+            // ★ 2026-09-26 真实漏检的那一条：**子命名空间**
+            //   （`NBC.Editor` 用了 `NBC.Shared.Condition` 却没引 `NBC.Shared` → Unity 报两个编译错误，
+            //     而按全名精确匹配的旧实现**静默跳过**了它）
+            Assert.IsTrue(NeedsReference("using NBC.Shared.Condition;", "NBC.Editor",
+                new List<string> { "NBC.Game", "NBC.Protocol", "NBC.Boot" }),
+                "子命名空间也要按它所属的程序集检查 —— 这正是 2026-09-26 漏检的那一条");
+
+            // 负向：引了所属程序集就不该报
+            Assert.IsFalse(NeedsReference("using NBC.Shared.Condition;", "NBC.Editor",
+                new List<string> { "NBC.Shared" }), "引了 NBC.Shared 就不该报");
+
+            // 最长前缀：适配层的子命名空间不能被更短的 `NBC.Framework.Asset` 抢走
+            Assert.IsTrue(NeedsReference("using NBC.Framework.Asset.Adapter;", "NBC.Boot",
+                new List<string> { "NBC.Framework" }),
+                "`NBC.Framework.Asset.Adapter` 归适配层程序集（最长前缀），只引 NBC.Framework 应当被检出");
         }
 
         // ====================================================================
@@ -187,7 +217,7 @@ namespace NBC.Tests.EditMode
 
             string required;
 
-            if (!NamespaceToAssembly.TryGetValue(match.Groups[1].Value, out required))
+            if (!TryResolveRequiredAssembly(match.Groups[1].Value, out required))
             {
                 return false;
             }
@@ -198,6 +228,39 @@ namespace NBC.Tests.EditMode
             }
 
             return !references.Contains(required);
+        }
+
+        /// <summary>
+        /// 这个命名空间（**含子命名空间**）需要引用哪个程序集？—— **最长前缀匹配**。
+        /// <para>⚠️ 2026-09-26 实测的洞：老实现按**命名空间全名精确匹配**，于是
+        /// `using NBC.Shared.Condition;` 在表里找不到 ⇒ **静默跳过** ⇒
+        /// `NBC.Editor` 少引 `NBC.Shared` 时本守卫不红，直到 Unity 报两个编译错误才暴露。
+        /// 根子是判据写窄了（每加一个子命名空间就得记得补一行表）；
+        /// 改成前缀匹配后，**这一整类漏检一次消失**。</para>
+        /// <para>最长（而不是任意）匹配是必须的：`NBC.Framework.Asset.Adapter` 归适配层程序集，
+        /// 不能被更短的 `NBC.Framework.Asset` 抢走。</para>
+        /// </summary>
+        /// <param name="ns">源码里 `using` 的命名空间。</param>
+        /// <param name="required">需要引用的程序集；没匹配到则为 null。</param>
+        /// <returns>匹配到返回 true。</returns>
+        private static bool TryResolveRequiredAssembly(string ns, out string required)
+        {
+            required = null;
+            int bestLength = -1;
+
+            foreach (KeyValuePair<string, string> pair in NamespaceToAssembly)
+            {
+                bool matches = string.Equals(ns, pair.Key, StringComparison.Ordinal)
+                               || ns.StartsWith(pair.Key + ".", StringComparison.Ordinal);
+
+                if (matches && pair.Key.Length > bestLength)
+                {
+                    bestLength = pair.Key.Length;
+                    required = pair.Value;
+                }
+            }
+
+            return required != null;
         }
 
         /// <summary>剥掉这一行的注释部分。</summary>
