@@ -2,7 +2,7 @@
   "table": "Dungeon",
   "fields": ["id", "name", "maxPlayers", "spawnRadiusMm", "monsters", "bossId"],
   "rows": [
-    { "id": 1001, "name": "狼巢", "maxPlayers": 4, "spawnRadiusMm": 3000, "monsters": [ 6001, 6001 ], "bossId": 6003 },
+    { "id": 1001, "name": "狼巢", "maxPlayers": 4, "spawnRadiusMm": 3000, "monsters": [ 6001, 6001, 6001 ], "bossId": 6003 },
     { "id": 1002, "name": "蛛网洞穴", "maxPlayers": 4, "spawnRadiusMm": 2500, "monsters": [ 6002, 6002, 6002 ], "bossId": 6003 }
   ]
 }

@@ -1,8 +1,6 @@
 id	eventType	targetId	requiredCount	note
 4001	KillMonster	6001	3	击杀野狼
 4002	CollectItem	7001	2	带回狼皮
-4003	CollectItem	7002	2	采集草药
-4004	ReachArea	1	1	抵达幽暗森林
+4003	KillMonster	6002	3	清剿森林蜘蛛（原「采集草药」需要可交互物系统，M4+ 再做）
 4005	KillMonster	6003	1	击杀狼王
 4007	KillMonster	6001	3	清剿野狼
-4008	ReachArea	1	1	抵达一号区域

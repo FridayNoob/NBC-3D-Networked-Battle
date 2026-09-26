@@ -199,9 +199,10 @@ namespace NBC.ConfigKit
                 set.Add(new ConfigTable(schema, raws[i]));
             }
 
-            // ③ 校验（三趟）
-            ValidationEngine engine = new ValidationEngine(m_policy);
-            engine.Validate(set, diagnostics);
+            // ③ 校验：**单表 + 跨表一次跑完**（同一个入口，自测也调它 —— 见 `ConfigChecks`）
+            //    ⚠️ 单表校验（`range`/`len`/`unique`/`ref:`）全绿**不等于**这张表能被玩通：
+            //       "任务要 3 只狼而副本只刷 2 只"这类**跨表**问题会全绿通过 —— 2026-09-26 实测踩到过。
+            ConfigChecks.RunAll(set, m_policy, diagnostics);
 
             // 统计（即使失败也给，方便人看"读到几张表"）
             for (int i = 0; i < set.Tables.Count; i++)

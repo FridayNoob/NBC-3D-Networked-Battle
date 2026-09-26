@@ -6,6 +6,7 @@
     { "id": 2, "monsterId": 6001, "itemId": 9002, "countMin": 1, "countMax": 1, "chancePerTenThousand": 10000 },
     { "id": 3, "monsterId": 6002, "itemId": 9001, "countMin": 1, "countMax": 3, "chancePerTenThousand": 7000 },
     { "id": 4, "monsterId": 6003, "itemId": 9003, "countMin": 1, "countMax": 1, "chancePerTenThousand": 10000 },
-    { "id": 5, "monsterId": 6003, "itemId": 9001, "countMin": 2, "countMax": 5, "chancePerTenThousand": 10000 }
+    { "id": 5, "monsterId": 6003, "itemId": 9001, "countMin": 2, "countMax": 5, "chancePerTenThousand": 10000 },
+    { "id": 6, "monsterId": 6001, "itemId": 7001, "countMin": 1, "countMax": 1, "chancePerTenThousand": 10000 }
   ]
 }

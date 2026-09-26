@@ -100,6 +100,21 @@ namespace NBC.ConfigKit
         /// <para>可空只允许用在 `ref:` / `ref:[]` / `string` 上 —— 详见本条的使用说明。</para>
         /// </summary>
         public const string UnsupportedNullable = "CFG0019";
+
+        /// <summary>
+        /// **跨表**：任务条件的击杀数量超过"任何副本能提供的数量"（条件永远达不成）。见 `CrossTableChecks`。
+        /// </summary>
+        public const string QuestKillUnreachable = "CFG0020";
+
+        /// <summary>
+        /// **跨表**：任务要收集的物品既不在 `DropTable`、也不在 `Reward` 里（永远拿不到）。
+        /// </summary>
+        public const string ItemNeverObtainable = "CFG0021";
+
+        /// <summary>
+        /// **跨表**：用到了"当前没有事件源"的事件类型（**警告** —— 这是实现缺口，不是数据写错）。
+        /// </summary>
+        public const string EventTypeWithoutSource = "CFG0022";
     }
 
     /// <summary>

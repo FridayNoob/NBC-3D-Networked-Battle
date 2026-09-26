@@ -2,5 +2,5 @@ id,name,maxPlayers,spawnRadiusMm,monsters,bossId
 编号,名称,最大人数,出生点半径（毫米）,普通怪（写重复＝刷多只）,BOSS
 int,string,int,int,ref:Monster[],ref:Monster
 key,"len(1,16)","range(2,4)","range(500,20000)",,
-1001,狼巢,4,3000,"6001,6001",6003
+1001,狼巢,4,3000,"6001,6001,6001",6003
 1002,蛛网洞穴,4,2500,"6002,6002,6002",6003

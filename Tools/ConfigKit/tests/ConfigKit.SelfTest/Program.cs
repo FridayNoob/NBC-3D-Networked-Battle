@@ -70,6 +70,13 @@ namespace NBC.ConfigKit.SelfTest
             Run("主键重复 → CFG0017，且说明里指出**两行**", DuplicateKey_NamesBothRows);
             Run("外键值不存在 → CFG0011", ForeignKeyValueMissing_IsReported);
             Run("外键**表**不存在 → CFG0011（和值不存在分开报）", ForeignKeyTableMissing_IsReported);
+
+            // ---- 跨表检查（2026-09-26 新增）----
+            Run("跨表：任务要杀 3 只而副本只刷 2 只 → CFG0020", QuestKillBeyondDungeonCapacity_IsReported);
+            Run("跨表对照：数量够 → 不报 CFG0020", QuestKillWithinDungeonCapacity_IsAccepted);
+            Run("跨表：物品只在**自己任务**的奖励里 → CFG0021（循环依赖）", CircularRewardItem_IsReported);
+            Run("跨表对照：掉落表里有 → 不报 CFG0021", DroppedItem_IsAccepted);
+            Run("跨表：事件类型没有事件源 → **警告** CFG0022", EventTypeWithoutSource_IsWarned);
             Run("表中间空行 → CFG0014（不许静默截断）", BlankRowInMiddle_IsReported);
             Run("一次报出全部错误（不是遇到第一个就停）", AllErrors_AreReportedAtOnce);
             Run("有结构错误时不再校验数据（避免连锁误报）", FatalStructure_StopsDataValidation);
@@ -223,7 +230,6 @@ namespace NBC.ConfigKit.SelfTest
         {
             ConfigPolicy actualPolicy = policy ?? ConfigPolicy.CreateDefault();
             SchemaReader reader = new SchemaReader(actualPolicy);
-            ValidationEngine engine = new ValidationEngine(actualPolicy);
 
             DiagnosticBag diagnostics = new DiagnosticBag();
             ConfigSet set = new ConfigSet();
@@ -233,7 +239,10 @@ namespace NBC.ConfigKit.SelfTest
                 set.Add(new ConfigTable(reader.Read(raw, diagnostics), raw));
             }
 
-            engine.Validate(set, diagnostics);
+            // ⚠️ 走**与导出流水线同一个入口**（`ConfigChecks.RunAll`）——
+            //    原来这里只调 `ValidationEngine`，于是"自测过了、流水线才发现"（或反过来）：
+            //    自测就成了**假绿**。跨表检查（2026-09-26 加的）正是这样被漏掉的。
+            ConfigChecks.RunAll(set, actualPolicy, diagnostics);
             return diagnostics;
         }
 
@@ -246,8 +255,27 @@ namespace NBC.ConfigKit.SelfTest
         private static Diagnostic FirstOf(DiagnosticBag bag, string code)
         {
             Diagnostic found = bag.Items.FirstOrDefault(item => item.Code == code);
-            Check(found != null, $"没有任何一条 {code} 诊断。实际编号：{string.Join(", ", Codes(bag))}");
+
+            // ⚠️ 失败信息里带上**每条诊断的首行人话**：只报编号的话，
+            //    下一次还得再去猜"那条 CFG0011 到底在说什么"（2026-09-26 我自己就卡在这上面）。
+            Check(found != null, $"没有任何一条 {code} 诊断。实际：" +
+                string.Join("；", bag.Items.Select(item =>
+                    item.Code + " " + FirstLine(item.Message))));
             return found;
+        }
+
+        /// <summary>取一段多行文本的第一行（诊断消息里带换行，打印时要压成一行）。</summary>
+        /// <param name="text">文本。</param>
+        /// <returns>第一行。</returns>
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            int index = text.IndexOf('\n');
+            return index < 0 ? text : text.Substring(0, index).TrimEnd('\r');
         }
 
         // ====================================================================
@@ -593,6 +621,149 @@ namespace NBC.ConfigKit.SelfTest
             Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ForeignKeyMissing);
             CheckContains(diagnostic.Message, "Item", "指出是哪个表");
             CheckContains(diagnostic.Message, "不存在", "说清是\"表不存在\"（和值不存在分开）");
+        }
+
+        // ====================================================================
+        //  跨表检查（2026-09-26 新增：**单表全绿 ≠ 这张表能被玩通**）
+        // ====================================================================
+
+        /// <summary>任务要杀 3 只，而副本只刷 2 只 → CFG0020（这正是真表里踩到的那个坑）。</summary>
+        private static void QuestKillBeyondDungeonCapacity_IsReported()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 2, killRequired: 3));
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.QuestKillUnreachable);
+
+            CheckContains(diagnostic.Message, "6001", "点名是哪种怪");
+            CheckContains(diagnostic.Message, "最多只提供 2 只", "算出来「副本最多给几只」");
+            CheckContains(diagnostic.Message, "永远达不成", "说清后果");
+        }
+
+        /// <summary>阴性对照：副本刷 3 只、任务要 3 只 → 不该报。</summary>
+        private static void QuestKillWithinDungeonCapacity_IsAccepted()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 3));
+
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.QuestKillUnreachable),
+                "数量够的时候不该报 CFG0020。实际编号：" + string.Join(", ", Codes(diagnostics)));
+        }
+
+        /// <summary>
+        /// 收集物品**只在自己任务的奖励里** → CFG0021（循环依赖："要 2 张狼皮才给 2 张狼皮"）。
+        /// <para>⚠️ 这条是**实测逼出来的**：第一版判据只写"出现在掉落或奖励里"，被 `Reward` 里
+        /// 那两条自己给自己的奖励骗过去了 —— 阳性对照当场抓出来。</para>
+        /// </summary>
+        private static void CircularRewardItem_IsReported()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 3, circularCollect: true));
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ItemNeverObtainable);
+
+            CheckContains(diagnostic.Message, "7001", "点名是哪个物品");
+            CheckContains(diagnostic.Message, "循环依赖", "说清是「自己给自己」");
+        }
+
+        /// <summary>阴性对照：掉落表里有这个物品 → 不该报（哪怕奖励里也有）。</summary>
+        private static void DroppedItem_IsAccepted()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 3, circularCollect: true, alsoDrop: true));
+
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.ItemNeverObtainable),
+                "掉落表里有时不该报 CFG0021。实际编号：" + string.Join(", ", Codes(diagnostics)));
+        }
+
+        /// <summary>用到"当前没有事件源"的事件类型 → **警告** CFG0022（不是错误：这是实现缺口）。</summary>
+        private static void EventTypeWithoutSource_IsWarned()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 3, reachArea: true));
+
+            Check(diagnostics.WarningCount == 1, "应当有 1 条警告，实际 " + diagnostics.WarningCount);
+            FirstOf(diagnostics, DiagnosticCodes.EventTypeWithoutSource);
+        }
+
+        /// <summary>
+        /// 造一份"任务 ↔ 副本 ↔ 掉落"的最小表集（跨表用例共用）。
+        /// <para>参数就是**对照**：副本刷几只狼、任务要杀几只、是否制造循环奖励、是否有掉落来源、是否用 ReachArea。</para>
+        /// </summary>
+        /// <param name="wolvesInDungeon">副本里刷几只 6001。</param>
+        /// <param name="killRequired">任务要求杀几只 6001。</param>
+        /// <param name="circularCollect">是否加一条"收集 7001"（其奖励也是 7001 → 循环）。</param>
+        /// <param name="alsoDrop">是否同时让 6001 掉 7001（用来做阴性对照）。</param>
+        /// <param name="reachArea">是否加一条 ReachArea 条件。</param>
+        /// <returns>表来源。</returns>
+        private static InMemoryTableSource CrossTableSource(int wolvesInDungeon, int killRequired,
+                                                           bool circularCollect = false, bool alsoDrop = false,
+                                                           bool reachArea = false)
+        {
+            var source = new InMemoryTableSource();
+            string wolves = string.Join(",", Enumerable.Repeat("6001", wolvesInDungeon));
+
+            source.AddTable("Monster", Grid(
+                "id|name|hp|attack",
+                "编号|名称|血量|攻击",
+                "int|string|int|int",
+                "key|len(1,16)|range(1,999999)|min(0)",
+                "6001|野狼|300|20"), "Monster.csv");
+
+            source.AddTable("Dungeon", Grid(
+                "id|name|maxPlayers|spawnRadiusMm|monsters",
+                "编号|名称|人数|半径|普通怪",
+                "int|string|int|int|ref:Monster[]",
+                "key|len(1,16)|range(2,4)|range(500,20000)|",
+                "1001|狼巢|4|3000|" + wolves), "Dungeon.csv");
+
+            // 条件表：击杀 6001 × N（+ 可选的收集 / 区域条件）
+            // ⚠️ `Grid(...)` 是**变参**（每个参数 = 一行）：多行内容必须**逐行传**，
+            //    不能拼成一个带换行的字符串 —— 那样只有第一行会进表（2026-09-26 我自己踩的，
+            //    表现是"外键指向 4002 但那边没有这个主键"，看着像检查器坏了）。
+            var conditionLines = new List<string>
+            {
+                "id|eventType|targetId|requiredCount|note",
+                "编号|事件类型|目标编号|需要数量|说明",
+                "int|enum:NBC.Shared.Condition.EConditionEvent|int|int|string",
+                "key||min(0)|range(1,9999)|len(1,32)",
+                "4001|KillMonster|6001|" + killRequired + "|击杀野狼",
+            };
+
+            if (circularCollect)
+            {
+                conditionLines.Add("4002|CollectItem|7001|1|带回狼皮");
+            }
+
+            if (reachArea)
+            {
+                conditionLines.Add("4004|ReachArea|1|1|抵达某个区域");
+            }
+
+            source.AddTable("QuestCondition", Grid(conditionLines.ToArray()), "QuestCondition.csv");
+
+            // 奖励表：5001 发 7001（`circularCollect` 时正好是"自己给自己"）
+            source.AddTable("Reward", Grid(
+                "id|exp|gold|itemId|itemCount",
+                "编号|经验|金币|物品|数量",
+                "int|int|int|int|int",
+                "key|min(0)|min(0)|min(0)|min(0)",
+                "5001|100|50|7001|2"), "Reward.csv");
+
+            // 任务表：3001 = 条件 4001（+4002）→ 奖励 5001
+            string questConditions = circularCollect ? "4001,4002" : "4001";
+
+            source.AddTable("Quest", Grid(
+                "id|name|desc|conditionIds|rewardId",
+                "编号|名称|描述|条件|奖励",
+                "int|string|string|ref:QuestCondition[]|ref:Reward",
+                "key|len(1,16)|len(1,64)||",
+                "3001|初次狩猎|测试用|" + questConditions + "|5001"), "Quest.csv");
+
+            if (alsoDrop)
+            {
+                source.AddTable("DropTable", Grid(
+                    "id|monsterId|itemId|countMin|countMax|chancePerTenThousand",
+                    "编号|怪物|物品|最小|最大|概率",
+                    "int|ref:Monster|int|int|int|int",
+                    "key|||range(1,99)|range(1,99)|range(0,10000)",
+                    "1|6001|7001|1|1|10000"), "DropTable.csv");
+            }
+
+            return source;
         }
 
         private static void BlankRowInMiddle_IsReported()
