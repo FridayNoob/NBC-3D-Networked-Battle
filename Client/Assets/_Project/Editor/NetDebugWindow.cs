@@ -100,11 +100,23 @@ namespace NBC.EditorTools
         /// <summary>M4-S1：演示条件的编号（真项目里是 `QuestCondition` 表主键）。</summary>
         private const int DemoConditionKey = 5001;
 
-        /// <summary>M4-S1：演示条件打的怪（6001 = 野狼，与 `Monster` 表一致）。</summary>
-        private const int DemoMonsterId = 6001;
+        /// <summary>M4-S1：演示条件**优先**挑哪种怪（副本 1001 是野狼；本副本没有它就退化成"第一只非 BOSS 怪"）。</summary>
+        private const int DemoPreferredMonsterId = 6001;
 
-        /// <summary>M4-S1：演示条件要打几只。</summary>
-        private const int DemoKillCount = 3;
+        /// <summary>M4-S1：手填的目标只数（**0 = 自动**，从快照里的真实阵容算）。</summary>
+        [SerializeField] private int m_demoKillTarget;
+
+        /// <summary>M4-S1：演示条件是否已经登记（登记要用到"本副本有几只"，所以等到第一张快照）。</summary>
+        private bool m_demoConditionRegistered;
+
+        /// <summary>M4-S1：上次登记演示条件时的房号（换房间要按新阵容重新登记）。</summary>
+        private string m_demoConditionRoomId = string.Empty;
+
+        /// <summary>M4-S1：实际用的怪编号（界面上显示；自动模式下来自快照）。</summary>
+        private int m_demoMonsterIdInUse = DemoPreferredMonsterId;
+
+        /// <summary>M4-S1：实际用的目标只数（界面上显示）。</summary>
+        private int m_demoKillTargetInUse;
 
         /// <summary>M4-S1：这个演示条件达成过几次（达成回调计数）。</summary>
         private int m_demoConditionMetCount;
@@ -187,6 +199,7 @@ namespace NBC.EditorTools
             }
 
             m_session.Pump(deltaMs);
+            EnsureDemoConditionRegistered();        // 第一张快照到了就按阵容登记演示条件
             SendContinuousInput();
             TickAutoChase();
             Repaint();
@@ -744,6 +757,9 @@ namespace NBC.EditorTools
         /// `EventCenter` → `ConditionEventBridge` → `ConditionTracker`。
         /// 条件的定义是**造出来的**（不是配置表读的）—— 目的是让"接线对不对"肉眼可见，
         /// 不用先跑通整套配置表（真任务走的是同一个 `ConditionTracker`，见 `QuestRuntime`）。</para>
+        /// <para>⚠️ 2026-09-26：目标**不再写死**。原来写的是"野狼 × 3"，而副本 1001 只刷 **2** 只
+        /// （`Dungeon.csv` 的 `"6001,6001"`）⇒ **目标永远达不成**（负责人实测："没办法达成 3 只狼的任务目标"）。
+        /// 现在默认**从快照里的真实阵容算**（本副本有哪种怪、有几只），也可以手填覆盖。</para>
         /// </summary>
         private void DrawQuestLoop()
         {
@@ -755,8 +771,9 @@ namespace NBC.EditorTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("任务条件（M4-S1：联机也能涨）", EditorStyles.boldLabel);
 
-            EditorGUILayout.LabelField("条件", "击杀野狼 " + DemoMonsterId + " × " + DemoKillCount
-                + "（这条是**演示用**的，真任务从 `QuestCondition` 表读）");
+            EditorGUILayout.LabelField("条件", "击杀怪 " + m_demoMonsterIdInUse + " × " + m_demoKillTargetInUse
+                + (m_demoKillTarget > 0 ? "（**手填**的目标）" : "（**自动取自本副本阵容**）")
+                + "　—— 演示用；真任务从 `QuestCondition` 表读");
 
             if (m_conditions == null)
             {
@@ -770,6 +787,10 @@ namespace NBC.EditorTools
             {
                 EditorGUILayout.LabelField("进度", progress.ToString()
                     + (progress.IsMet ? "　✅ 已达成" : "　还差 " + progress.Remaining + " 只"));
+            }
+            else
+            {
+                EditorGUILayout.LabelField("进度", "（还没登记 —— 进房后会按本副本阵容设目标）");
             }
 
             EditorGUILayout.LabelField("达成回调", "触发过 " + m_demoConditionMetCount + " 次");
@@ -793,13 +814,19 @@ namespace NBC.EditorTools
                 + "，死亡 " + m_session.DeathsReceived
                 + "，掉落 " + m_session.DropsReceived);
 
-            if (GUILayout.Button("重置演示条件进度", GUILayout.Height(22f)))
+            using (new EditorGUILayout.HorizontalScope())
             {
-                m_conditions.Unregister(DemoConditionKey);
-                m_conditions.Register(DemoConditionKey,
-                    new ConditionDef(EConditionEvent.KillMonster, DemoMonsterId, DemoKillCount), true);
-                m_demoConditionMetCount = 0;
-                AddLog("演示条件进度已重置");
+                m_demoKillTarget = EditorGUILayout.IntField("目标只数覆盖（0 = 自动）", m_demoKillTarget);
+
+                if (GUILayout.Button("按本副本阵容重设", GUILayout.Height(20f)))
+                {
+                    ResetDemoCondition(forceAuto: true);
+                }
+            }
+
+            if (GUILayout.Button("重置演示条件进度（保留目标）", GUILayout.Height(22f)))
+            {
+                ResetDemoCondition(forceAuto: false);
             }
 
             if (!m_session.InRoom)
@@ -856,6 +883,8 @@ namespace NBC.EditorTools
         /// <para>⚠️ 条件系统与它的桥**只建一次**（它们挂在全局 `EventCenter` 上）——
         /// 每次连接都建一份的话，同一个事件会被喂进条件系统两次，进度翻倍且看不出来。
         /// 每次连接只重建"跟当前会话绑定"的那座 `ServerEventBridge`。</para>
+        /// <para>⚠️ **条件本身不在这里登记**：目标只数要"本副本有几只怪"，那要等第一张快照
+        /// （见 `EnsureDemoConditionRegistered`）。原来写死"× 3"、而副本只有 2 只狼 ⇒ 永远达不成。</para>
         /// </summary>
         private void StartQuestLoopDemo()
         {
@@ -872,12 +901,147 @@ namespace NBC.EditorTools
                     m_demoConditionMetCount++;
                     AddLog("条件达成：" + progress + "（条件编号 " + key + "）");
                 };
-
-                m_conditions.Register(DemoConditionKey,
-                    new ConditionDef(EConditionEvent.KillMonster, DemoMonsterId, DemoKillCount), true);
             }
 
             m_eventBridge = new ServerEventBridge(m_session);
+            m_demoConditionRegistered = false;      // 换了会话 → 等第一张快照重新登记
+        }
+
+        /// <summary>
+        /// 从**快照里的真实阵容**算出演示条件的目标（"本副本有哪种怪、有几只"）。
+        /// <para>算法：按 `config_id` 分组数怪，**优先 `DemoPreferredMonsterId`（6001 野狼）**；
+        /// 本副本没有它就取"**出现次数最多的那种怪**"。后者顺带解决了"哪个是 BOSS"这个问题 ——
+        /// BOSS 只有一只，而小怪是一批（副本 1001 → 6001×2；1002 → 6002×3），
+        /// 所以**不需要**给快照再加一个 `is_boss` 字段。平局按编号升序打破（确定性）。</para>
+        /// </summary>
+        /// <param name="monsterId">算出来的怪编号（算不出时为 0）。</param>
+        /// <param name="count">算出来的只数（算不出时为 0）。</param>
+        private void ResolveDemoTarget(out int monsterId, out int count)
+        {
+            monsterId = 0;
+            count = 0;
+
+            if (m_session == null)
+            {
+                return;
+            }
+
+            SnapshotView world = m_session.World;
+            var counts = new Dictionary<int, int>();
+
+            for (int i = 0; i < world.Entities.Count; i++)
+            {
+                NBC.Protocol.EntitySnapshot e = world.Entities[i];
+
+                if (e.Kind != 1)
+                {
+                    continue;
+                }
+
+                int seen;
+                counts.TryGetValue(e.ConfigId, out seen);
+                counts[e.ConfigId] = seen + 1;
+            }
+
+            if (counts.Count == 0)
+            {
+                return;
+            }
+
+            int preferred;
+            if (counts.TryGetValue(DemoPreferredMonsterId, out preferred))
+            {
+                monsterId = DemoPreferredMonsterId;
+                count = preferred;
+                return;
+            }
+
+            foreach (KeyValuePair<int, int> pair in counts)
+            {
+                bool better = pair.Value > count
+                              || (pair.Value == count && monsterId != 0 && pair.Key < monsterId);
+
+                if (better)
+                {
+                    monsterId = pair.Key;
+                    count = pair.Value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 第一张快照到了之后登记演示条件（**目标只数从阵容算**，不写死）。
+        /// <para>每帧调一次；同一个房间登记过就直接返回。**换房间（换副本）会重新登记** ——
+        /// 否则进了蜘蛛洞（1002）还在要求"击杀野狼"，又变成达不成的目标。</para>
+        /// </summary>
+        private void EnsureDemoConditionRegistered()
+        {
+            if (m_conditions == null || m_session == null || !m_session.InRoom)
+            {
+                return;
+            }
+
+            string roomId = m_session.CurrentRoom == null ? string.Empty : m_session.CurrentRoom.RoomId;
+
+            if (m_demoConditionRegistered && string.Equals(roomId, m_demoConditionRoomId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            int monsterId;
+            int count;
+
+            if (m_demoKillTarget > 0)
+            {
+                // 手填覆盖：怪还是按阵容挑，只数听你的
+                ResolveDemoTarget(out monsterId, out count);
+                count = m_demoKillTarget;
+            }
+            else
+            {
+                ResolveDemoTarget(out monsterId, out count);
+            }
+
+            if (count <= 0)
+            {
+                return;     // 还没收到快照（或本副本没有普通怪）→ 下一帧再看
+            }
+
+            m_conditions.Unregister(DemoConditionKey);
+            m_conditions.Register(DemoConditionKey,
+                new ConditionDef(EConditionEvent.KillMonster, monsterId, count), true);
+
+            m_demoMonsterIdInUse = monsterId;
+            m_demoKillTargetInUse = count;
+            m_demoConditionRegistered = true;
+            m_demoConditionRoomId = roomId;
+
+            AddLog("演示条件已登记：击杀怪 " + monsterId + " × " + count
+                + (m_demoKillTarget > 0 ? "（手填）" : "（按本副本阵容自动算）"));
+        }
+
+        /// <summary>重设演示条件（按钮用）。</summary>
+        /// <param name="forceAuto">true = 清掉手填值、改回"按阵容自动"。</param>
+        private void ResetDemoCondition(bool forceAuto)
+        {
+            if (m_conditions == null)
+            {
+                return;
+            }
+
+            if (forceAuto)
+            {
+                m_demoKillTarget = 0;
+            }
+
+            m_conditions.Unregister(DemoConditionKey);
+            m_demoConditionRegistered = false;
+            m_demoConditionMetCount = 0;
+
+            EnsureDemoConditionRegistered();
+
+            AddLog("演示条件已重设：怪 " + m_demoMonsterIdInUse + " × " + m_demoKillTargetInUse
+                + (m_demoKillTarget > 0 ? "（手填）" : "（自动）"));
         }
 
         /// <summary>断开并释放。</summary>
