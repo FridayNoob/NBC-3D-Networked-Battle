@@ -889,3 +889,222 @@ Unity → `Window / General / Test Runner` → **EditMode** → **Run All**：
 | **同步上下文（SynchronizationContext）** | "await 之后回到哪个线程"的机制。Unity 的它要靠帧循环驱动 |
 | **回调驱动 vs await 驱动** | 前者在完成那一刻直接调用（可确定性测试），后者要把续体投递回上下文 |
 | **`worldPositionStays`** | `SetParent` 的参数。UI 必须传 `false`，否则会被反算缩放 |
+
+---
+
+## 附 · 类图与数据流（2026-09-26 补）
+
+这张类图解决「谁认识谁」：`UIManager` 与 `BasePanel` 是**组合**（管理器持有面板字典），
+不是继承；层配置被搬到了 `UILayers` 组件上，所以管理器只**依赖**它、不继承它。
+数据流图解决「一次 `ShowPanel` 到底走了哪几步」，最后一张状态图解决
+「**`HidePanel` 和 `ClosePanel` 不是同一件事**」——这是最容易被画成一条线的地方。
+
+```mermaid
+classDiagram
+    direction LR
+
+    class MonoBehaviour {
+        <<UnityEngine>>
+        +gameObject
+    }
+
+    class UILayer {
+        <<enumeration>>
+        Bot
+        Mid
+        Top
+        System
+    }
+
+    class UILayers {
+        +LayerCount : int
+        -m_bot : Transform
+        -m_mid : Transform
+        -m_top : Transform
+        -m_system : Transform
+        +IsValid : bool
+        +Get(layer : UILayer) Transform
+        +TryGet(layer : UILayer, layerRoot : Transform) bool
+        +DescribeProblem() string
+        +Bind(layer : UILayer, layerRoot : Transform) void
+        +GetLayerName(layer : UILayer) string
+    }
+
+    class BasePanel {
+        +PanelName : string
+        +IsInitialized : bool
+        +ControlCount : int
+        -m_controls : Dictionary
+        -m_initialized : bool
+        +Initialize() void
+        +CollectControls() void
+        +ShowMe()* void
+        +HideMe()* void
+        #OnInit()* void
+        #OnClick(buttonName : string)* void
+        #OnValueChanged(toggleName : string, value : bool)* void
+        #GetControl(controlName : string) T
+        #RequireControl(controlName : string) T
+        +CopyControlNames(buffer : List) void
+    }
+
+    class UIManager {
+        +DefaultCanvasLocation : string
+        +DefaultPanelLocationPrefix : string
+        -m_visible : Dictionary
+        -m_pooled : Dictionary
+        -m_pending : Dictionary
+        -m_panelHandles : Dictionary
+        -m_stack : List
+        -m_layers : UILayers
+        +IsCanvasReady : bool
+        +Canvas : GameObject
+        +Layers : UILayers
+        +ShowPanel(panelName : string, layer : UILayer, onShown, onFailed) void
+        +ShowPanelAsync(panelName : string, layer : UILayer) Task
+        +HidePanel(panelName : string) bool
+        +ClosePanel(panelName : string) bool
+        +HideAll() void
+        +CloseAll() void
+        +GetPanel(panelName : string) T
+        +IsPanelVisible(panelName : string) bool
+        +SetCanvasLocation(location : string) void
+        +SetPanelLocationPrefix(prefix : string) void
+        +PushPanel(panelName : string) void
+        +PeekPanel() string
+        +PopPanel() string
+        +HandleBack() bool
+    }
+
+    class LoadingMaskPanel {
+        +ProgressBarControlName : string
+        +ProgressTextControlName : string
+        +CurrentProgress : float
+        +HasError : bool
+        +SetProgress(progress : float, location : string) void
+        +SetError(error : string) void
+    }
+
+    class LoadingMaskController {
+        +DefaultPanelName : string
+        -m_ui : UIManager
+        -m_events : EventCenter
+        +IsAttached : bool
+        +Attach() void
+        +Detach() void
+        +Dispose() void
+        +HideNow() bool
+    }
+
+    class PerfHudPanel {
+        +DefaultRefreshInterval : float
+        -m_sampler : PerfSampler
+        -m_refreshInterval : float
+        +RefreshInterval : float
+        +LastSnapshot : PerfSnapshot
+        +AttachSampler(sampler : PerfSampler) void
+        +Tick(deltaSeconds : float) void
+        +Refresh() void
+        +ReleaseSampler() void
+    }
+
+    class QuestPanel {
+        +Bind(model : QuestPanelModel) void
+        +Refresh() void
+        -m_model : QuestPanelModel
+        -m_offerRows : List
+        -m_trackingRows : List
+    }
+
+    class QuestPanelModel {
+        +AcceptPrefix : string
+        +SubmitPrefix : string
+        -m_quests : QuestRuntime
+        +CopyOfferRows(buffer : List) void
+        +CopyTrackingRows(buffer : List) void
+        +HandleAction(actionName : string) bool
+        +Accept(questId : int) QuestActionResult
+        +Submit(questId : int) QuestActionResult
+    }
+
+    MonoBehaviour <|-- BasePanel : 继承
+    MonoBehaviour <|-- UILayers : 继承
+    BasePanel <|-- LoadingMaskPanel : 继承
+    BasePanel <|-- PerfHudPanel : 继承
+    BasePanel <|-- QuestPanel : 继承
+    UIManager o-- BasePanel : 组合 持有字段 m_visible / m_pooled
+    UIManager o-- UILayers : 组合 持有字段 m_layers
+    UIManager ..> UILayer : 依赖 方法参数
+    UIManager ..> BasePanel : 依赖 Initialize / ShowMe / HideMe
+    UILayers ..> UILayer : 依赖 Get(layer)
+    LoadingMaskController o-- UIManager : 组合 持有字段 m_ui
+    LoadingMaskController ..> LoadingMaskPanel : 依赖 GetPanel 后转型
+    QuestPanel o-- QuestPanelModel : 组合 持有字段 m_model
+    QuestPanelModel ..> QuestRuntime : 依赖 Accept / Submit / CopyOffers
+```
+
+**看图时最容易画错的地方**（都有 `文件:行号` 证据）：
+
+| 容易画错 | 事实 | 证据 |
+| --- | --- | --- |
+| 以为 `UIManager` 继承 `BasePanel` | 它是 `Singleton<UIManager>`，与 `BasePanel` 是**组合** | `UIManager.cs:87`、`:108` |
+| 以为 `UILayers` 是普通数据类 | 它是 `MonoBehaviour`，挂在 Canvas 预制体根上 | `UILayers.cs:44` |
+| 以为「面板基类有 `Awake`」 | `BasePanel` 里**没有** `Awake`，初始化靠显式调 `Initialize()` | `BasePanel.cs:34-45`、`:107` |
+| 以为 `Initialize()` 是 `protected` | 它是 **`public`**（EditMode 测试要直接调），`CollectControls()` 也是 | `BasePanel.cs:107`、`:123` |
+| 以为控件按 `transform.Find` 索引 | 按 **GameObject 名字**索引，且**一次**全树扫 `UIBehaviour` | `BasePanel.cs:140`、`:129` |
+| 以为 `HidePanel` 与 `ClosePanel` 只有强弱之分 | 是**两条不同的生命周期**：回池（不销毁）vs 销毁 + 释放素材句柄 | `UIManager.cs:395-405`、`:431`/`:444`/`:450` |
+| 以为 `LoadingMaskController` 是单例或 `MonoBehaviour` | 它是**普通类**，由游戏层决定何时 `Attach()` | `LoadingMaskController.cs:43`、`:22-23` |
+| 以为 `GetPanel<T>` 会去池里找 | 只在**显示中**字典里找，池里的取不到 | `UIManager.cs:247`、`:255` |
+
+数据流：一次**冷启动**的 `ShowPanel`（前缀拼地址 → Canvas 引导 → 面板加载 → 实例化 → 挂层 → 初始化）：
+
+```mermaid
+flowchart TD
+    S(["调用方：ShowPanel 请求"]) --> A["UIManager.ShowPanel"]
+    A --> B{"m_visible 里已有？"}
+    B -- 是 --> B1["只调 ShowMe，不重新加载"]
+    B -- 否 --> C{"m_pending 里已有？"}
+    C -- 是 --> C1["挂到同一条 PendingLoad"]
+    C -- 否 --> D{"m_pooled 里有？"}
+    D -- 是 --> D1["SetActive(true) 后再 AttachToLayer"]
+    D -- 否 --> E["EnsureCanvas"]
+    E --> F["AssetManager.LoadAssetAsync 取 Canvas 预制体"]
+    F --> G["OnCanvasLoaded"]
+    G --> H["Instantiate 后 GetComponent 取 UILayers"]
+    H --> I["layers.DescribeProblem 校验四层"]
+    I --> J["StartPanelLoad"]
+    J --> K["OnPanelLoaded"]
+    K --> L["Instantiate：拿到的是原始 prefab 的实例"]
+    L --> M["GetComponent BasePanel，检查挂对了没"]
+    M --> N["AttachToLayer 挂到目标层"]
+    N --> O["panel.Initialize()"]
+    O --> P["CollectControls：一次扫全部 UIBehaviour"]
+    P --> Q["OnInit：子类钩子"]
+    Q --> R["panel.ShowMe()"]
+    R --> T["SucceedPending 逐个回调"]
+```
+
+生命周期：**`HidePanel` 走上面那条（回池），`ClosePanel` 走下面那条（销毁）** ——
+两条路的终点不同，所以画成两个不同的转移、不要合成一条：
+
+```mermaid
+stateDiagram-v2
+    [*] --> 未加载
+    未加载 --> 加载中 : ShowPanel 且 m_pending 无同名
+    加载中 --> 显示中 : OnPanelLoaded 成功
+    显示中 --> 池中 : HidePanel 回池不销毁
+    池中 --> 显示中 : ShowPanel 复活
+    显示中 --> 已销毁 : ClosePanel 销毁并释放句柄
+    池中 --> 已销毁 : ClosePanel 销毁并释放句柄
+    已销毁 --> [*]
+    note right of 池中
+        m_pooled 持有，GameObject 仍存在
+        m_panelHandles 里的句柄不释放
+    end note
+```
+
+**面试版怎么讲**：`UIManager` 管「面板从哪来、挂到哪一层、什么时候收起来」，
+它**持有**面板与素材句柄，但**不认识**任何具体面板 —— 具体面板只通过 `BasePanel` 的
+`Initialize()` / `ShowMe()` / `HideMe()` 三个公开口子被驱动。
+最关键的一张图是最后那张状态图：**关面板是「收起来回池」，不是「销毁」**，
+所以同帧「关掉再打开」不会踩到 `Destroy` 延迟的时间窗口（原版 P-09 就死在这里）。

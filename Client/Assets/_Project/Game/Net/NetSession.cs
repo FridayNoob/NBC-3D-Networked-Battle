@@ -131,6 +131,12 @@ namespace NBC.Game.Net
         /// <summary>最近一条掉落。</summary>
         private DropEvent m_lastDrop;
 
+        /// <summary>最近一条伤害事件（M4-S1）。</summary>
+        private DamageEvent m_lastDamage;
+
+        /// <summary>最近一条死亡事件（M4-S1）。</summary>
+        private DeathEvent m_lastDeath;
+
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
 
@@ -279,6 +285,24 @@ namespace NBC.Game.Net
         /// <summary>累计收到多少条掉落事件。</summary>
         public long DropsReceived { get; private set; }
 
+        /// <summary>最近一次伤害事件（null = 还没挨过打，也没打过人）。</summary>
+        public DamageEvent LastDamage
+        {
+            get { return m_lastDamage; }
+        }
+
+        /// <summary>累计收到多少条伤害事件（M4-S1）。</summary>
+        public long HitsReceived { get; private set; }
+
+        /// <summary>最近一次死亡事件（null = 还没人死过）。</summary>
+        public DeathEvent LastDeath
+        {
+            get { return m_lastDeath; }
+        }
+
+        /// <summary>累计收到多少条死亡事件（M4-S1）。</summary>
+        public long DeathsReceived { get; private set; }
+
         /// <summary>最近几次掉落（新的在前，最多 `MaxRecentDrops` 条）—— 界面直接显示它。</summary>
         public IReadOnlyList<DropEvent> RecentDrops
         {
@@ -338,6 +362,12 @@ namespace NBC.Game.Net
         /// <summary>收到一条掉落事件（**服务端掷的**，客户端只负责显示）。</summary>
         public event Action<DropEvent> DropReceived;
 
+        /// <summary>收到一条伤害事件（M4-S1；**每次扣血一条**，表现层的飘字靠它）。</summary>
+        public event Action<DamageEvent> DamageReceived;
+
+        /// <summary>收到一条死亡事件（M4-S1；怪与英雄都走这里，**按 `kind` 分派**）。</summary>
+        public event Action<DeathEvent> DeathReceived;
+
         /// <summary>值得记一句的事情（人话）。</summary>
         public event Action<string> Note;
 
@@ -368,6 +398,8 @@ namespace NBC.Game.Net
             m_loggedFirstSnapshot = false;
             m_recentDrops.Clear();
             m_lastDrop = null;
+            m_lastDamage = null;
+            m_lastDeath = null;
             m_failureReason = null;
             m_rttMs = -1;
             m_lastPingSentMs = -1;
@@ -842,18 +874,88 @@ namespace NBC.Game.Net
         }
 
         /// <summary>
-        /// 处理服务端事件（M3 只有掉落；伤害/死亡事件见 `ServerEvent` 的其它分支，留 S6+/M4）。
-        /// <para>⚠️ **客户端只显示**：掷骰全在服务端（`DungeonBattle.RollDrops`），这里一个随机数都不掷。</para>
+        /// 处理服务端事件（伤害 / 死亡 / 掉落三种，M4-S1 补齐后两类）。
+        /// <para>⚠️ **客户端只显示**：伤害多少、谁死了、掉什么，全是服务端算的 —— 这里一个随机数都不掷，
+        /// 也不做任何"我猜它应该死了"的推断（D3 服务端权威、D4 不做客户端预测）。</para>
+        /// <para>⚠️ 这里只负责"收下来 → 记数 → 发事件"；**翻译成游戏事件是 `ServerEventBridge` 的活**
+        /// （它才知道"掉落归谁"这类规则）。两层分开，是为了让这一层保持"纯网络"。</para>
+        /// <para>⚠️ **两个 oneof 不叫同一个名字**，写错就是 `CS0117`（闸门 2026-09-26 当场抓到过）：
+        /// 信封是 `ServerMessage.PayloadCase`，而事件是 `ServerEvent.EventCase`
+        /// （因为 `nbc_m3.proto` 里那个 oneof 叫 `event`，生成物加后缀就成了 `EventOneofCase`）。</para>
         /// </summary>
         /// <param name="serverEvent">事件。</param>
         private void HandleServerEvent(ServerEvent serverEvent)
         {
-            if (serverEvent == null || serverEvent.Drop == null)
+            if (serverEvent == null)
             {
                 return;
             }
 
-            DropEvent drop = serverEvent.Drop;
+            switch (serverEvent.EventCase)
+            {
+                case ServerEvent.EventOneofCase.Damage:
+                    HandleDamage(serverEvent.Damage);
+                    return;
+
+                case ServerEvent.EventOneofCase.Death:
+                    HandleDeath(serverEvent.Death);
+                    return;
+
+                case ServerEvent.EventOneofCase.Drop:
+                    HandleDrop(serverEvent.Drop);
+                    return;
+
+                default:
+                    return;
+            }
+        }
+
+        /// <summary>一条伤害事件：记数、留最近一条、发事件（**不打日志** —— 每次扣血都打会把日志刷爆）。</summary>
+        /// <param name="damage">伤害事件。</param>
+        private void HandleDamage(DamageEvent damage)
+        {
+            if (damage == null)
+            {
+                return;
+            }
+
+            DamageReceived?.Invoke(damage);
+            HitsReceived++;
+            m_lastDamage = damage;
+        }
+
+        /// <summary>
+        /// 一条死亡事件：记数、留最近一条、发事件、记一句日志。
+        /// <para>⚠️ 这里**故意不解释 `kind`**（不写"1 就是怪"）：本目录是**引擎无关子集**
+        /// （`Server\_net-probe` 直接编它），而 `EBattleAgentKind` 在 `Game\Battle\`
+        /// —— 一旦在这里引用它，探针当场编不过（2026-09-26 实测 CS0234）。
+        /// 分派成 `MonsterDied` / `HeroDied` 是 `ServerEventBridge` 的活（它本来就住在战斗层）。</para>
+        /// </summary>
+        /// <param name="death">死亡事件。</param>
+        private void HandleDeath(DeathEvent death)
+        {
+            if (death == null)
+            {
+                return;
+            }
+
+            DeathReceived?.Invoke(death);
+            DeathsReceived++;
+            m_lastDeath = death;
+
+            Log($"死亡：单位 {death.ConfigId}（实例 {death.EntityId}，kind {death.Kind}，" +
+                $"击杀者 {death.KillerId}）");
+        }
+
+        /// <summary>一条掉落事件：记数、留最近几条、发事件、写日志。</summary>
+        /// <param name="drop">掉落事件。</param>
+        private void HandleDrop(DropEvent drop)
+        {
+            if (drop == null)
+            {
+                return;
+            }
+
             DropReceived?.Invoke(drop);
 
             DropsReceived++;

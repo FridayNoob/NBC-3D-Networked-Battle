@@ -46,6 +46,34 @@ namespace NBC.Game.Battle
 
         /// <summary>技能命中了目标（**扣血之前发**，见 `BattleWorld.CastSkill` 的顺序契约）。载荷：<see cref="SkillHitPayload"/>。</summary>
         public static readonly EventId SkillHit = EventId.Declare("Battle.SkillHit");
+
+        /// <summary>
+        /// 我**获得了**掉落物（M4-S1 新增；载荷：<see cref="ItemDroppedPayload"/>）。
+        /// <para>⚠️ 只有**归我**的掉落才会发这个事件 —— 理由同文件头那条（"两个事件而不是一个带 kind 的"）：
+        /// 若把"别人的掉落"也发出来、让订阅方自己判归属，判错就会让"收集物品"任务**凭空涨进度**
+        /// （别人的战利品算到了我头上）。所以归属判断放在**产生事件的地方**（`ServerEventBridge`），
+        /// 订阅方拿到就是"我的"。</para>
+        /// </summary>
+        public static readonly EventId ItemDropped = EventId.Declare("Battle.ItemDropped");
+    }
+
+    /// <summary>我获得掉落物的载荷（M4-S1）。</summary>
+    public readonly struct ItemDroppedPayload
+    {
+        /// <summary>物品编号（`Item` 表主键 / 协议里的 `item_id`）。</summary>
+        public readonly int ItemId;
+
+        /// <summary>数量。</summary>
+        public readonly int Count;
+
+        /// <summary>造一个载荷。</summary>
+        /// <param name="itemId">物品编号。</param>
+        /// <param name="count">数量。</param>
+        public ItemDroppedPayload(int itemId, int count)
+        {
+            ItemId = itemId;
+            Count = count;
+        }
     }
 
     /// <summary>怪物死亡的载荷。</summary>

@@ -208,6 +208,7 @@ internal static class Program
                           $"快照送出 {battles.SnapshotsSent} 份，回收世界 {battles.BattlesDropped} 个");
         Console.WriteLine($"[统计] 收到输入 {battles.InputsReceived} 条（拒绝 {battles.InputsRejected}），" +
                           $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
+        Console.WriteLine($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

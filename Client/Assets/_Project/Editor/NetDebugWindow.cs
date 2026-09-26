@@ -24,8 +24,12 @@
 
 using System;
 using System.Collections.Generic;
+using NBC.Framework;           // M4-S1：`EventCenter`（全局事件中心）
 using NBC.Framework.Net.Adapter;
+using NBC.Game.Battle;         // M4-S1：`ServerEventBridge`（服务端事件 → 事件中心）
 using NBC.Game.Net;
+using NBC.Game.Quest;          // M4-S1：`ConditionEventBridge`（事件中心 → 条件系统，M2 就有的那座桥）
+using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
 using UnityEditor;
 using UnityEngine;
 
@@ -70,6 +74,27 @@ namespace NBC.EditorTools
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
 
+        /// <summary>M4-S1：把服务端事件接进事件中心的桥（**联机战斗能推进任务**就靠它）。</summary>
+        private ServerEventBridge m_eventBridge;
+
+        /// <summary>M4-S1：演示用的条件系统（登记"击杀野狼 6001 × 3"）。</summary>
+        private ConditionTracker m_conditions;
+
+        /// <summary>M4-S1：事件中心 → 条件系统的那座桥（M2 就有的那一个，任务模块不认识网络）。</summary>
+        private ConditionEventBridge m_conditionBridge;
+
+        /// <summary>M4-S1：演示条件的编号（真项目里是 `QuestCondition` 表主键）。</summary>
+        private const int DemoConditionKey = 5001;
+
+        /// <summary>M4-S1：演示条件打的怪（6001 = 野狼，与 `Monster` 表一致）。</summary>
+        private const int DemoMonsterId = 6001;
+
+        /// <summary>M4-S1：演示条件要打几只。</summary>
+        private const int DemoKillCount = 3;
+
+        /// <summary>M4-S1：这个演示条件达成过几次（达成回调计数）。</summary>
+        private int m_demoConditionMetCount;
+
         /// <summary>传输（图省事由窗口自己持有，方便 Dispose）。</summary>
         private TcpTransport m_transport;
 
@@ -103,6 +128,16 @@ namespace NBC.EditorTools
         {
             EditorApplication.update -= Tick;
             CloseSession("窗口关闭");
+
+            // ⚠️ 订阅了就必须退订：这两座桥都挂在全局的 `EventCenter` / `NetSession` 上，
+            //    不退订 = 窗口关了回调还在跑（A4/A8 踩过的同一个坑）。
+            if (m_conditionBridge != null)
+            {
+                m_conditionBridge.Dispose();
+                m_conditionBridge = null;
+            }
+
+            m_conditions = null;
         }
 
         /// <summary>编辑器帧回调：推进会话并重绘。</summary>
@@ -219,6 +254,7 @@ namespace NBC.EditorTools
 
             EditorGUILayout.Space();
             DrawStatus();
+            DrawQuestLoop();
             EditorGUILayout.Space();
             DrawLog();
 
@@ -445,6 +481,79 @@ namespace NBC.EditorTools
             }
         }
 
+        /// <summary>
+        /// 画 M4-S1 的任务条件区：**联机打死野狼，这里的进度会涨**。
+        /// <para>这条链是：服务端 `DeathEvent` → `NetSession` → `ServerEventBridge` →
+        /// `EventCenter` → `ConditionEventBridge` → `ConditionTracker`。
+        /// 条件的定义是**造出来的**（不是配置表读的）—— 目的是让"接线对不对"肉眼可见，
+        /// 不用先跑通整套配置表（真任务走的是同一个 `ConditionTracker`，见 `QuestRuntime`）。</para>
+        /// </summary>
+        private void DrawQuestLoop()
+        {
+            if (m_session == null)
+            {
+                return;
+            }
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("任务条件（M4-S1：联机也能涨）", EditorStyles.boldLabel);
+
+            EditorGUILayout.LabelField("条件", "击杀野狼 " + DemoMonsterId + " × " + DemoKillCount
+                + "（这条是**演示用**的，真任务从 `QuestCondition` 表读）");
+
+            if (m_conditions == null)
+            {
+                EditorGUILayout.LabelField("进度", "（还没开始 —— 先点「连接」）");
+                return;
+            }
+
+            ConditionProgress progress;
+
+            if (m_conditions.TryGetProgress(DemoConditionKey, out progress))
+            {
+                EditorGUILayout.LabelField("进度", progress.ToString()
+                    + (progress.IsMet ? "　✅ 已达成" : "　还差 " + progress.Remaining + " 只"));
+            }
+
+            EditorGUILayout.LabelField("达成回调", "触发过 " + m_demoConditionMetCount + " 次");
+
+            EditorGUILayout.LabelField("事件中心监听者",
+                "MonsterDied = " + EventCenter.Instance.GetListenerCount(BattleEvents.MonsterDied)
+                + "，DamageDealt = " + EventCenter.Instance.GetListenerCount(BattleEvents.DamageDealt));
+
+            if (m_eventBridge != null)
+            {
+                EditorGUILayout.LabelField("桥收到",
+                    "伤害 " + m_eventBridge.HitsForwarded
+                    + "，怪死 " + m_eventBridge.MonstersDied
+                    + "，英雄死 " + m_eventBridge.HeroesDied
+                    + "，我的掉落 " + m_eventBridge.DropsClaimed
+                    + "，别人的掉落 " + m_eventBridge.DropsOfOthers);
+            }
+
+            EditorGUILayout.LabelField("网络层收到",
+                "伤害 " + m_session.HitsReceived
+                + "，死亡 " + m_session.DeathsReceived
+                + "，掉落 " + m_session.DropsReceived);
+
+            if (GUILayout.Button("重置演示条件进度", GUILayout.Height(22f)))
+            {
+                m_conditions.Unregister(DemoConditionKey);
+                m_conditions.Register(DemoConditionKey,
+                    new ConditionDef(EConditionEvent.KillMonster, DemoMonsterId, DemoKillCount), true);
+                m_demoConditionMetCount = 0;
+                AddLog("演示条件进度已重置");
+            }
+
+            if (!m_session.InRoom)
+            {
+                EditorGUILayout.HelpBox(
+                    "还没进房。进房后打死的怪才会变成事件 —— 这就是 M3 收关时那条「任务闭环断口」，"
+                    + "现在由 `ServerEventBridge` 接上了。",
+                    MessageType.Info);
+            }
+        }
+
         /// <summary>画日志区。</summary>
         private void DrawLog()
         {
@@ -478,6 +587,37 @@ namespace NBC.EditorTools
             AddLog("=== 连接 " + m_host + ":" + m_port + "（玩家名 " + m_playerName + "）===");
 
             m_session.Connect(m_host, m_port);
+
+            StartQuestLoopDemo();
+        }
+
+        /// <summary>
+        /// M4-S1：接上"联机战斗 → 任务条件"这条链。
+        /// <para>⚠️ 条件系统与它的桥**只建一次**（它们挂在全局 `EventCenter` 上）——
+        /// 每次连接都建一份的话，同一个事件会被喂进条件系统两次，进度翻倍且看不出来。
+        /// 每次连接只重建"跟当前会话绑定"的那座 `ServerEventBridge`。</para>
+        /// </summary>
+        private void StartQuestLoopDemo()
+        {
+            if (m_conditions == null)
+            {
+                m_conditions = new ConditionTracker(new InMemoryConditionProgressStore());
+
+                m_conditionBridge = new ConditionEventBridge(m_conditions);
+                m_conditionBridge.Bind<MonsterDiedPayload>(BattleEvents.MonsterDied,
+                    EConditionEvent.KillMonster, payload => payload.MonsterConfigId);
+
+                m_conditions.ConditionMet += (key, progress) =>
+                {
+                    m_demoConditionMetCount++;
+                    AddLog("条件达成：" + progress + "（条件编号 " + key + "）");
+                };
+
+                m_conditions.Register(DemoConditionKey,
+                    new ConditionDef(EConditionEvent.KillMonster, DemoMonsterId, DemoKillCount), true);
+            }
+
+            m_eventBridge = new ServerEventBridge(m_session);
         }
 
         /// <summary>断开并释放。</summary>
@@ -490,6 +630,14 @@ namespace NBC.EditorTools
             }
 
             AddLog("=== " + reason + " ===");
+
+            // 先退订桥（它订阅的是这个会话的事件），再 Dispose 会话
+            if (m_eventBridge != null)
+            {
+                m_eventBridge.Dispose();
+                m_eventBridge = null;
+            }
+
             m_session.Dispose();
             m_session = null;
             m_transport = null;

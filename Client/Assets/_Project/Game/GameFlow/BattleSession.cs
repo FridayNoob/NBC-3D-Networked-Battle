@@ -115,6 +115,13 @@ namespace NBC.Game.GameFlow
                 EConditionEvent.UseSkill, payload => payload.SkillId);
             m_bridge.Bind<AreaEnteredPayload>(WorldEvents.AreaEntered,
                 EConditionEvent.ReachArea, payload => payload.AreaId);
+
+            // M4-S1：掉落也算一条链路（"收集 N 个物品"）。
+            // ⚠️ 这里**不判归属** —— `ItemDropped` 本身就是"归我的掉落"
+            //    （归属判断在 `ServerEventBridge` 里，见那个文件头）。
+            //    若在这里再写一次归属判断，就成了"同一规则两处实现"，两边迟早不一致。
+            m_bridge.Bind<ItemDroppedPayload>(BattleEvents.ItemDropped,
+                EConditionEvent.CollectItem, payload => payload.ItemId);
         }
 
         /// <summary>战斗世界（演示/调试要看在场单位时用）。</summary>

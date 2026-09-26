@@ -628,6 +628,67 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  八、伤害与死亡（M4-S1：网络层只负责"收下来 → 记数 → 发事件"）
+        // ====================================================================
+
+        /// <summary>伤害事件：记数、留最近一条、发事件，**且不会跑到掉落那边去**。</summary>
+        [Test]
+        public void DamageEvent_IsRecordedAndForwarded()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            List<DamageEvent> got = new List<DamageEvent>();
+            session.DamageReceived += got.Add;
+
+            fake.PushFrame(new ServerMessage
+            {
+                Event = new ServerEvent
+                {
+                    Damage = new DamageEvent { AttackerId = 3, TargetId = 12, Applied = 100, RemainingHp = 200 },
+                },
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(1, got.Count, "应当转发一条伤害事件");
+            Assert.AreEqual(3, got[0].AttackerId);
+            Assert.AreEqual(100, got[0].Applied);
+            Assert.AreEqual(1, session.HitsReceived);
+            Assert.AreEqual(12, session.LastDamage.TargetId);
+            Assert.AreEqual(0, session.DropsReceived, "伤害不是掉落");
+            Assert.AreEqual(0, session.DeathsReceived, "伤害不是死亡");
+        }
+
+        /// <summary>死亡事件：记数、留最近一条、发事件；`kind` 与 `config_id` 原样带过去。</summary>
+        [Test]
+        public void DeathEvent_IsRecordedAndForwarded()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            List<DeathEvent> got = new List<DeathEvent>();
+            session.DeathReceived += got.Add;
+
+            fake.PushFrame(new ServerMessage
+            {
+                Event = new ServerEvent
+                {
+                    Death = new DeathEvent { EntityId = 12, ConfigId = 6001, Kind = 1, KillerId = 3 },
+                },
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(1, got.Count, "应当转发一条死亡事件");
+            Assert.AreEqual(6001, got[0].ConfigId, "配置编号要如实带过来（任务条件靠它）");
+            Assert.AreEqual(1, got[0].Kind, "1 = 怪物（装配层按它分派成 MonsterDied / HeroDied）");
+            Assert.AreEqual(1, session.DeathsReceived);
+            Assert.AreEqual(12, session.LastDeath.EntityId);
+            Assert.AreEqual(0, session.HitsReceived, "死亡不是伤害");
+        }
+
+        // ====================================================================
         //  辅助
         // ====================================================================
 

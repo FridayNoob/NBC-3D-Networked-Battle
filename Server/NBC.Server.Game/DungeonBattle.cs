@@ -351,6 +351,12 @@ public sealed class DungeonBattle
     /// <summary>待广播的服务端事件（掉落等；由 `RoomBattleService` 每帧取走，S7）。</summary>
     private readonly List<DropEvent> _pendingDrops = new();
 
+    /// <summary>待广播的伤害事件（M4-S1：每一次扣血一条）。</summary>
+    private readonly List<DamageEvent> _pendingHits = new();
+
+    /// <summary>待广播的死亡事件（M4-S1：英雄与怪都发，客户端按 `kind` 分派）。</summary>
+    private readonly List<DeathEvent> _pendingDeaths = new();
+
     /// <summary>本局的**确定性**随机数（见 `BattleRandom` 的注释：为什么不能用 `System.Random`）。</summary>
     private readonly BattleRandom _random;
 
@@ -739,15 +745,63 @@ public sealed class DungeonBattle
         DamageOutcome outcome = DamageMath.Resolve(target.Hp, damage);
         target.SetHp(outcome.RemainingHp);
 
-        // **从活着打到死**那一下才掷掉落（打尸体不重复掉，M2 已经在共享层钉过"打 0 血不判致死"）
-        if (wasAlive && !target.Alive && target.Kind == 1 && _tables != null)
+        // M4-S1：**每一次扣血**都记一条待广播的伤害事件（表现层的飘字、以及"造成伤害"类条件都靠它）。
+        // ⚠️ 记的是 `outcome.Applied`（**实际扣掉的血**），不是传进来的 `damage` ——
+        //    打只剩 5 血的怪，打出去 100 也只该显示 5。
+        _pendingHits.Add(new DamageEvent
         {
-            BattleEntity? attacker = Find(attackerId);
-            long winner = attacker == null ? 0 : attacker.PlayerId;
-            RollDrops(_tables, target.ConfigId, winner);
+            AttackerId = attackerId,
+            TargetId = targetId,
+            Applied = outcome.Applied,
+            RemainingHp = outcome.RemainingHp,
+        });
+
+        // **从活着打到死**那一下才掷掉落（打尸体不重复掉，M2 已经在共享层钉过"打 0 血不判致死"）
+        if (wasAlive && !target.Alive)
+        {
+            // M4-S1：死亡事件**两种单位都发**（英雄也会死）。
+            // ⚠️ 客户端那边靠 `kind` 分派成两个不同的游戏事件（`MonsterDied` / `HeroDied`）——
+            //    理由见 `BattleEvents.cs` 文件头：合并成一个"带 kind 的死亡事件"会让
+            //    "玩家死了"被误当成"击杀了一个目标 0"，而 0 = 任意目标 ⇒ 任何击杀任务都会涨进度。
+            _pendingDeaths.Add(new DeathEvent
+            {
+                EntityId = target.Id,
+                ConfigId = target.ConfigId,
+                Kind = target.Kind,
+                KillerId = attackerId,
+            });
+
+            if (target.Kind == 1 && _tables != null)
+            {
+                BattleEntity? attacker = Find(attackerId);
+                long winner = attacker == null ? 0 : attacker.PlayerId;
+                RollDrops(_tables, target.ConfigId, winner);
+            }
         }
 
         return DamageResult.Success(target, outcome, attackerId);
+    }
+
+    /// <summary>
+    /// 取走待广播的**伤害事件**（取走即清空；`RoomBattleService` 每帧调一次，M4-S1）。
+    /// </summary>
+    /// <param name="buffer">接收结果的表（会先清空）。</param>
+    public void CopyPendingHits(List<DamageEvent> buffer)
+    {
+        buffer.Clear();
+        buffer.AddRange(_pendingHits);
+        _pendingHits.Clear();
+    }
+
+    /// <summary>
+    /// 取走待广播的**死亡事件**（取走即清空；`RoomBattleService` 每帧调一次，M4-S1）。
+    /// </summary>
+    /// <param name="buffer">接收结果的表（会先清空）。</param>
+    public void CopyPendingDeaths(List<DeathEvent> buffer)
+    {
+        buffer.Clear();
+        buffer.AddRange(_pendingDeaths);
+        _pendingDeaths.Clear();
     }
 
     /// <summary>

@@ -36,7 +36,11 @@ param(
     [string] $PuppeteerConfig = "C:\TEMP\mmdc\puppeteer.json",
 
     # 产物目录（相对本脚本所在目录）
-    [string] $OutDir = "out"
+    [string] $OutDir = "out",
+
+    # **只校验语法、不产出产物**的目录（相对仓库根；这些文档里的图在 GitHub 上原生渲染，
+    # 不需要再存一份 SVG —— 20 多篇教程全存下来是几 MB）
+    [string[]] $ExtraDirs = @("Docs\教学", "Docs\排查手册")
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,12 +80,36 @@ $temp = Join-Path $env:TEMP "nbc_mermaid"
 if (-not (Test-Path $temp)) { New-Item -ItemType Directory -Path $temp | Out-Null }
 
 # ---------------------------------------------------------------- 逐 md 抠块渲染
-$docs = Get-ChildItem $root -Filter *.md | Where-Object { $_.Name -ne "README.md" } | Sort-Object Name
+# 两类目录：
+#   · 产物目录（本目录）：每块渲成 out\<篇名>-<序号>.svg 并**提交进仓库**
+#   · 仅校验目录（Docs\教学、Docs\排查手册）：渲到临时目录，只回答"语法对不对"，
+#     **不产出、不提交** —— 那些文档里的图在 GitHub 上是原生渲染的，
+#     我们只需要保证"它不会画出个错误框"，不需要再存 20 多份 SVG（那是几 MB）
+$repoRoot = Split-Path (Split-Path $root -Parent) -Parent
+$artifactDocs = Get-ChildItem $root -Filter *.md | Where-Object { $_.Name -ne "README.md" } | Sort-Object Name
+$checkDocs = @()
+
+foreach ($dir in $ExtraDirs) {
+    $full = if ([System.IO.Path]::IsPathRooted($dir)) { $dir } else { Join-Path $repoRoot $dir }
+
+    if (Test-Path $full) {
+        $checkDocs += Get-ChildItem $full -Filter *.md -Recurse | Sort-Object FullName
+    }
+}
+
 $total = 0
 $failed = 0
+$artifactCount = 0
+$checkCount = 0
 $rows = @()
 
-foreach ($doc in $docs) {
+$targets = @()
+foreach ($d in $artifactDocs) { $targets += [pscustomobject]@{ Doc = $d; Artifact = $true } }
+foreach ($d in $checkDocs) { $targets += [pscustomobject]@{ Doc = $d; Artifact = $false } }
+
+foreach ($target in $targets) {
+    $doc = $target.Doc
+    $isArtifact = $target.Artifact
     $text = [System.IO.File]::ReadAllText($doc.FullName, [System.Text.Encoding]::UTF8)
     $blocks = [regex]::Matches($text, '(?s)```mermaid\r?\n(.*?)\r?\n```')
 
@@ -92,7 +120,17 @@ foreach ($doc in $docs) {
         $total++
 
         $base = [System.IO.Path]::GetFileNameWithoutExtension($doc.Name)
-        $svg = Join-Path $out ("{0}-{1}.svg" -f $base, $n)
+
+        # 同名文档在不同目录里会撞名（教程与排查手册各有一批），所以仅校验的那些带上前缀
+        if ($isArtifact) {
+            $svg = Join-Path $out ("{0}-{1}.svg" -f $base, $n)
+            $shown = "{0}-{1}.svg" -f $base, $n
+        }
+        else {
+            $svg = Join-Path $temp ("check-{0}-{1}.svg" -f $base, $n)
+            $shown = "(仅校验)"
+        }
+
         $mmd = Join-Path $temp ("{0}-{1}.mmd" -f $base, $n)
 
         # mmd 用 UTF-8 **带 BOM** 写：mmdc 在 Windows 上读无 BOM 的中文会乱码
@@ -137,11 +175,13 @@ foreach ($doc in $docs) {
             }
         }
 
+        if ($isArtifact) { $artifactCount++ } else { $checkCount++ }
+
         if (-not $ok) { $failed++ }
 
         $rows += [pscustomobject]@{
             图    = "$($doc.Name) 第 $n 块"
-            产物  = (Split-Path $svg -Leaf)
+            产物  = $shown
             大小  = if (Test-Path $svg) { (Get-Item $svg).Length } else { 0 }
             结果  = if ($ok) { "OK" } else { "失败：" + $why }
         }
@@ -155,6 +195,7 @@ foreach ($doc in $docs) {
 # 只读工具必须能被管道组合（本次两个脚本都栽在这上面）。
 Write-Output ($rows | Format-Table -AutoSize | Out-String).TrimEnd()
 
-Write-Output ("渲染 {0} 块，失败 {1} 块；产物目录：{2}" -f $total, $failed, $out)
+Write-Output ("渲染 {0} 块（产物 {1} 块、仅校验 {2} 块），失败 {3} 块；产物目录：{4}" -f `
+    $total, $artifactCount, $checkCount, $failed, $out)
 
 if ($failed -gt 0) { exit 1 }

@@ -87,6 +87,12 @@ public sealed class RoomBattleService
     /// <summary>取掉落事件用的缓冲（每帧复用，避免每帧分配）。</summary>
     private readonly List<DropEvent> _dropBuffer = new();
 
+    /// <summary>取伤害事件用的缓冲（M4-S1；同样每帧复用）。</summary>
+    private readonly List<DamageEvent> _hitBuffer = new();
+
+    /// <summary>取死亡事件用的缓冲（M4-S1）。</summary>
+    private readonly List<DeathEvent> _deathBuffer = new();
+
     /// <summary>每个玩家**最近一条**输入（移动是"状态"，所以只留最新的一条，见文件头第二节）。</summary>
     private readonly Dictionary<long, PendingInput> _inputs = new();
 
@@ -131,6 +137,12 @@ public sealed class RoomBattleService
     /// <summary>累计广播出去多少条掉落事件（S7）。</summary>
     public long DropsSent { get; private set; }
 
+    /// <summary>累计广播出去多少条伤害事件（M4-S1）。</summary>
+    public long HitsSent { get; private set; }
+
+    /// <summary>累计广播出去多少条死亡事件（M4-S1）。</summary>
+    public long DeathsSent { get; private set; }
+
     /// <summary>把输入处理器注册进路由（**显式注册**，见 `ServerMessageRouter`）。</summary>
     /// <param name="router">路由。</param>
     public void RegisterHandlers(ServerMessageRouter router)
@@ -172,8 +184,9 @@ public sealed class RoomBattleService
             ReconcileHeroes(battle, room);      // ② 先让"席位"与"英雄"对上，再吃输入
             ApplyInputs(battle, room);          // ③ 移动是状态：每帧用最新那条
             battle.Step();                      // ④
-            BroadcastDrops(battle, room);       // ⑤ 掉落事件（S7）：**同一份字节发给全房**
-            BroadcastSnapshot(battle, room);    // ⑥
+            BroadcastCombatEvents(battle, room); // ⑤ 伤害 + 死亡事件（M4-S1）：顺序就是客户端的因果顺序
+            BroadcastDrops(battle, room);       // ⑥ 掉落事件（S7）：**同一份字节发给全房**
+            BroadcastSnapshot(battle, room);    // ⑦
             TicksRun++;
         }
     }
@@ -392,13 +405,16 @@ public sealed class RoomBattleService
         };
     }
 
-    /// <summary>把一张快照发给房里的每个人（**序列化一次**，见文件头 ①）。</summary>
-    /// <param name="battle">世界。</param>
+    /// <summary>
+    /// 把一条**已经序列化好的**服务端消息发给房里的每个人。
+    /// <para>⚠️ 快照 / 战斗事件 / 掉落三条广播共用这一个函数：**"同一份字节发给全房"**
+    /// 是 S7 与 M4-S1 共同的地基 —— 一处分实现，迟早有一路会漏掉某个席位。</para>
+    /// </summary>
+    /// <param name="payload">已经序列化好的字节。</param>
     /// <param name="room">房间。</param>
-    /// <returns>成功发出去几份。</returns>
-    private int BroadcastSnapshot(DungeonBattle battle, Room room)
+    /// <returns>成功发出去几份（按席位计）。</returns>
+    private int SendToRoom(byte[] payload, Room room)
     {
-        byte[] payload = new ServerMessage { Snapshot = battle.ToSnapshot() }.ToByteArray();
         int sent = 0;
 
         for (int i = 0; i < room.Seats.Count; i++)
@@ -409,7 +425,75 @@ public sealed class RoomBattleService
             }
         }
 
+        return sent;
+    }
+
+    /// <summary>把一张快照发给房里的每个人（**序列化一次**，见文件头 ①）。</summary>
+    /// <param name="battle">世界。</param>
+    /// <param name="room">房间。</param>
+    /// <returns>成功发出去几份。</returns>
+    private int BroadcastSnapshot(DungeonBattle battle, Room room)
+    {
+        byte[] payload = new ServerMessage { Snapshot = battle.ToSnapshot() }.ToByteArray();
+        int sent = SendToRoom(payload, room);
+
         SnapshotsSent += sent;
+        return sent;
+    }
+
+    /// <summary>
+    /// 把这一帧产生的**伤害 / 死亡事件**发给房里的每个人（M4-S1）。
+    /// <para>⚠️ 顺序是**先伤害、后死亡**，与 M2 本地战斗定下的因果顺序一致
+    /// （`BattleWorld.CastSkill` 的顺序契约：`SkillHit` → `DamageDealt` → 死亡事件）。
+    /// 反过来的话表现层会先看到"它死了"、再看到"它挨了这一下"。</para>
+    /// <para>⚠️ 与快照/掉落同一条规矩：**每条事件只序列化一次**，同一份字节发给全房 ——
+    /// 两端看到的是同一份伤害/死亡，不是"各自算了一遍碰巧一样"。</para>
+    /// <para>⚠️ 每次扣血**不打日志**（一个英雄 0.5 秒一次，两个英雄就是每秒 4 行，会把真问题淹掉）；
+    /// 只累加 `HitsSent`，死亡才记一句 —— 判据同"世界内拒绝只记日志"那一族。</para>
+    /// </summary>
+    /// <param name="battle">世界。</param>
+    /// <param name="room">房间。</param>
+    /// <returns>发出去几份（伤害 + 死亡合计，按席位计）。</returns>
+    private int BroadcastCombatEvents(DungeonBattle battle, Room room)
+    {
+        battle.CopyPendingHits(_hitBuffer);
+        battle.CopyPendingDeaths(_deathBuffer);
+
+        if (_hitBuffer.Count == 0 && _deathBuffer.Count == 0)
+        {
+            return 0;
+        }
+
+        int sent = 0;
+
+        // ① 伤害（每次扣血一条）
+        for (int h = 0; h < _hitBuffer.Count; h++)
+        {
+            byte[] payload = new ServerMessage
+            {
+                Event = new ServerEvent { Damage = _hitBuffer[h] },
+            }.ToByteArray();
+
+            sent += SendToRoom(payload, room);
+            HitsSent++;
+        }
+
+        // ② 死亡（英雄与怪都发；客户端按 `kind` 分派成两个不同的游戏事件）
+        for (int d = 0; d < _deathBuffer.Count; d++)
+        {
+            byte[] payload = new ServerMessage
+            {
+                Event = new ServerEvent { Death = _deathBuffer[d] },
+            }.ToByteArray();
+
+            sent += SendToRoom(payload, room);
+            DeathsSent++;
+            Note?.Invoke($"死亡：{(_deathBuffer[d].Kind == 1 ? "怪" : "英雄")} {_deathBuffer[d].ConfigId}" +
+                         $"（实例 {_deathBuffer[d].EntityId}，击杀者 {_deathBuffer[d].KillerId}）");
+        }
+
+        _hitBuffer.Clear();
+        _deathBuffer.Clear();
         return sent;
     }
 
@@ -439,13 +523,7 @@ public sealed class RoomBattleService
                 Event = new ServerEvent { Drop = _dropBuffer[d] },
             }.ToByteArray();
 
-            for (int i = 0; i < room.Seats.Count; i++)
-            {
-                if (_transport.Send(room.Seats[i].Session.SessionId, payload))
-                {
-                    sent++;
-                }
-            }
+            sent += SendToRoom(payload, room);
 
             DropsSent++;
             Note?.Invoke($"掉落：物品 {_dropBuffer[d].ItemId} × {_dropBuffer[d].Count}" +
