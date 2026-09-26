@@ -68,6 +68,21 @@ internal static class Program
         //    这正是"走不到的分支比没有分支更糟"。它该待的地方是测试，见
         //    `Tests\EditMode\Net\ProtocolTests.cs` 的 `TickRate_MatchesSharedLayerLogicRate`。
 
+        // 配置表（S6）：副本阵容与数值都从表里来 —— 读不到就**不启动**（见下面 try/catch）
+        if (!ServerTables.TryResolveConfigDir(out string configDir))
+        {
+            Console.WriteLine("[致命] 找不到配置表目录 `Configs\\Design`（从程序集所在目录往上找了 8 层）。");
+            return 3;
+        }
+
+        if (!ServerTables.TryLoad(configDir, out ServerTables tables, out string tablesError))
+        {
+            Console.WriteLine("[致命] " + tablesError);
+            return 3;
+        }
+
+        Console.WriteLine($"[Check] {tables.Describe()}");
+
         var transport = new TcpServerTransport(port);
         var router = new ServerMessageRouter($"nbc-server/{version}");
         var pump = new ServerMessagePump(transport, router);
@@ -81,7 +96,7 @@ internal static class Program
         rooms.Note += line => Log(quiet, "[房间] " + line);
 
         // 状态同步（S5）：每个房间一个权威世界，每逻辑帧推进并下发全量快照（30Hz）
-        var battles = new RoomBattleService(transport, rooms.Registry);
+        var battles = new RoomBattleService(transport, rooms.Registry, tables);
         battles.Note += line => Log(quiet, "[战斗] " + line);
 
         // 输入上行（S5b）：客户端只发**意图**，服务端说了算（动多远、打不打得到）

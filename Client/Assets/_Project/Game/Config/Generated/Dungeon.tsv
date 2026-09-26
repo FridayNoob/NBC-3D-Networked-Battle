@@ -1,0 +1,3 @@
+id	name	maxPlayers	spawnRadiusMm	monsters	bossId
+1001	狼巢	4	3000	6001,6001	6003
+1002	蛛网洞穴	4	2500	6002,6002,6002	6003

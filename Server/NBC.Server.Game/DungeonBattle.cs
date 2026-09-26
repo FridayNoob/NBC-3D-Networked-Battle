@@ -42,6 +42,7 @@
 using System.Collections.Generic;
 using NBC.Protocol;
 using NBC.Shared.Battle;
+using NBC.Shared.Net;
 
 namespace NBC.Server.Game;
 
@@ -96,6 +97,9 @@ public sealed class BattleEntity
     /// <summary>普攻冷却还剩几帧（&gt; 0 时打不出来）。**由 `Step()` 每帧递减**。</summary>
     public int AttackCooldownTicksLeft { get; private set; }
 
+    /// <summary>是不是 BOSS（S6：BOSS 也是怪，但"+只数一个"用得上这个标记）。</summary>
+    public bool IsBoss { get; private set; }
+
     /// <summary>造一个单位。</summary>
     /// <param name="id">实例编号。</param>
     /// <param name="configId">配置编号。</param>
@@ -107,9 +111,10 @@ public sealed class BattleEntity
     /// <param name="patrolMinMm">巡逻下限。</param>
     /// <param name="patrolMaxMm">巡逻上限。</param>
     /// <param name="playerId">所属玩家（0 = 无主）。</param>
+    /// <param name="isBoss">是不是 BOSS。</param>
     public BattleEntity(int id, int configId, int kind, int maxHp, int posXmm, int posZmm,
                         int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
-                        long playerId = 0)
+                        long playerId = 0, bool isBoss = false)
     {
         Id = id;
         ConfigId = configId;
@@ -122,6 +127,7 @@ public sealed class BattleEntity
         PatrolMinMm = patrolMinMm;
         PatrolMaxMm = patrolMaxMm;
         PlayerId = playerId;
+        IsBoss = isBoss;
     }
 
     /// <summary>推进一帧（冷却倒计时 + 巡逻移动 + 朝向）。</summary>
@@ -300,29 +306,33 @@ public readonly struct DamageResult
 /// <summary>一局副本战斗的**权威世界**（M3 状态同步）。</summary>
 public sealed class DungeonBattle
 {
-    /// <summary>英雄满速移动（毫米/帧）。150 × 30Hz = 4.5 米/秒 —— 走路偏快、跑步偏慢，先这么定。</summary>
-    public const int HeroMoveMmPerTick = 150;
-
     /// <summary>场地半径（毫米）：出界钳位。5 米见方，够 M3 演示走位。</summary>
     public const int PlayAreaHalfExtentMm = 5000;
 
-    /// <summary>普攻伤害。TODO(S6)：接 `Skill` 配置表之后从表里读。</summary>
-    public const int BasicAttackDamage = 30;
-
-    /// <summary>普攻射程（毫米，切比雪夫距离）。</summary>
+    /// <summary>
+    /// 普攻射程（毫米，切比雪夫距离）。
+    /// <para>⚠️ TODO(S6+)：表里还没有"射程"这一列（`Skill` 表只有伤害与命中帧）。
+    /// 加起来是"加表"的事，等真需要不同技能不同射程时再做 —— **别提前占坑**。</para>
+    /// </summary>
     public const int BasicAttackRangeMm = 2000;
 
     /// <summary>普攻冷却（帧）。15 帧 = 0.5 秒（30Hz）。</summary>
     public const int BasicAttackCooldownTicks = 15;
 
-    /// <summary>英雄的配置编号。TODO(S6)：从 `Dungeon`/`Hero` 表里读。</summary>
+    /// <summary>英雄的配置编号（M3 固定用剑士）。TODO(S6+)：让它跟玩家选的英雄走。</summary>
     public const int HeroConfigId = 1001;
-
-    /// <summary>英雄的最大血量。</summary>
-    public const int HeroMaxHp = 300;
 
     private readonly List<BattleEntity> _entities = new();
     private int _nextEntityId = 1;
+
+    /// <summary>英雄满速移动（毫米/帧）—— **来自 `Hero` 表**（毫米/秒 ÷ 30Hz）。</summary>
+    public int HeroMoveMmPerTick { get; }
+
+    /// <summary>英雄最大血量 —— **来自 `Hero` 表**。</summary>
+    public int HeroMaxHp { get; }
+
+    /// <summary>英雄普攻伤害 —— **来自 `Skill` 表**（英雄的第一个技能）。</summary>
+    public int BasicAttackDamage { get; }
 
     /// <summary>房号（和 `Room.RoomId` 对应）。</summary>
     public string RoomId { get; }
@@ -374,16 +384,42 @@ public sealed class DungeonBattle
         }
     }
 
+    /// <summary>BOSS 数量（`Kind == 1` 且配置号等于 `Dungeon.bossId` 的单位）。</summary>
+    public int BossCount
+    {
+        get
+        {
+            int count = 0;
+
+            for (int i = 0; i < _entities.Count; i++)
+            {
+                if (_entities[i].IsBoss)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+    }
+
     /// <summary>本局结束了吗（怪物清空 或 英雄全灭）。</summary>
     public bool IsFinished => AliveMonsterCount == 0 || AliveHeroCount == 0;
 
-    /// <summary>造一个世界。</summary>
+    /// <summary>造一个世界（数值全来自配置表，见 <see cref="FromDungeon"/>）。</summary>
     /// <param name="roomId">房号。</param>
     /// <param name="dungeonId">副本编号。</param>
-    public DungeonBattle(string roomId, int dungeonId)
+    /// <param name="heroMoveMmPerTick">英雄移速（毫米/帧，来自 `Hero` 表）。</param>
+    /// <param name="heroMaxHp">英雄血量（来自 `Hero` 表）。</param>
+    /// <param name="basicAttackDamage">普攻伤害（来自 `Skill` 表）。</param>
+    public DungeonBattle(string roomId, int dungeonId,
+                         int heroMoveMmPerTick, int heroMaxHp, int basicAttackDamage)
     {
         RoomId = roomId;
         DungeonId = dungeonId;
+        HeroMoveMmPerTick = heroMoveMmPerTick;
+        HeroMaxHp = heroMaxHp;
+        BasicAttackDamage = basicAttackDamage;
     }
 
     /// <summary>加一个单位。</summary>
@@ -396,13 +432,14 @@ public sealed class DungeonBattle
     /// <param name="patrolMinMm">巡逻下限。</param>
     /// <param name="patrolMaxMm">巡逻上限。</param>
     /// <param name="playerId">所属玩家（0 = 无主）。</param>
+    /// <param name="isBoss">是不是 BOSS。</param>
     /// <returns>新单位。</returns>
     public BattleEntity AddEntity(int configId, int kind, int maxHp, int posXmm, int posZmm,
                                   int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
-                                  long playerId = 0)
+                                  long playerId = 0, bool isBoss = false)
     {
         var entity = new BattleEntity(_nextEntityId, configId, kind, maxHp, posXmm, posZmm,
-                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm, playerId);
+                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm, playerId, isBoss);
         _nextEntityId++;
         _entities.Add(entity);
         return entity;
@@ -607,26 +644,101 @@ public sealed class DungeonBattle
     }
 
     /// <summary>
-    /// M3 的临时关卡：**只有怪**（2 只巡逻的狼）。
+    /// **按配置表造一局**（M3-S6 起）：阵容、血量、移速、普攻伤害**全部来自表**。
     /// <para>
-    /// ⚠️ 2026-09-23（S5b）改过：原来这里顺手放了一个"英雄"，现在**英雄由席位决定**
-    /// （`RoomBattleService` 每个席位补一个英雄、席位走了就移出）——
-    /// 否则 2 人房里会多出一个没人控制的幽灵英雄。
+    /// 表 → 世界的对应关系（一眼看懂）：
+    /// · `Dungeon.monsters`（可重复 = 多只）→ 普通怪，摆在出生点半径附近、在 ±500mm 内巡逻
+    /// · `Dungeon.bossId` → BOSS，摆在场地另一端
+    /// · `Monster.hp` → 每只怪的最大血量
+    /// · `Hero.hp` / `Hero.moveSpeed` → 英雄的血与移速（移速 **毫米/秒 ÷ 30Hz** = 毫米/帧）
+    /// · `Hero.skillIds[0]` → `Skill.damage`，M3 当"普攻"用
     /// </para>
-    /// <para>⚠️ TODO(S6)：改从 `Dungeon` / `Monster` 配置表生成（S6 加表**不改工具代码**）。</para>
+    /// <para>
+    /// ⚠️ **英雄自己不在关卡里**（由 `RoomBattleService` 按席位补）—— 这是 S5b 定下的，见那个类的注释。
+    /// </para>
     /// </summary>
     /// <param name="roomId">房号。</param>
     /// <param name="dungeonId">副本编号。</param>
-    /// <returns>世界。</returns>
-    public static DungeonBattle CreateStarterDungeon(string roomId, int dungeonId)
+    /// <param name="tables">配置表。</param>
+    /// <param name="error">失败原因（副本人不在表里 / 怪的编号查不到）。</param>
+    /// <returns>世界；失败返回 null。</returns>
+    public static DungeonBattle? FromDungeon(string roomId, int dungeonId, ServerTables tables, out string error)
     {
-        var battle = new DungeonBattle(roomId, dungeonId);
+        error = string.Empty;
 
-        // 两只狼：在 2 米区间里来回巡逻（60 毫米/帧 ≈ 1.8 米/秒）
-        battle.AddEntity(configId: 6001, kind: 1, maxHp: 120, posXmm: 2000, posZmm: 1000,
-                         patrolSpeedMmPerTick: 60, patrolMinMm: 1500, patrolMaxMm: 2500);
-        battle.AddEntity(configId: 6001, kind: 1, maxHp: 120, posXmm: 2000, posZmm: -1000,
-                         patrolSpeedMmPerTick: 40, patrolMinMm: 1000, patrolMaxMm: 2500);
+        DungeonRow? dungeon = tables.FindDungeon(dungeonId);
+
+        if (dungeon == null)
+        {
+            error = $"副本 {dungeonId} 不在 `Dungeon` 表里";
+            return null;
+        }
+
+        // 英雄数值：表和"英雄配置编号"绑死（TODO(S6+)：跟玩家选的英雄走）
+        HeroRow? hero = tables.FindHero(HeroConfigId);
+
+        if (hero == null)
+        {
+            error = $"英雄 {HeroConfigId} 不在 `Hero` 表里";
+            return null;
+        }
+
+        int heroMoveMmPerTick = hero.Value.MoveSpeedMmPerSec / NetContract.TickRate;
+
+        if (heroMoveMmPerTick <= 0)
+        {
+            error = $"英雄 {HeroConfigId} 的 moveSpeed={hero.Value.MoveSpeedMmPerSec} 太小，除以 {NetContract.TickRate}Hz 之后是 0";
+            return null;
+        }
+
+        int attackDamage = 0;
+        int[] heroSkills = hero.Value.SkillIds;
+
+        if (heroSkills.Length > 0)
+        {
+            SkillRow? skill = tables.FindSkill(heroSkills[0]);
+            attackDamage = skill?.Damage ?? 0;
+        }
+
+        if (attackDamage <= 0)
+        {
+            error = $"英雄 {HeroConfigId} 的普攻伤害算出来是 {attackDamage}（检查 `Hero.skillIds[0]` 与 `Skill.damage`）";
+            return null;
+        }
+
+        var battle = new DungeonBattle(roomId, dungeonId, heroMoveMmPerTick, hero.Value.Hp, attackDamage);
+
+        // 普通怪：写重复就是多只；沿 Z 轴一字排开（确定性），每只在自己的出生点附近 ±500mm 巡逻
+        int[] monsters = dungeon.Value.Monsters;
+        int radius = dungeon.Value.SpawnRadiusMm;
+
+        for (int i = 0; i < monsters.Length; i++)
+        {
+            MonsterRow? monster = tables.FindMonster(monsters[i]);
+
+            if (monster == null)
+            {
+                error = $"副本 {dungeonId} 里的怪 {monsters[i]} 不在 `Monster` 表里";
+                return null;
+            }
+
+            int z = (i - (monsters.Length - 1) / 2) * 1500;
+            int spawnX = radius;
+
+            battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
+                             patrolSpeedMmPerTick: 60, patrolMinMm: spawnX - 500, patrolMaxMm: spawnX + 500);
+        }
+
+        // BOSS：摆在对面（x = -radius），把"血量厚、攻击高"从表里带出来
+        MonsterRow? boss = tables.FindMonster(dungeon.Value.BossId);
+
+        if (boss == null)
+        {
+            error = $"副本 {dungeonId} 的 BOSS {dungeon.Value.BossId} 不在 `Monster` 表里";
+            return null;
+        }
+
+        battle.AddEntity(boss.Value.Id, 1, boss.Value.Hp, -radius, 0, isBoss: true);
 
         return battle;
     }

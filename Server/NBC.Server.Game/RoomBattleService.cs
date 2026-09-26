@@ -81,6 +81,7 @@ public sealed class RoomBattleService
 
     private readonly INetTransport _transport;
     private readonly RoomRegistry _registry;
+    private readonly ServerTables _tables;
     private readonly Dictionary<string, DungeonBattle> _battles = new(StringComparer.Ordinal);
 
     /// <summary>每个玩家**最近一条**输入（移动是"状态"，所以只留最新的一条，见文件头第二节）。</summary>
@@ -89,10 +90,12 @@ public sealed class RoomBattleService
     /// <summary>建一个房间战斗服务。</summary>
     /// <param name="transport">传输（下发快照 / 回错误要用它）。</param>
     /// <param name="registry">房间表（决定"哪些房间还该活着"）。</param>
-    public RoomBattleService(INetTransport transport, RoomRegistry registry)
+    /// <param name="tables">配置表（S6 起：阵容与数值都从表里来）。</param>
+    public RoomBattleService(INetTransport transport, RoomRegistry registry, ServerTables tables)
     {
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _tables = tables ?? throw new ArgumentNullException(nameof(tables));
     }
 
     /// <summary>值得记一句的事情（开打、进出副本、攻击判定、房间清场）。</summary>
@@ -182,11 +185,20 @@ public sealed class RoomBattleService
             return existing;
         }
 
-        // TODO(S6)：`CreateStarterDungeon` 现在写死 2 只狼，将来按 `room.DungeonId` 读配置表
-        DungeonBattle battle = DungeonBattle.CreateStarterDungeon(room.RoomId, room.DungeonId);
+        DungeonBattle? built = DungeonBattle.FromDungeon(room.RoomId, room.DungeonId, _tables, out string error);
+
+        if (built == null)
+        {
+            // 副本人不在表里：**不静默开一个空世界**（那会表现成"进去什么都没有"，极难查）
+            Note?.Invoke($"房间 {room.RoomId} 开不了：{error}");
+            throw new InvalidOperationException($"[RoomBattleService] 房间 {room.RoomId} 开不了：{error}");
+        }
+
+        DungeonBattle battle = built;
         _battles.Add(room.RoomId, battle);
 
-        Note?.Invoke($"房间 {room.RoomId} 开打：副本 {room.DungeonId}，{battle.Entities.Count} 个怪");
+        Note?.Invoke($"房间 {room.RoomId} 开打：副本 {room.DungeonId}（{battle.BossCount} 个 BOSS、" +
+                     $"{battle.Entities.Count - battle.BossCount} 个普通怪）");
 
         return battle;
     }
@@ -214,7 +226,7 @@ public sealed class RoomBattleService
             }
 
             (int spawnX, int spawnZ) = DungeonBattle.HeroSpawnPoint(i);
-            battle.AddEntity(DungeonBattle.HeroConfigId, 0, DungeonBattle.HeroMaxHp, spawnX, spawnZ,
+            battle.AddEntity(DungeonBattle.HeroConfigId, 0, battle.HeroMaxHp, spawnX, spawnZ,
                              playerId: playerId);
 
             Note?.Invoke($"玩家 {playerId}（{room.Seats[i].PlayerName}）进入副本，出生点 ({spawnX}, {spawnZ})mm");
@@ -344,7 +356,7 @@ public sealed class RoomBattleService
         {
             AttacksLanded++;
             Note?.Invoke($"玩家 {session.PlayerId} 普攻打中单位 {input.TargetEntityId}" +
-                         $"（{DungeonBattle.BasicAttackDamage} 点）");
+                         $"（{battle.BasicAttackDamage} 点，来自 Skill 表）");
         }
         else
         {
