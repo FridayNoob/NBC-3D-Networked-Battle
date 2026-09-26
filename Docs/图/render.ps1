@@ -84,6 +84,42 @@ if (-not (Test-Path $temp)) { New-Item -ItemType Directory -Path $temp | Out-Nul
 #    改成**跑完再清**：算出本次应有的产物清单，把清单外的旧 SVG 删掉（见文件末）。
 $expectedSvgs = @()
 
+# ============================================================================
+#  调一次 mmdc，**返回它的退出码**
+# ============================================================================
+#  ⚠️ 为什么必须包一层、还要临时改 `$ErrorActionPreference`（2026-09-26 实测复现）：
+#     本脚本开头是 `$ErrorActionPreference = "Stop"`，而 Windows PowerShell 5.1
+#     会把**原生程序写到 stderr 的内容**包成一个 ErrorRecord ——
+#     mmdc 遇到 mermaid 语法错时正好往 stderr 打 "Error: Parse error on line N"，
+#     于是脚本**在第 N 块当场终止**：既看不到是哪一块坏的、也**打不出汇总表**
+#     （子代理实测"跑到第 19 块终止、连表都没打"，我一开始还误判成并发问题）。
+#     ⇒ 只在这一次调用期间把 EAP 设回 Continue，让"失败"变成**可记录的数据**而不是终止信号。
+#       这也是本项目的老规矩：**一个坏输入不该让整批校验失去报告能力**。
+function Invoke-Mmdc {
+    param(
+        # ⚠️ 参数名**不能叫 `Input` / `Output`**：`$Input` 是 PowerShell 的**自动变量**
+        #    （管道输入的枚举器），拿它当参数名 → `-i $Input` 会展开成一堆参数，
+        #    报错形状是 `mmdc.cmd : error: too many arguments`（2026-09-26 实测踩到）。
+        [Parameter(Mandatory = $true)][string] $MmdPath,
+        [Parameter(Mandatory = $true)][string] $SvgPath,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    try {
+        # ⚠️ `$null = ` **不能省**：函数里没被接住的 stdout 会混进**返回值**
+        #    （mmdc 会打一行 "Generating single mermaid chart"），
+        #    于是 `$code -ne 0` 恒真、所有图都被判失败 —— 2026-09-26 我包函数时自己踩过。
+        $null = & $MmdcPath -i $MmdPath -o $SvgPath -p $PuppeteerConfig -b white 2> $LogPath
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 # ---------------------------------------------------------------- 逐 md 抠块渲染
 # 两类目录：
 #   · 产物目录（本目录）：每块渲成 out\<篇名>-<序号>.svg 并**提交进仓库**
@@ -147,8 +183,7 @@ foreach ($target in $targets) {
         #    `.error-icon{...}` 这段默认 CSS ⇒ 六张图全被误判成"语法错误"。
         #    自己另写一套判据，迟早和工具的真实判定不一致（本项目的老教训）。
         $log = Join-Path $temp ("{0}-{1}.log" -f $base, $n)
-        & $MmdcPath -i $mmd -o $svg -p $PuppeteerConfig -b white 2> $log
-        $code = $LASTEXITCODE
+        $code = Invoke-Mmdc -MmdPath $mmd -SvgPath $svg -LogPath $log
 
         $ok = $false
         $why = ""
@@ -158,8 +193,33 @@ foreach ($target in $targets) {
 
             if (Test-Path $log) {
                 $lines = [System.IO.File]::ReadAllLines($log, [System.Text.Encoding]::UTF8)
-                $hit = $lines | Where-Object { $_ -match "Error" } | Select-Object -First 1
-                if ($hit) { $detail = "，原文：" + $hit.Trim() }
+                $hit = -1
+
+                # ⚠️ 要抓的是 **mmdc 自己那一行**（`Error: Parse error on line N:`），
+                #    不是 PowerShell 包在外面的 `+ FullyQualifiedErrorId : NativeCommandError`
+                #    —— 后者对定位毫无用处（2026-09-26 实测：日志里两种都有，第一版抓错了）。
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    if ($lines[$i] -match '^\s*Error:' -or $lines[$i] -match 'Parse error') {
+                        $hit = $i
+                        break
+                    }
+                }
+
+                if ($hit -ge 0) {
+                    $detail = "，原文：" + $lines[$hit].Trim()
+
+                    # 再带上**出错的那一行源码片段**（mmdc 会打在下一行）—— 一眼就知道是哪个字符坏了
+                    if ($hit + 1 -lt $lines.Count -and $lines[$hit + 1].Trim().Length -gt 0) {
+                        $detail += " ／ " + $lines[$hit + 1].Trim()
+                    }
+                }
+                else {
+                    $fallback = $lines |
+                        Where-Object { $_ -match 'error' -and $_ -notmatch '^\s*\+' } |
+                        Select-Object -First 1
+
+                    if ($fallback) { $detail = "，原文：" + $fallback.Trim() }
+                }
             }
 
             $why = "mmdc 退出码 " + $code + $detail
