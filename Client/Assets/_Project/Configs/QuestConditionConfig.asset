@@ -24,15 +24,11 @@ MonoBehaviour:
     requiredCount: 2
     note: "\u5E26\u56DE\u72FC\u76AE"
   - id: 4003
-    eventType: 1
-    targetId: 7002
-    requiredCount: 2
-    note: "\u91C7\u96C6\u8349\u836F"
-  - id: 4004
-    eventType: 2
-    targetId: 1
-    requiredCount: 1
-    note: "\u62B5\u8FBE\u5E7D\u6697\u68EE\u6797"
+    eventType: 0
+    targetId: 6002
+    requiredCount: 3
+    note: "\u6E05\u527F\u68EE\u6797\u8718\u86DB\uFF08\u539F\u300C\u91C7\u96C6\u8349\u836F\u300D\u9700\u8981\u53EF\u4EA4\u4E92\u7269\u7CFB\u7EDF\uFF0CM4+
+      \u518D\u505A\uFF09"
   - id: 4005
     eventType: 0
     targetId: 6003
@@ -43,8 +39,3 @@ MonoBehaviour:
     targetId: 6001
     requiredCount: 3
     note: "\u6E05\u527F\u91CE\u72FC"
-  - id: 4008
-    eventType: 2
-    targetId: 1
-    requiredCount: 1
-    note: "\u62B5\u8FBE\u4E00\u53F7\u533A\u57DF"

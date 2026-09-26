@@ -27,8 +27,11 @@ using System.Collections.Generic;
 using NBC.Framework;           // M4-S1：`EventCenter`（全局事件中心）
 using NBC.Framework.Net.Adapter;
 using NBC.Game.Battle;         // M4-S1：`ServerEventBridge`（服务端事件 → 事件中心）
+using NBC.Game.Config;         // M4-S1c：`ConfigMgr` / `GameTables`（真任务要读配置表）
+using NBC.Game.GameFlow;       // M4-S1c：`BattleSession`（条件 → 任务 → 发奖 那条链的装配）
 using NBC.Game.Net;
 using NBC.Game.Quest;          // M4-S1：`ConditionEventBridge`（事件中心 → 条件系统，M2 就有的那座桥）
+using NBC.Game.UI;             // M4-S1c：`QuestPanelModel` / `QuestRow`（真面板的视图模型，窗口复用同一份）
 using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
 using UnityEditor;
@@ -121,6 +124,36 @@ namespace NBC.EditorTools
         /// <summary>M4-S1：这个演示条件达成过几次（达成回调计数）。</summary>
         private int m_demoConditionMetCount;
 
+        // ====================================================================
+        //  M4-S1c：**真任务**（读 `Quest` / `QuestCondition` / `Reward` 三张表）
+        // ====================================================================
+
+        /// <summary>配置表是否就绪（就绪后才装真任务）。</summary>
+        private bool m_configsReady;
+
+        /// <summary>配置表加载失败原因（就绪前显示在界面上）。</summary>
+        private string m_configError;
+
+        /// <summary>
+        /// 真任务的会话（**复用 M2 的 `BattleSession` 装配**）。
+        /// <para>⚠️ 为什么直接用它的：里面就是"`ConditionTracker` + `ConditionEventBridge` +
+        /// `QuestRuntime` + `IQuestRewardSink`"那条链 —— 再在窗口里写一遍接线就是**两处实现**
+        /// （迟早不一致）。窗口只用它的 `Quests` / `Conditions`，本地那个 `BattleWorld` 不参与联机。</para>
+        /// </summary>
+        private BattleSession m_questSession;
+
+        /// <summary>真面板用的**同一个视图模型**（`QuestPanel` 也用它）—— 窗口与面板一套逻辑。</summary>
+        private QuestPanelModel m_questModel;
+
+        /// <summary>可接取任务的显示行（每帧重填，避免每帧分配新列表）。</summary>
+        private readonly List<QuestRow> m_offerRows = new List<QuestRow>();
+
+        /// <summary>进行中任务的显示行。</summary>
+        private readonly List<QuestRow> m_trackingRows = new List<QuestRow>();
+
+        /// <summary>发奖记录（新的在前，最多 20 条）。</summary>
+        private readonly List<string> m_rewards = new List<string>();
+
         /// <summary>传输（图省事由窗口自己持有，方便 Dispose）。</summary>
         private TcpTransport m_transport;
 
@@ -158,6 +191,8 @@ namespace NBC.EditorTools
         {
             m_lastUpdateTime = EditorApplication.timeSinceStartup;
             EditorApplication.update += Tick;
+
+            LoadConfigs();      // M4-S1c：先把配置表喂进来（真任务要用）
         }
 
         /// <summary>摘掉回调并断开（见文件头"已知局限"）。</summary>
@@ -175,6 +210,106 @@ namespace NBC.EditorTools
             }
 
             m_conditions = null;
+
+            // M4-S1c：真任务的会话也要收掉（它内部订阅了 `EventCenter`，不退订就是"对象没人用了回调还在跑"）
+            if (m_questSession != null)
+            {
+                m_questSession.Dispose();
+                m_questSession = null;
+                m_questModel = null;
+            }
+        }
+
+        /// <summary>
+        /// M4-S1c：把配置表喂进 `ConfigMgr`，就绪后装一局真任务。
+        /// <para>⚠️ 编辑器里用的是 `EditorConfigSource`（**AssetDatabase 直读**），**不走 YooAsset** ——
+        /// 因为这里没进 Play、资源层没装配。那条路只在运行时走（`AssetConfigSource`）。</para>
+        /// </summary>
+        private void LoadConfigs()
+        {
+            m_configsReady = false;
+            m_configError = null;
+
+            ConfigMgr.Instance.SetSource(new EditorConfigSource());
+
+            GameTables.PreloadAll(
+                OnConfigsReady,
+                reason =>
+                {
+                    m_configError = reason;
+                    AddLog("配置表预加载失败：" + reason);
+                });
+        }
+
+        /// <summary>配置表就绪 → 装一局真任务（`BattleSession` 里那条"条件 → 任务 → 发奖"的链）。</summary>
+        private void OnConfigsReady()
+        {
+            m_configsReady = true;
+
+            // ⚠️ 英雄编号**从表里取**（第一个 Hero），不写死：
+            //    窗口只拿它装配本地那一局；联机打的怪由服务端说了算（服务端固定英雄 1001，见 `DungeonBattle.HeroConfigId`）。
+            int heroId = FirstHeroId();
+
+            m_questSession = BattleSession.FromConfigMgr(heroId, new EditorQuestRewardSink(this));
+            m_questModel = new QuestPanelModel(m_questSession.Quests);
+
+            AddLog("配置表就绪：真任务已装好（英雄 " + heroId + "）");
+        }
+
+        /// <summary>取 `Hero` 表里第一个英雄的编号（取不到就 1001 —— M3 服务端固定的那个）。</summary>
+        /// <returns>英雄编号。</returns>
+        private static int FirstHeroId()
+        {
+            if (!ConfigMgr.Instance.IsLoaded("Hero"))
+            {
+                return 1001;
+            }
+
+            HeroConfig heroes = ConfigMgr.Instance.Get<HeroConfig>();
+
+            return heroes != null && heroes.rows != null && heroes.rows.Count > 0
+                ? heroes.rows[0].id
+                : 1001;
+        }
+
+        /// <summary>把一份奖励记成界面上看得见的一行（真面板走的是**同一个** `IQuestRewardSink` 接缝）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="reward">奖励内容。</param>
+        private void OnRewardGranted(int questId, QuestReward reward)
+        {
+            string line = "奖励到账：任务 " + questId
+                + " → 经验 " + reward.Exp + "、金币 " + reward.Gold
+                + (reward.ItemId > 0 ? "、物品 " + reward.ItemId + "×" + reward.ItemCount : string.Empty);
+
+            m_rewards.Insert(0, line);
+
+            while (m_rewards.Count > 20)
+            {
+                m_rewards.RemoveAt(m_rewards.Count - 1);
+            }
+
+            AddLog(line);
+        }
+
+        /// <summary>奖励接缝的编辑器实现：把"发奖"变成窗口里的一行日志。</summary>
+        private sealed class EditorQuestRewardSink : IQuestRewardSink
+        {
+            private readonly NetDebugWindow m_window;
+
+            /// <summary>建一个发奖口。</summary>
+            /// <param name="window">窗口（把奖励写进它的日志）。</param>
+            public EditorQuestRewardSink(NetDebugWindow window)
+            {
+                m_window = window;
+            }
+
+            /// <summary>发一份奖励。</summary>
+            /// <param name="questId">任务编号。</param>
+            /// <param name="reward">奖励内容。</param>
+            public void Grant(int questId, QuestReward reward)
+            {
+                m_window.OnRewardGranted(questId, reward);
+            }
         }
 
         /// <summary>编辑器帧回调：推进会话并重绘。</summary>
@@ -371,6 +506,7 @@ namespace NBC.EditorTools
             EditorGUILayout.Space();
             DrawStatus();
             DrawQuestLoop();
+            DrawRealQuests();
             EditorGUILayout.Space();
             DrawLog();
 
@@ -836,6 +972,103 @@ namespace NBC.EditorTools
                     + "现在由 `ServerEventBridge` 接上了。",
                     MessageType.Info);
             }
+        }
+
+        /// <summary>
+        /// M4-S1c：**真任务**区 —— 读 `Quest` / `QuestCondition` / `Reward` 三张表，
+        /// 走的是与真面板**同一个视图模型**（`QuestPanelModel`）和**同一条链**
+        /// （`QuestRuntime` → `ConditionTracker` → `ConditionEventBridge` → `EventCenter`，
+        /// 联机时由 `ServerEventBridge` 把服务端事件喂进来）。
+        /// </summary>
+        private void DrawRealQuests()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("真任务（读配置表：接取 → 进度 → 交付 → 发奖）", EditorStyles.boldLabel);
+
+            if (m_configError != null)
+            {
+                EditorGUILayout.HelpBox(m_configError, MessageType.Error);
+
+                if (GUILayout.Button("重新加载配置表", GUILayout.Height(22f)))
+                {
+                    LoadConfigs();
+                }
+
+                return;
+            }
+
+            if (!m_configsReady || m_questModel == null)
+            {
+                EditorGUILayout.LabelField("配置表", "（加载中…）");
+                return;
+            }
+
+            m_questModel.CopyOfferRows(m_offerRows);
+            m_questModel.CopyTrackingRows(m_trackingRows);
+
+            EditorGUILayout.LabelField("可接取", m_offerRows.Count == 0 ? "（没有）" : m_offerRows.Count + " 个");
+
+            for (int i = 0; i < m_offerRows.Count; i++)
+            {
+                DrawQuestRow(m_offerRows[i]);
+            }
+
+            EditorGUILayout.LabelField("进行中", m_trackingRows.Count == 0 ? "（没有）" : m_trackingRows.Count + " 个");
+
+            for (int i = 0; i < m_trackingRows.Count; i++)
+            {
+                DrawQuestRow(m_trackingRows[i]);
+            }
+
+            if (!string.IsNullOrEmpty(m_questModel.LastMessage))
+            {
+                EditorGUILayout.LabelField("消息", m_questModel.LastMessage);
+            }
+
+            if (m_questSession != null)
+            {
+                EditorGUILayout.LabelField("状态", m_questSession.Quests.DescribeActive());
+            }
+
+            if (m_rewards.Count > 0)
+            {
+                EditorGUILayout.LabelField("发奖记录", m_rewards[0] + (m_rewards.Count > 1 ? "（共 " + m_rewards.Count + " 条）" : string.Empty));
+            }
+
+            EditorGUILayout.HelpBox(
+                "进度**来自联机事件**：服务端死亡/掉落 → `ServerEventBridge` → `EventCenter` → 条件桥 → 条件系统。\n"
+                + "所以：先「连接」并「加入房间」，再去打怪（或勾「自动追击并攻击」），回来这里看进度与交付。",
+                MessageType.None);
+        }
+
+        /// <summary>画一行任务（标题 + 详情 + 一个动作按钮）。</summary>
+        /// <param name="row">显示行。</param>
+        private void DrawQuestRow(QuestRow row)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("　" + row.Title, row.Detail);
+
+                if (GUILayout.Button(row.ActionLabel + "（" + row.QuestId + "）", GUILayout.Width(110f)))
+                {
+                    RunQuestAction(row.ActionName);
+                }
+            }
+        }
+
+        /// <summary>执行一个任务动作（接取 / 交付）—— **走真面板同一个入口** `QuestPanelModel.HandleAction`。</summary>
+        /// <param name="actionName">动作名（`Accept_<id>` / `Submit_<id>`）。</param>
+        private void RunQuestAction(string actionName)
+        {
+            if (m_questModel == null)
+            {
+                return;
+            }
+
+            bool handled = m_questModel.HandleAction(actionName);
+
+            AddLog((handled ? "任务动作：" : "任务动作被拒：") + actionName
+                + "　" + m_questModel.LastMessage);
         }
 
         /// <summary>画日志区（**固定高度的内层滚动**，见 `OnGUI` 里"整窗滚动"的说明）。</summary>
