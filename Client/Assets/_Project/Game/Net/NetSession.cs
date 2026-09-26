@@ -76,6 +76,9 @@ namespace NBC.Game.Net
         /// <summary>默认握手超时（毫秒）。</summary>
         public const int DefaultHandshakeTimeoutMs = 5000;
 
+        /// <summary>界面里最多留几条掉落记录。</summary>
+        public const int MaxRecentDrops = 20;
+
         /// <summary>传输（接缝；测试里塞 `FakeTransport`）。</summary>
         private readonly ITransport m_transport;
 
@@ -121,6 +124,12 @@ namespace NBC.Game.Net
 
         /// <summary>客户端的世界状态（服务端快照的本地副本）。</summary>
         private readonly SnapshotView m_world = new SnapshotView();
+
+        /// <summary>最近几次掉落（新的在前；界面用）。</summary>
+        private readonly List<DropEvent> m_recentDrops = new List<DropEvent>();
+
+        /// <summary>最近一条掉落。</summary>
+        private DropEvent m_lastDrop;
 
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
@@ -261,6 +270,21 @@ namespace NBC.Game.Net
             get { return m_lastError; }
         }
 
+        /// <summary>最近一次掉落（null = 还没掉过东西）。<b>概率掉落</b>：狼有 35% 什么都不掉（见 DropTable 表）。</summary>
+        public DropEvent LastDrop
+        {
+            get { return m_lastDrop; }
+        }
+
+        /// <summary>累计收到多少条掉落事件。</summary>
+        public long DropsReceived { get; private set; }
+
+        /// <summary>最近几次掉落（新的在前，最多 `MaxRecentDrops` 条）—— 界面直接显示它。</summary>
+        public IReadOnlyList<DropEvent> RecentDrops
+        {
+            get { return m_recentDrops; }
+        }
+
         /// <summary>
         /// 客户端的世界状态（**只由服务端快照决定**，见 `SnapshotView` 文件头）。
         /// <para>表现层（建 GameObject、播动画）去读它，而不是自己去算。</para>
@@ -311,6 +335,9 @@ namespace NBC.Game.Net
         /// <summary>请求被服务端拒了（带错误码与人话原因）。</summary>
         public event Action<ErrorResponse> ErrorReceived;
 
+        /// <summary>收到一条掉落事件（**服务端掷的**，客户端只负责显示）。</summary>
+        public event Action<DropEvent> DropReceived;
+
         /// <summary>值得记一句的事情（人话）。</summary>
         public event Action<string> Note;
 
@@ -339,6 +366,8 @@ namespace NBC.Game.Net
             m_lastError = null;
             m_world.Clear();
             m_loggedFirstSnapshot = false;
+            m_recentDrops.Clear();
+            m_lastDrop = null;
             m_failureReason = null;
             m_rttMs = -1;
             m_lastPingSentMs = -1;
@@ -648,6 +677,10 @@ namespace NBC.Game.Net
                     HandleError(message.Error);
                     break;
 
+                case ServerMessage.PayloadOneofCase.Event:
+                    HandleServerEvent(message.Event);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -806,6 +839,34 @@ namespace NBC.Game.Net
             {
                 handler(error);
             }
+        }
+
+        /// <summary>
+        /// 处理服务端事件（M3 只有掉落；伤害/死亡事件见 `ServerEvent` 的其它分支，留 S6+/M4）。
+        /// <para>⚠️ **客户端只显示**：掷骰全在服务端（`DungeonBattle.RollDrops`），这里一个随机数都不掷。</para>
+        /// </summary>
+        /// <param name="serverEvent">事件。</param>
+        private void HandleServerEvent(ServerEvent serverEvent)
+        {
+            if (serverEvent == null || serverEvent.Drop == null)
+            {
+                return;
+            }
+
+            DropEvent drop = serverEvent.Drop;
+            DropReceived?.Invoke(drop);
+
+            DropsReceived++;
+            m_lastDrop = drop;
+
+            m_recentDrops.Insert(0, drop);
+
+            while (m_recentDrops.Count > MaxRecentDrops)
+            {
+                m_recentDrops.RemoveAt(m_recentDrops.Count - 1);
+            }
+
+            Log($"掉落：物品 {drop.ItemId} × {drop.Count}（归玩家 {drop.WinnerPlayerId}）");
         }
 
         /// <summary>处理世界快照（交给 `SnapshotView`；这里只管日志与事件）。</summary>

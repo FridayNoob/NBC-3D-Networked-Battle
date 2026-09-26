@@ -304,10 +304,59 @@ namespace NBC.EditorTools
             }
 
             DrawWorld();
+            DrawDrops();
             DrawInput();
         }
 
-        /// <summary>画输入区（S5b：客户端只发**意图**，能走多远/打不打得到由服务端说了算）。</summary>
+        /// <summary>
+        /// 画掉落区（S7/S9）：**客户端只负责显示** —— 掷骰全在服务端。
+        /// <para>⚠️ 狼的两条掉落概率是 50% / 30% ⇒ **"什么都没掉"有 35% 的概率**。
+        /// 所以"打死了没看到奖励"有两种可能：真没掉，或者没打中那 65%。BOSS 是 10000（必掉）。</para>
+        /// </summary>
+        private void DrawDrops()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("掉落（服务端掷的）", EditorStyles.boldLabel);
+
+            if (m_session == null)
+            {
+                EditorGUILayout.LabelField("累计", "0");
+                return;
+            }
+
+            EditorGUILayout.LabelField("累计收到", m_session.DropsReceived + " 条");
+
+            if (m_session.LastDrop != null)
+            {
+                EditorGUILayout.LabelField("最近一次",
+                    "物品 " + m_session.LastDrop.ItemId + " × " + m_session.LastDrop.Count
+                    + "（归玩家 " + m_session.LastDrop.WinnerPlayerId + "）");
+            }
+            else
+            {
+                EditorGUILayout.LabelField("最近一次", "（还没掉过）");
+            }
+
+            IReadOnlyList<NBC.Protocol.DropEvent> recent = m_session.RecentDrops;
+
+            for (int i = 0; i < recent.Count; i++)
+            {
+                EditorGUILayout.LabelField(
+                    "  · " + (i == 0 ? "最新" : i.ToString()),
+                    "物品 " + recent[i].ItemId + " × " + recent[i].Count
+                    + " → 玩家 " + recent[i].WinnerPlayerId);
+            }
+
+            if (m_session.DropsReceived == 0 && m_session.InRoom)
+            {
+                EditorGUILayout.HelpBox(
+                    "还没掉过东西。注意：狼的掉落概率是 50% / 30% —— 「什么都没掉」有 35% 的概率；\n" +
+                    "BOSS（狼王 6003）两条都是 10000（必掉），打它可以稳定看到掉落。",
+                    MessageType.Info);
+            }
+        }
+
+        /// <summary>画输入区（S5b：客户端只发**意图**，能走多远、打不打得到由服务端说了算）。</summary>
         private void DrawInput()
         {
             EditorGUILayout.Space();

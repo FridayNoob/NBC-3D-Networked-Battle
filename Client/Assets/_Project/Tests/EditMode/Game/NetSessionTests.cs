@@ -550,6 +550,84 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  七、掉落显示（S7/S9：客户端只显示，一个随机数都不掷）
+        // ====================================================================
+
+        /// <summary>收到掉落事件：记数、留最近几条、发事件、写日志。</summary>
+        [Test]
+        public void DropEvent_IsRecordedAndForwarded()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            List<DropEvent> got = new List<DropEvent>();
+            session.DropReceived += got.Add;
+
+            fake.PushFrame(new ServerMessage
+            {
+                Event = new ServerEvent { Drop = new DropEvent { ItemId = 9001, Count = 2, WinnerPlayerId = 7 } },
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(1, got.Count, "应当转发一条掉落事件");
+            Assert.AreEqual(9001, session.LastDrop.ItemId);
+            Assert.AreEqual(2, session.LastDrop.Count);
+            Assert.AreEqual(7, session.LastDrop.WinnerPlayerId);
+            Assert.AreEqual(1, session.DropsReceived);
+            Assert.AreEqual(1, session.RecentDrops.Count);
+            Assert.AreEqual(9001, session.RecentDrops[0].ItemId, "最近的排在最前");
+        }
+
+        /// <summary>多条掉落：新的在前，且**超出上限会丢掉最旧的**（界面不会无限涨）。</summary>
+        [Test]
+        public void RecentDrops_KeepNewestFirstUpToTheLimit()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            int count = NetSession.MaxRecentDrops + 5;
+
+            for (int i = 0; i < count; i++)
+            {
+                fake.PushFrame(new ServerMessage
+                {
+                    Event = new ServerEvent { Drop = new DropEvent { ItemId = 9000 + i, Count = 1, WinnerPlayerId = 7 } },
+                }.ToByteArray());
+            }
+
+            session.Pump(0);
+
+            Assert.AreEqual(count, session.DropsReceived, "累计计数要如实（不受上限影响）");
+            Assert.AreEqual(NetSession.MaxRecentDrops, session.RecentDrops.Count, "只留最近 N 条");
+            Assert.AreEqual(9000 + count - 1, session.RecentDrops[0].ItemId, "最新的在最前");
+            Assert.AreEqual(9000 + count - NetSession.MaxRecentDrops, session.RecentDrops[session.RecentDrops.Count - 1].ItemId,
+                "最旧的那条应当是最早保留下来的那条");
+        }
+
+        /// <summary>不是掉落的事件（例如伤害）不该被当成掉落。</summary>
+        [Test]
+        public void NonDropEvent_IsNotRecordedAsDrop()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            fake.PushFrame(new ServerMessage
+            {
+                Event = new ServerEvent
+                {
+                    Damage = new DamageEvent { AttackerId = 1, TargetId = 2, Applied = 100, RemainingHp = 200 },
+                },
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(0, session.DropsReceived, "伤害事件不是掉落");
+            Assert.IsNull(session.LastDrop);
+            Assert.AreEqual(ESessionState.Online, session.State, "收到事件不该影响会话状态");
+        }
+
+        // ====================================================================
         //  辅助
         // ====================================================================
 
