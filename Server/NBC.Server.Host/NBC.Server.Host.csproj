@@ -55,14 +55,29 @@
   </ItemGroup>
 
   <!-- ========================================================================
-       第三方依赖（M0 阶段先不引入）
-       M3 接入时取消注释（数据访问用 Dapper + MySqlConnector，见需求文档 §5.2）：
-       <ItemGroup>
-         <PackageReference Include="Dapper" Version="2.*" />
-         <PackageReference Include="MySqlConnector" Version="2.*" />
-         <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.*" />
-         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.*" />
-       </ItemGroup>
-       ======================================================================== -->
+      第三方依赖（M4-S3 接入，见需求文档 §5.2 / §13）
+      ========================================================================
+
+      ⚠️ **2026-09-26 实测：本机 NuGet 现在能还原了**（`dotnet restore` 2.5 秒成功，
+         四个包全部落到全局缓存 `C:\Users\李云峰\.nuget\packages\`）。
+         此前 `Docs\11` 记的「本沙箱还原不了 NuGet（NU1301）」**已经不成立** ——
+         那条结论重新测过，不是猜的（见该文件已更新的说明）。
+
+      ⚠️ **版本全部写死**（原来是 `2.*` / `8.*` 浮动版本）：
+         浮动版本 = 换台机器还原可能拿到**不同的**依赖 ⇒ 与 D1「一份源码两边都编」、
+         D2「定点数为了位级别确定」同一条判据：**构建也要可复现**。
+
+      ⚠️ **`Dapper` / `MySqlConnector` 已移到 `NBC.Server.Data`**（见那个工程的文件头）：
+         数据访问不属于 Host。Host 通过工程引用**传递地**拿到它们，输出目录里照样有。
+         留在这里只会让"谁在碰数据库"变成两处都能答。
+      ======================================================================== -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Server.Data\NBC.Server.Data.csproj" />
+  </ItemGroup>
 
 </Project>

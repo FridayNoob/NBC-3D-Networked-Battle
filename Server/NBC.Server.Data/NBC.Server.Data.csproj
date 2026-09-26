@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.Server.Data - 服务端【数据层】
+       项目：3D联网战斗Demo
+       对应需求文档：§13.2（数据层 / Dapper + MySqlConnector / 连接池）、§13.4（库表）
+                     SRV-13（战绩落库）、DB-03（连接池 + 不在 Tick 主循环里同步查询）
+                     DB-04（DB 操作全部异步 + 脱离主循环线程 + 结果回投主循环队列）
+                     DB-10（数据库不可用时服务端仍能启动，只让存档功能报错）
+       ========================================================================
+       ⚠️ 为什么要【单独一个工程】，而不是塞进 Core / Game / Host
+       ========================================================================
+       三条依赖边界，每条挡掉一个候选位置：
+
+         · **不能进 `NBC.Shared`** —— 那是 `netstandard2.1` 的**双端共享层**，
+           Unity 也要编译它。往里放 MySQL 依赖 = 让客户端也拖一个数据库驱动，
+           而且违反 D1/DET-02 那条"共享层零第三方"的机械约束。
+         · **不能进 `NBC.Server.Game`** —— 那是纯逻辑（战斗/副本/AI），
+           要能在**没有数据库**的环境里跑测试。查表逻辑里出现 `MySqlConnection`
+           就等于"想验一个伤害公式，得先起 MySQL"。
+         · **不能进 `NBC.Server.Core`** —— 那是网络与主循环基础设施
+           （会话/传输/Tick/房间），和"数据存哪"没关系。
+
+       ⇒ 这正是 §13.2 架构图里那个独立的 **数据层** box。
+         依赖方向：Host → Data → Shared（单向，不会绕回来）。
+       ========================================================================
+       ⚠️ 本工程**不引用** `Microsoft.Extensions.*`（配置/DI 留在 Host）
+       ========================================================================
+       数据层只认一个**纯 POCO 的 `DatabaseOptions`**，不认 `IConfiguration`。
+       这样它的测试可以 `new DatabaseOptions { ... }`，不需要造配置对象。
+       "从 json 读配置"是 Host 的事。
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NBC.Server.Data</RootNamespace>
+    <AssemblyName>NBC.Server.Data</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      只依赖共享层（为了 `IConditionProgressStore` / `ConditionDef` 这些**接口与中性类型**）。
+      ⚠️ 是"数据层实现共享层的接缝"，不是"共享层认识数据层" —— 方向不能反。
+    -->
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ⚠️ 版本**写死**（不是 `2.*`）：浮动版本 = 换台机器还原可能拿到不同的依赖，
+         与 D1「一份源码两边都编」、D2「定点数为了位级别确定」同一条判据 —— **构建也要可复现**。
+         下面两个版本是 2026-09-26 在本机**实际还原成功**的那两个。
+    -->
+    <PackageReference Include="Dapper" Version="2.1.35" />
+    <PackageReference Include="MySqlConnector" Version="2.3.7" />
+  </ItemGroup>
+
+</Project>

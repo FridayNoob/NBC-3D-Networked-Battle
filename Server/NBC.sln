@@ -15,6 +15,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NBC.Server.Tests", "NBC.Ser
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NBC.Server.Lab", "NBC.Server.Lab\NBC.Server.Lab.csproj", "{BFCB2FEE-6056-4ACB-B86F-B71A32879C94}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NBC.Server.Data", "NBC.Server.Data\NBC.Server.Data.csproj", "{7217593E-ACDE-4A32-95A2-802A12B8128C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -97,6 +99,18 @@ Global
 		{BFCB2FEE-6056-4ACB-B86F-B71A32879C94}.Release|x64.Build.0 = Release|Any CPU
 		{BFCB2FEE-6056-4ACB-B86F-B71A32879C94}.Release|x86.ActiveCfg = Release|Any CPU
 		{BFCB2FEE-6056-4ACB-B86F-B71A32879C94}.Release|x86.Build.0 = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|x64.Build.0 = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Debug|x86.Build.0 = Debug|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|x64.ActiveCfg = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|x64.Build.0 = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|x86.ActiveCfg = Release|Any CPU
+		{7217593E-ACDE-4A32-95A2-802A12B8128C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

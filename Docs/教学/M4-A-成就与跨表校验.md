@@ -211,7 +211,7 @@ Server\_condition-probe\bin\Debug\net8.0\NBC.ConditionProbe.exe
 在 Unity 里：
 
 1. 菜单 **Tools/NBC/配置表/导入 TSV → ScriptableObject**（一次导入全部 tsv）；
-2. 跑 EditMode，期望 **683**；
+2. 跑 EditMode，期望 **684**（2026-09-26 负责人实测 = **684 全绿**）；
 3. 打开 **Tools/NBC/网络/网络调试窗口** → 「成就」区会列出 3 个成就与每条条件的 `几/几`。
    打怪时**成就与任务一起涨**，条件一齐当场解锁（日志会出现 `🏆 成就解锁：…`）。
 

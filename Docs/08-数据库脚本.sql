@@ -122,6 +122,57 @@ CREATE TABLE `battle_player_detail` (
       REFERENCES `battle_record` (`record_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='战斗玩家明细表';
 
+-- ---------------------------------------------------------------------------
+-- 5. 条件进度表（M4-S3 新增：任务/成就的**跨局累计**进度）
+--
+--    ⚠️ 为什么主键是「玩家 + 条件」而不是「玩家 + 任务」：
+--       任务和成就**共用同一套条件系统**（`ConditionTracker`），
+--       而 `IConditionProgressStore` 说话的单位就是**条件编号** ——
+--       所以一张表就能同时承载任务与成就的进度，将来加别的"条件消费者"也不用再建表。
+--
+--    ⚠️ 为什么存**绝对值**而不是增量：
+--       落库是"重试安全的"（`INSERT ... ON DUPLICATE KEY UPDATE` 幂等）——
+--       网络抖一下重发一次不会把进度算两遍。存增量就必须再有一张"已应用"表。
+--
+--    ⚠️ 成就的"解锁状态"**不单独存**：它可以从本表推导（该成就全部条件都 >= 需求）。
+--       但"**奖励有没有发过**"推导不出来 —— 所以另见第 6 张表。
+-- ---------------------------------------------------------------------------
+CREATE TABLE `condition_progress` (
+  `player_id`     BIGINT UNSIGNED NOT NULL,
+  `condition_key` INT             NOT NULL COMMENT '对应 Config_QuestCondition.id',
+  `progress`      INT             NOT NULL DEFAULT 0 COMMENT '已累计数量（绝对值）',
+  `updated_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`player_id`, `condition_key`),
+  KEY `idx_updated` (`updated_at`) COMMENT '清理长期不活跃的进度用',
+  CONSTRAINT `fk_progress_player` FOREIGN KEY (`player_id`)
+      REFERENCES `player_profile` (`player_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='条件进度表（任务/成就共用，跨局累计）';
+
+-- ---------------------------------------------------------------------------
+-- 6. 已发奖励台账（M4-S3 新增）
+--
+--    ⚠️ 这张表是**加了持久化之后才暴露出来的一个 bug 的解药**（本片最值钱的一条）：
+--
+--       `AchievementRuntime` 用 `resetProgress: false` 登记条件，而 `ConditionTracker`
+--       的语义②是"**注册时若已达成，当场回调一次**"（这是"登录即解锁"要的行为）。
+--       以前进度存在内存里、进程一重启就没了，所以永远不会重复解锁；
+--       **一旦进度落库，服务端每重启一次就会把所有已完成的成就再发一遍奖。**
+--
+--       ⇒ "解锁状态"可以从第 5 张表推导，但"**奖励发过没有**"推导不出来，必须记账。
+--         台账与进度表**分开**的理由：进度是"玩家的数据"，台账是"系统的承诺"
+--         （发过就不能再发）—— 两者生命周期与语义都不同。
+-- ---------------------------------------------------------------------------
+CREATE TABLE `reward_granted` (
+  `player_id`   BIGINT UNSIGNED NOT NULL,
+  `owner_kind`  TINYINT         NOT NULL COMMENT '1=任务 2=成就',
+  `owner_id`    INT             NOT NULL COMMENT '对应 Config_Quest.id / Config_Achievement.id',
+  `reward_id`   INT             NOT NULL COMMENT '对应 Config_Reward.id',
+  `granted_at`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`player_id`, `owner_kind`, `owner_id`),
+  KEY `idx_granted_at` (`granted_at`),
+  CONSTRAINT `fk_granted_player` FOREIGN KEY (`player_id`)
+      REFERENCES `player_profile` (`player_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已发奖励台账（防重启重复发奖）';
 -- ============================================================================
 --  初始数据：测试账号
 --

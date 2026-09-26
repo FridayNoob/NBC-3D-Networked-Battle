@@ -39,3 +39,18 @@ MonoBehaviour:
     targetId: 6001
     requiredCount: 3
     note: "\u6E05\u527F\u91CE\u72FC"
+  - id: 4009
+    eventType: 0
+    targetId: 6001
+    requiredCount: 10
+    note: "\u7D2F\u8BA1\u51FB\u6740 10 \u53EA\u91CE\u72FC"
+  - id: 4010
+    eventType: 0
+    targetId: 6003
+    requiredCount: 1
+    note: "\u51FB\u6740\u72FC\u738B"
+  - id: 4011
+    eventType: 0
+    targetId: 0
+    requiredCount: 5
+    note: "\u7D2F\u8BA1\u51FB\u6740 5 \u53EA\u4EFB\u610F\u602A"

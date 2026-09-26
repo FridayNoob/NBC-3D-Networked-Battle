@@ -33,3 +33,9 @@ _net-probe/
 #    本项目的 Unity 工程在 Client/，Server/ 下【不存在】Unity 的 `Packages/`，
 #    所以正确做法不是取反，而是把作用域限死在 Server/ 内（见根 .gitignore 说明）：
 **/packages/
+# M4-S3 起：进度持久化的探针（写回缓存逻辑 + 真 MySQL 往返 + DB-10 报错形状）。
+# ⚠️ 与 _net-probe 同一族"验证脚手架"：本机跑、产证据，不进仓库。
+#    ⚠️ 如实记一个**代价**：探针不进仓库 ⇒ **克隆下来的人复现不了那些数字**
+#       （`_db-probe` 与 `_api-probe` 不同，它**没有**任何依赖本机路径的 HintPath，
+#        技术上是可以进仓库的）。这条记在 `Docs\27` §11.8，等负责人定夺。
+_db-probe/
