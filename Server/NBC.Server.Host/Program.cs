@@ -108,6 +108,16 @@ internal static class Program
             Console.WriteLine($"        掉落：{tables.DescribeDropsOf(monsterId)}");
         }
 
+        // ⚠️ 同上，**阵容数值也自述**（2026-09-26 同一个坑的第二次：负责人在 SO 里把狼王血量
+        //    改成 1000，跑起来还是 2000 —— 因为服务端读的是源 CSV，它看不到 SO）。
+        //    ⇒ 横幅上直接念出"服务端读到的血量/攻击/移速"，改错地方一眼就能看出来。
+        foreach (int monsterId in tables.MonsterIds)
+        {
+            Console.WriteLine($"        阵容：{tables.DescribeMonster(monsterId)}");
+        }
+
+        Console.WriteLine($"        阵容：{tables.DescribeHero(NBC.Server.Game.DungeonBattle.HeroConfigId)}");
+
         // ⚠️ 这里曾经想加一句"掉落 0 行就警告"，**实测发现走不到**，已删：
         //    `CsvSheet.LoadMany` 对"表头 4 行 + 至少 1 行数据"是硬校验，
         //    把 DropTable.csv 砍成只剩表头 → 直接 `[致命] DropTable.csv 少于 5 行` 且 return 3。

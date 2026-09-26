@@ -302,6 +302,61 @@ public sealed class ServerTables
         }
     }
 
+    /// <summary>所有怪（按编号升序）—— 启动日志逐条自述数值用。</summary>
+    public IReadOnlyList<int> MonsterIds
+    {
+        get
+        {
+            var ids = new List<int>(_monsters.Keys);
+            ids.Sort();
+            return ids;
+        }
+    }
+
+    /// <summary>
+    /// 把一个怪的**数值**串成人话（例：`怪 6003 狼王 hp 2000 / 攻 60 / 技能 2001,2002`）。
+    /// <para>⚠️ 为什么要自述数值（2026-09-26 负责人第二次踩同一个坑）：他在 Unity 的
+    /// `MonsterConfig.asset`（**生成物**）里把狼王血量改成 1000，测试时狼王还是 2000 ——
+    /// 因为**服务端读的是 `Configs\Design\Monster.csv`（真源），它根本看不到 SO**。
+    /// 上次是掉落表、这次是怪血量，**同一个根因**：改的那份 ≠ 跑的那份，而且**不报错**。
+    /// 把服务端真正读到的血量/攻击印在启动横幅里，这类问题从"猜"变成"看一眼"。</para>
+    /// </summary>
+    /// <param name="monsterId">怪编号。</param>
+    /// <returns>人话。</returns>
+    public string DescribeMonster(int monsterId)
+    {
+        MonsterRow? row = FindMonster(monsterId);
+
+        if (row == null)
+        {
+            return "怪 " + monsterId + " → （Monster 表里没有这一行）";
+        }
+
+        return "怪 " + row.Value.Id + " " + row.Value.Name
+             + " hp " + row.Value.Hp
+             + " / 攻 " + row.Value.Attack;
+    }
+
+    /// <summary>把一个英雄的数值串成人话（启动日志自述用；与 <see cref="DescribeMonster"/> 同一个理由）。</summary>
+    /// <param name="heroId">英雄编号。</param>
+    /// <returns>人话。</returns>
+    public string DescribeHero(int heroId)
+    {
+        HeroRow? row = FindHero(heroId);
+
+        if (row == null)
+        {
+            return "英雄 " + heroId + " → （Hero 表里没有这一行）";
+        }
+
+        return "英雄 " + row.Value.Id + " " + row.Value.Name
+             + " hp " + row.Value.Hp
+             + " / 移速 " + row.Value.MoveSpeedMmPerSec + "mm/s"
+             + " / 技能 " + (row.Value.SkillIds.Length == 0
+                 ? "（无）"
+                 : string.Join(",", row.Value.SkillIds));
+    }
+
     /// <summary>
     /// 把一个怪的掉落串成人话（例：`怪 6001 → 物品 9001×1~2@10000、9002×1~1@10000`）。
     /// <para>⚠️ 为什么值得在启动时打出来：服务端读的是**源 CSV**、而 Unity 侧读的是**SO（生成物）** ——

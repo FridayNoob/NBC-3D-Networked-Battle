@@ -186,8 +186,32 @@ namespace NBC.EditorTools
 
             if (!write)
             {
-                Debug.Log("[ConfigImporter] （只报告）会**更新**资产 " + assetPath);
-                return true;
+                // ⚠️ 2026-09-26 修：只报告模式原来**只验证"TSV 能不能导入"**，从不与现有资产比对 ——
+                //    于是"手改了 SO"这类问题**永远抓不到**。负责人就撞上了：他在 Unity 的
+                //    `MonsterConfig.asset` 里把狼王血量改成 1000，测试时狼王还是 2000
+                //    （因为**服务端读的是 `Configs\Design\Monster.csv` 真源**，它看不到 SO）。
+                //    注意"比时间"也抓不到：资产是**后改**的，比源表更新，`ConfigStalenessCheck`
+                //    那类按 mtime 的检查会放过它。⇒ 必须**逐字段比内容**。
+                ScriptableObject fresh = ScriptableObject.CreateInstance(soType);
+                load.Invoke(fresh, new object[] { tsv });
+
+                List<string> diffs = CompareRows(asset, fresh);
+
+                UnityEngine.Object.DestroyImmediate(fresh);
+
+                if (diffs.Count == 0)
+                {
+                    Debug.Log("[ConfigImporter] （只报告）" + assetPath + " **与源表一致**");
+                    return true;
+                }
+
+                Debug.LogError("[ConfigImporter] （只报告）" + assetPath + " **与源表不一致**（"
+                    + diffs.Count + " 处）。\n"
+                    + "⚠️ 资产是**生成物**：手改它会被下次「导入 TSV」覆盖，而且**服务端读的是源 CSV**\n"
+                    + "   （`Configs\\Design\\*.csv`）—— 改资产对服务端**没有任何影响**。\n"
+                    + "   要改数值请改源 CSV，然后：跑 ConfigKit → 点「导入 TSV → ScriptableObject」。\n"
+                    + "   差异：\n  " + string.Join("\n  ", diffs.ToArray()));
+                return false;
             }
 
             // 反射调用生成的加载器（它按**字段名**对列，所以调换列顺序不会错位）
@@ -206,6 +230,161 @@ namespace NBC.EditorTools
         // ====================================================================
         //  查找与报告
         // ====================================================================
+
+        /// <summary>
+        /// 逐字段比较两个资产的数据行（**只报告模式**用）。
+        /// <para>⚠️ 为什么比内容而不是比时间：资产是**生成物**，手改之后它比源表**更新** ——
+        /// 任何"比 mtime"的检查（如 `ConfigStalenessCheck`）都会放过它。
+        /// 而"改了却没生效"这类问题**不报错**，只能靠把两份内容摆在一起看。</para>
+        /// <para>用 `id` 建索引再比，所以**行顺序变了不算差异**（生成器的加表顺序可能变）。</para>
+        /// </summary>
+        /// <param name="asset">现有资产。</param>
+        /// <param name="fresh">用同一份 TSV 重新灌出来的新实例。</param>
+        /// <returns>差异（人话；空 = 一致）。</returns>
+        private static List<string> CompareRows(ScriptableObject asset, ScriptableObject fresh)
+        {
+            var diffs = new List<string>();
+
+            FieldInfo rowsField = asset.GetType().GetField("rows", BindingFlags.Public | BindingFlags.Instance);
+
+            if (rowsField == null)
+            {
+                diffs.Add("类型 " + asset.GetType().Name + " 上没有 `rows` 字段（生成物变了？）");
+                return diffs;
+            }
+
+            var oldRows = rowsField.GetValue(asset) as System.Collections.IEnumerable;
+            var newRows = rowsField.GetValue(fresh) as System.Collections.IEnumerable;
+
+            if (oldRows == null || newRows == null)
+            {
+                diffs.Add("读不到 `rows`（资产里是 null？）");
+                return diffs;
+            }
+
+            var oldById = new Dictionary<int, object>();
+            var seen = new HashSet<int>();
+            FieldInfo idField = null;
+
+            foreach (object row in oldRows)
+            {
+                if (idField == null)
+                {
+                    idField = row.GetType().GetField("id", BindingFlags.Public | BindingFlags.Instance);
+                }
+
+                if (idField == null)
+                {
+                    diffs.Add("行类型 " + row.GetType().Name + " 上没有 `id` 字段");
+                    return diffs;
+                }
+
+                oldById[(int)idField.GetValue(row)] = row;
+            }
+
+            foreach (object row in newRows)
+            {
+                int id = (int)idField.GetValue(row);
+                seen.Add(id);
+
+                object existing;
+
+                if (!oldById.TryGetValue(id, out existing))
+                {
+                    diffs.Add("资产里**缺少** id=" + id + "（源表有）");
+                    continue;
+                }
+
+                foreach (FieldInfo field in row.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (field.Name == "id")
+                    {
+                        continue;
+                    }
+
+                    object assetValue = field.GetValue(existing);
+                    object sourceValue = field.GetValue(row);
+
+                    if (!SameFieldValue(assetValue, sourceValue))
+                    {
+                        diffs.Add("id=" + id + " 字段 `" + field.Name + "`：资产=" + DescribeValue(assetValue)
+                            + "，源表=" + DescribeValue(sourceValue));
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<int, object> pair in oldById)
+            {
+                if (!seen.Contains(pair.Key))
+                {
+                    diffs.Add("资产里**多了** id=" + pair.Key + "（源表没有）");
+                }
+            }
+
+            return diffs;
+        }
+
+        /// <summary>两个字段值是否相同（数组按元素比 —— 生成物里有 `int[] skillIds` 这类字段）。</summary>
+        /// <param name="a">甲。</param>
+        /// <param name="b">乙。</param>
+        /// <returns>相同返回 true。</returns>
+        private static bool SameFieldValue(object a, object b)
+        {
+            var arrayA = a as Array;
+            var arrayB = b as Array;
+
+            if (arrayA == null || arrayB == null)
+            {
+                return Equals(a, b);
+            }
+
+            if (arrayA.Length != arrayB.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < arrayA.Length; i++)
+            {
+                if (!Equals(arrayA.GetValue(i), arrayB.GetValue(i)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>把字段值写成人话（数组写成 `[1,2]`；null 写成 `（null）`）。</summary>
+        /// <param name="value">值。</param>
+        /// <returns>人话。</returns>
+        private static string DescribeValue(object value)
+        {
+            if (value == null)
+            {
+                return "（null）";
+            }
+
+            var array = value as Array;
+
+            if (array == null)
+            {
+                return value.ToString();
+            }
+
+            var text = new StringBuilder("[");
+
+            for (int i = 0; i < array.Length; i++)
+            {
+                if (i > 0)
+                {
+                    text.Append(',');
+                }
+
+                text.Append(array.GetValue(i));
+            }
+
+            return text.Append(']').ToString();
+        }
 
         /// <summary>
         /// 在所有已加载程序集里找**可导入**的 &lt;表&gt;Config。
