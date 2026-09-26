@@ -40,6 +40,17 @@ namespace NBC.Server.Host;
 internal static class Program
 {
     /// <summary>
+    /// 这个 exe 真正会加载的四个程序集（"上一次编译"的判据来源，见 `LastBuildTime`）。
+    /// </summary>
+    private static readonly string[] ServerBinaries =
+    {
+        "NBC.Shared.dll",
+        "NBC.Server.Core.dll",
+        "NBC.Server.Game.dll",
+        "NBC.Server.Host.dll",
+    };
+
+    /// <summary>
     /// 服务端进程入口。
     /// </summary>
     private static int Main(string[] args)
@@ -62,6 +73,11 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine($"[Check] NBC.Shared 可引用，共享层版本标识：{SharedInfo.Describe()}");
         Console.WriteLine($"[Check] 协议：{NetContract.Describe()}");
+
+        // ⚠️ 负责人是**双击 bin 里的 exe** 启动的 —— 双击**永远不会编译**。
+        //    所以"改了服务端代码却没重编"是**必然会发生**的事（2026-09-26 真发生过一次），
+        //    而且**不报任何错**。这里改成主动报警：源码比产物新 → 大声喊出来。
+        WarnIfStale();
 
         // ⚠️ 这里原来有一段"共享层 LogicTickRate 与协议 TickRate 不一致就警告"的运行时检查。
         //    编译器用 **CS0162（无法访问的代码）** 把它否掉了 —— 两个都是 `const`，
@@ -273,34 +289,181 @@ internal static class Program
     }
 
     /// <summary>
-    /// 这个 exe 是什么时候编译出来的（程序集文件自己的时间戳）。
-    /// <para>⚠️ 为什么要打在横幅上：2026-09-26 负责人重启服务端后发现"新加的启动日志没出现"，
-    /// 根因不是代码 —— 是**他跑的是旧的 exe**（我上一次只做了 `-t:Compile` 编译校验，
+    /// **源码比产物新**就大声警告（= 你双击的是一个旧 exe）。
+    /// <para>2026-09-26 负责人报「重启服务端后，没打印新加的掉落日志」——根因就是他双击的
+    /// `bin\...\NBC.Server.Host.exe` 是 08:56 编的，而源码 10:35 改的（我只做了 `-t:Compile`，
+    /// **没写输出目录**）。他把服务端重启了，但**重启的是同一个旧 exe**，全程没有一行报错。</para>
+    /// <para>⚠️ 判据只用**服务端源码（`Server\**\*.cs`）**，**不含** `Configs\Design\*.csv` ——
+    /// 表是**运行时读**的，表比产物新是**正常**的，拿它报警会天天误报。
+    /// ⚠️ 也**只扫 Host 真正依赖的四个工程**：`_net-probe` / `_condition-probe` / `NBC.Server.Lab`
+    /// 这些"随手改、编了也不进 bin"的目录排除在外，否则我一改探针它就误报。</para>
+    /// <para>部署环境（旁边没有源码）会静默跳过 —— 那是正常情况，不该报警。</para>
+    /// </summary>
+    private static void WarnIfStale()
+    {
+        try
+        {
+            string? root = FindRepoRoot();
+
+            if (root == null)
+            {
+                return;
+            }
+
+            // ① 最新的一份服务端源码
+            string[] projects = { "NBC.Shared", "NBC.Server.Core", "NBC.Server.Game", "NBC.Server.Host" };
+            DateTime newestSource = DateTime.MinValue;
+            string newestFile = string.Empty;
+
+            foreach (string project in projects)
+            {
+                string dir = Path.Combine(root, "Server", project);
+
+                if (!Directory.Exists(dir))
+                {
+                    continue;
+                }
+
+                foreach (string file in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
+                {
+                    if (file.Contains(@"\bin\") || file.Contains(@"\obj\"))
+                    {
+                        continue;
+                    }
+
+                    DateTime written = File.GetLastWriteTime(file);
+
+                    if (written > newestSource)
+                    {
+                        newestSource = written;
+                        newestFile = file;
+                    }
+                }
+            }
+
+            // ② 产物是什么时候编的
+            DateTime newestBinary = LastBuildTime();
+
+            if (newestSource == DateTime.MinValue || newestBinary == DateTime.MinValue || newestSource <= newestBinary)
+            {
+                return;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            Console.WriteLine("[警告] 你双击的是**旧的 exe**：源码比产物新，改的代码没有生效！");
+            Console.WriteLine($"        最新源码：{newestFile}");
+            Console.WriteLine($"                  {newestSource:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"        产物时间：{newestBinary:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine(@"        先编译再启动：dotnet build Server\NBC.Server.Host\NBC.Server.Host.csproj -m:1");
+            Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            Console.WriteLine();
+        }
+        catch (IOException)
+        {
+            // 取不到时间不算错，静默跳过（诊断信息**绝不该**把服务端拦在门外）
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// 从程序集所在目录往上找**仓库根**（判据：`Server\NBC.Server.Host\Program.cs` 存在）。
+    /// <para>往上找的层数与 <see cref="ServerTables.TryResolveConfigDir"/> 一致（8 层），
+    /// 免得两个"找根"的算法各写一套、迟早不一致。</para>
+    /// </summary>
+    /// <returns>仓库根；找不到返回 null（部署环境就是这样）。</returns>
+    private static string? FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        for (int depth = 0; depth < 8 && dir != null; depth++)
+        {
+            string marker = Path.Combine(dir.FullName, "Server", "NBC.Server.Host", "Program.cs");
+
+            if (File.Exists(marker))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// **上一次编译的时间**（四个 dll 里最新的那个时间戳）；取不到返回 <see cref="DateTime.MinValue"/>。
+    /// <para>⚠️ 为什么取"最新"而不是"本程序集自己的时间"：改了 `NBC.Server.Game` 的代码时，
+    /// MSBuild 只重编并拷贝 `NBC.Server.Game.dll`，**`NBC.Server.Host.dll` 可以一动不动**
+    /// （实测 10:56:03 改源码、10:56:04 编完，Host.dll 还停在 10:55:56）。
+    /// 那样横幅上的时间就会比真实编译时间**偏早**，和"我刚改代码的时间"一比容易得出错的结论。
+    /// 也不能取"最旧"的：没改动的工程 MSBuild **跳过编译与拷贝**，其 dll 时间戳停在很久以前
+    /// （实测 `NBC.Shared.dll` 一直停在 10:55:38）→ 天天误报，而**天天误报的警告等于没有警告**。</para>
+    /// <para>⚠️ 这个函数是横幅 `Built :` 与"旧 exe 警告"的**唯一**判据来源：
+    /// 同一个事实两处各算一遍，迟早会出现"横幅说新、警告说旧"。</para>
+    /// </summary>
+    /// <returns>编译时间；取不到返回 <see cref="DateTime.MinValue"/>。</returns>
+    private static DateTime LastBuildTime()
+    {
+        DateTime newest = DateTime.MinValue;
+
+        try
+        {
+            foreach (string name in ServerBinaries)
+            {
+                string path = Path.Combine(AppContext.BaseDirectory, name);
+
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                DateTime written = File.GetLastWriteTime(path);
+
+                if (written > newest)
+                {
+                    newest = written;
+                }
+            }
+
+            if (newest != DateTime.MinValue)
+            {
+                return newest;
+            }
+
+            // 兜底：四个 dll 一个都没找到（比如单文件发布）→ 用程序集自己的时间戳
+            string self = Assembly.GetExecutingAssembly().Location;
+
+            if (!string.IsNullOrEmpty(self) && File.Exists(self))
+            {
+                return File.GetLastWriteTime(self);
+            }
+        }
+        catch (IOException)
+        {
+            // 取不到时间不算错（诊断信息**绝不该**把服务端拦在门外）
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// 写给横幅看的"这个 exe 是什么时候编译出来的"。
+    /// <para>为什么要打在横幅上：2026-09-26 负责人报"重启服务端后，没打印新加的掉落日志"，
+    /// 根因不是代码 —— 是**他双击的是旧的 exe**（我上一次只做了 `-t:Compile` 编译校验，
     /// 没写输出目录，`bin` 里还是几小时前的那份）。这类"改了却没生效"**不会报任何错**，
-    /// 只能靠"运行时自述它是谁"来抓。横幅上有时间，一眼就能和"我刚才改代码的时间"比。</para>
+    /// 只能靠"运行时自述它是谁"来抓。</para>
     /// </summary>
     /// <returns>本地时间字符串；取不到返回 `unknown`。</returns>
     private static string BuildTime()
     {
-        try
-        {
-            string path = Assembly.GetExecutingAssembly().Location;
-
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            {
-                return "unknown";
-            }
-
-            return File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
-        }
-        catch (IOException)
-        {
-            return "unknown";
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return "unknown";
-        }
+        DateTime built = LastBuildTime();
+        return built == DateTime.MinValue ? "unknown" : built.ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     /// <summary>机器名（`Environment.MachineName` 在某些容器里会抛，所以兜一下）。</summary>
