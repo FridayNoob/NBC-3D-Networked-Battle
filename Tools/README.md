@@ -171,6 +171,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Verify-PluginDlls.ps1 
 | `Test-Network.ps1` | 只读诊断 | 分层探测 HTTPS / 代理 / NuGet 断在哪一层 |
 | `Verify-PluginDlls.ps1` | 只读校验 | 读 DLL 真实程序集名，校验 `link.xml` 与依赖闭包 |
 | `Check-DocLinks.ps1` | 只读校验 | 分类文档引用：计划中 / 待创建 / 已退役 / **真断链** |
+| `Check-ScriptEncoding.ps1` | 只读校验 | **扫全仓库 `.ps1`**：非 ASCII 有没有 BOM（W7）+ 走真实 `Parser::ParseFile` 报语法错误 |
+
+---
+
+## Check-ScriptEncoding.ps1
+
+**只读**脚本编码检查器（W7 系列）。**本机 shell 是 Windows PowerShell 5.1**，
+它读**无 BOM** 的 `.ps1` 时按系统 ANSI（GBK）解码 ⇒ 含中文的脚本会被打碎。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Check-ScriptEncoding.ps1
+# 退出码 0 = 全绿；1 = 有编码问题或语法错误
+```
+
+**为什么它存在（2026-09-26 事故）**：我新建 `Docs\图\render.ps1`（含中文）时忘了 W7，
+存成无 BOM → PS 5.1 按 GBK 读 → 字符串字面量被打碎 → 乱码字节凑出非法记号 →
+`Array index expression is missing or not valid.`。
+**规则其实早就写了（W7），但检查没覆盖** —— 老自检只扫 `Tools\*.ps1`，新脚本在 `Docs\图\`。
+所以本脚本做两件事：① **扫全仓库**（排除 `bin`/`obj`/`node_modules`/`Library`/`Temp`/`.git`/`Builds`）；
+② 除了数非 ASCII 字节，**再走一次真实 PowerShell 解析器**（崩的就是解析，这才是地面真值）。
+
+**用三个对照校准过**（校验器自己也要先被校验，见 W9）：
+
+| 对照 | 期望 | 实测 |
+| --- | --- | --- |
+| 中文 + **无** BOM | 点名 BAD | ✅ `BAD (non-ASCII WITHOUT BOM ...)` |
+| 中文 + **有** BOM | OK | ✅ `OK (non-ASCII, BOM present)` |
+| `function f {`（纯 ASCII，真语法错） | 报 1 个语法错误、退出码 1 | ✅ |
+
+> ⚠️ 顺带实测：`$x = = 1` **是合法** PowerShell（解析器 0 错）——
+> 挑对照用例时得挑**真的错**的，否则会误判成"校验器坏了"。
+
 
 ---
 
