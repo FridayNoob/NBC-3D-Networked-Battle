@@ -27,15 +27,21 @@
 //                               —— 这一条是**实测逼出来的**：第一版只写"出现在掉落或奖励里"，
 //                                  结果被 `Reward` 里那两条自己给自己的奖励**骗过去了**。
 //      ③ `eventType` 的每种  ：当前实现**有没有事件源**（没有 → **警告**，因为这是"实现缺口"而不是"数据写错"）
+//      ④ 条件的**持有者**    ：一条 `QuestCondition` 只能被**一个**任务/成就引用 ——
+//                             ≥ 2 个时运行期 `ConditionTracker.Register` **直接抛异常**（CFG0023）。
+//                             ⚠️ 这条是 **2026-09-26 加成就时**才成立的：只有任务的时候，
+//                                "两个任务共用一个条件"本来就该被抓；有了成就，
+//                                "任务与成就共用一个条件"变成了一条**新的**、同样会炸的路径。
 //
 //  ⚠️ 规则 ③ 的"有没有事件源"是**实现状态**，不是数据关系 —— 所以它住在
 //     `ConfigPolicy.EventTypesWithoutSource`（**数据**），做完区域系统就从那张表删掉，
 //     而不是在这里改一句 `if`。这正是 `ConfigPolicy` 文件头那条判据：
 //     "如果一条规则别的项目可能不想要，它就必须在这里"。
 //
-//  ⚠️ 规则 ①② 是 **Error**（会让本次导出**不产出任何文件**）：
-//     它们是真正的数据缺陷 —— "条件永远达不成"和"物品永远拿不到"必须当场拦住，
-//     否则表现只是"任务卡住"，而**没有一行报错**。
+//  ⚠️ 规则 ①②④ 是 **Error**（会让本次导出**不产出任何文件**）：
+//     它们是真正的数据缺陷 —— "条件永远达不成"、"物品永远拿不到"、
+//     "运行期直接抛异常"必须当场拦住，否则表现只是"任务卡住"/"接任务闪退"，
+//     而**没有一行报错**。
 // ============================================================================
 
 using System;
@@ -130,6 +136,26 @@ namespace NBC.ConfigKit
                 RawCell targetCell = row.Get(targetColumn.Index, row.ExcelRow);
                 long targetId = ReadLong(targetCell.Text);
 
+                // ---- 规则 ④：一条条件只能被**一个**持有者引用 ----
+                // ⚠️ 为什么它是**错误**（而不是"提醒一下"）：`ConditionTracker.Register`
+                //    对同一编号**重复登记会当场抛 `InvalidOperationException`**
+                //    （见 `ConditionTracker.cs` 里那段注释：重复登记会让进度被清零、回调发两次，
+                //     静默覆盖会让这个 bug 永远查不出来，所以它是"当场报错"而不是"容忍"）。
+                //    ⇒ 两个任务共用一个条件、或任务与成就共用一个条件，
+                //      **数据单看全都正常，炸的是运行期**：前一个条件被抢走登记，
+                //      后一个任务接取时直接抛异常（成就更早，它在启动时就登记了）。
+                //  📌 这正是本文件存在的理由："单表全绿 ≠ 合起来能跑"。
+                if (sources.OwnerCount(conditionId) > 1)
+                {
+                    diagnostics.Error(DiagnosticCodes.ConditionSharedByOwners,
+                        conditions.Raw.LocationOf(row.Get(keyColumn.Index, row.ExcelRow), keyColumn.Name),
+                        "条件 `" + Text(conditionId) + "` 被**多个持有者**引用：" + sources.DescribeOwners(conditionId) + "。\n" +
+                        "⇒ 运行期 `ConditionTracker.Register` 会**直接抛异常**（同一个条件编号只允许一个持有者登记）。\n" +
+                        "（要么拆成两条条件，要么让其中一方改用别的条件。）",
+                        "最多被一个任务/成就引用",
+                        sources.DescribeOwners(conditionId));
+                }
+
                 // ---- 规则 ③：这个事件类型当前有没有事件源（警告，每种类型只报一次） ----
                 if (policy != null && policy.EventTypesWithoutSource != null
                     && Array.IndexOf(policy.EventTypesWithoutSource, eventType) >= 0
@@ -145,7 +171,16 @@ namespace NBC.ConfigKit
                 }
 
                 // ---- 规则 ①：击杀数量 vs 副本能提供的数量 ----
-                if (string.Equals(eventType, KillMonsterEvent, StringComparison.Ordinal))
+                // ⚠️ 两条**必须排除**的情况（2026-09-26 加成就时实测出来的）：
+                //    · `targetId = 0` 表示"**任意**目标" —— 它当然不在任何副本的怪列表里，
+                //      拿"副本刷不刷这种怪"去判它是**纯误报**；
+                //    · **只属于成就的条件不检查**：成就用 `resetProgress: false`，是**跨局累计**的
+                //      （"累计击杀 10 只野狼"一局只刷 3 只也能达成），而任务必须**一局内做完**。
+                //      ⇒ 判据是"一局能提供多少"，只对**任务**成立。
+                //  📌 这也是"天天误报的警告等于没有警告"那条：判据要跟着语义走，不能一刀切。
+                if (string.Equals(eventType, KillMonsterEvent, StringComparison.Ordinal)
+                    && targetId > 0
+                    && sources.IsOwnedByQuest(conditionId))
                 {
                     long required = ReadLong(row.Get(countColumn.Index, row.ExcelRow).Text);
                     int capacity;
@@ -306,11 +341,58 @@ namespace NBC.ConfigKit
             /// <summary>所有奖励里出现过的物品（含"自己给自己"的）。</summary>
             private readonly HashSet<long> m_rewarded = new HashSet<long>();
 
-            /// <summary>任务编号 → 它的奖励物品。</summary>
-            private readonly Dictionary<long, long> m_questRewardItem = new Dictionary<long, long>();
+            /// <summary>任务/成就编号 → 它的奖励物品。</summary>
+            private readonly Dictionary<long, long> m_ownerRewardItem = new Dictionary<long, long>();
 
-            /// <summary>条件编号 → 哪些任务在用它。</summary>
-            private readonly Dictionary<long, List<long>> m_conditionOwners = new Dictionary<long, List<long>>();
+            /// <summary>条件编号 → 哪些**任务或成就**在用它。</summary>
+            private readonly Dictionary<long, List<Owner>> m_conditionOwners = new Dictionary<long, List<Owner>>();
+
+            /// <summary>被**任务**（`Quest`）引用的条件编号 —— 只有这些才做"一局能否达成"的检查。</summary>
+            private readonly HashSet<long> m_questOwnedConditions = new HashSet<long>();
+
+            /// <summary>这个条件是不是被某个**任务**引用的（成就不算，见 `Run` 里规则 ① 的说明）。</summary>
+            /// <param name="conditionId">条件编号。</param>
+            /// <returns>是任务引用的返回 true。</returns>
+            public bool IsOwnedByQuest(long conditionId)
+            {
+                return m_questOwnedConditions.Contains(conditionId);
+            }
+
+            /// <summary>这个条件被几个持有者引用（正常是 0 或 1；≥ 2 就是 CFG0023）。</summary>
+            /// <param name="conditionId">条件编号。</param>
+            /// <returns>持有者个数。</returns>
+            public int OwnerCount(long conditionId)
+            {
+                List<Owner> owners;
+                return m_conditionOwners.TryGetValue(conditionId, out owners) ? owners.Count : 0;
+            }
+
+            /// <summary>把引用这个条件的持有者列成人话（报错信息里用）。</summary>
+            /// <param name="conditionId">条件编号。</param>
+            /// <returns>例如「任务 3001、成就 9001」。</returns>
+            public string DescribeOwners(long conditionId)
+            {
+                List<Owner> owners;
+
+                if (!m_conditionOwners.TryGetValue(conditionId, out owners) || owners.Count == 0)
+                {
+                    return "（没有任何任务/成就引用它）";
+                }
+
+                System.Text.StringBuilder builder = new System.Text.StringBuilder();
+
+                for (int i = 0; i < owners.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        builder.Append('、');
+                    }
+
+                    builder.Append(owners[i].ToString());
+                }
+
+                return builder.ToString();
+            }
 
             /// <summary>建索引。</summary>
             /// <param name="set">表集合。</param>
@@ -362,56 +444,111 @@ namespace NBC.ConfigKit
                     }
                 }
 
-                // ③ 任务表：rewardId → 物品；conditionIds → 条件归属
-                if (TryOpen(set, "Quest", out table, out rows))
+                // ③ 任务表 + 成就表：rewardId → 物品；conditionIds → 条件归属
+                //    ⚠️ 成就也要读进来（2026-09-26 加成就时补的）：
+                //      · 它引用的条件同样"有人管"（判"谁拥有这个条件"时要算上它）；
+                //      · 它的奖励也可能是某个条件所需物品的**来源**（否则会误报"循环依赖"）。
+                ReadOwnerTable(set, "Quest", markAsQuestOwned: true, rewardItemById);
+                ReadOwnerTable(set, "Achievement", markAsQuestOwned: false, rewardItemById);
+            }
+
+            /// <summary>
+            /// 读一张"拥有条件"的表（`Quest` / `Achievement`：都有 `id` / `conditionIds` / `rewardId`）。
+            /// </summary>
+            /// <param name="set">表集合。</param>
+            /// <param name="tableName">表名。</param>
+            /// <param name="markAsQuestOwned">是不是任务表（只有任务的条件才做"一局能否达成"的检查）。</param>
+            /// <param name="rewardItemById">奖励编号 → 物品编号（前面已经读好）。</param>
+            private void ReadOwnerTable(ConfigSet set, string tableName, bool markAsQuestOwned,
+                                        Dictionary<long, long> rewardItemById)
+            {
+                ConfigTable table;
+                IReadOnlyList<RawRow> rows;
+
+                if (!TryOpen(set, tableName, out table, out rows))
                 {
-                    ColumnSchema idColumn = table.Schema.FindColumn("id") ?? table.Schema.Key;
-                    ColumnSchema rewardColumn = table.Schema.FindColumn("rewardId");
-                    ColumnSchema conditionColumn = table.Schema.FindColumn("conditionIds");
+                    return;
+                }
 
-                    for (int r = table.Schema.FirstDataRow - 1; r < rows.Count; r++)
+                ColumnSchema idColumn = table.Schema.FindColumn("id") ?? table.Schema.Key;
+                ColumnSchema rewardColumn = table.Schema.FindColumn("rewardId");
+                ColumnSchema conditionColumn = table.Schema.FindColumn("conditionIds");
+
+                for (int r = table.Schema.FirstDataRow - 1; r < rows.Count; r++)
+                {
+                    if (rows[r].IsBlank || idColumn == null)
                     {
-                        if (rows[r].IsBlank || idColumn == null)
+                        continue;
+                    }
+
+                    long ownerId = ReadLong(rows[r].Get(idColumn.Index, rows[r].ExcelRow).Text);
+
+                    if (ownerId <= 0)
+                    {
+                        continue;
+                    }
+
+                    if (rewardColumn != null)
+                    {
+                        long rewardId = ReadLong(rows[r].Get(rewardColumn.Index, rows[r].ExcelRow).Text);
+                        long itemId;
+
+                        if (rewardId > 0 && rewardItemById.TryGetValue(rewardId, out itemId))
                         {
-                            continue;
-                        }
-
-                        long questId = ReadLong(rows[r].Get(idColumn.Index, rows[r].ExcelRow).Text);
-
-                        if (questId <= 0)
-                        {
-                            continue;
-                        }
-
-                        if (rewardColumn != null)
-                        {
-                            long rewardId = ReadLong(rows[r].Get(rewardColumn.Index, rows[r].ExcelRow).Text);
-                            long itemId;
-
-                            if (rewardId > 0 && rewardItemById.TryGetValue(rewardId, out itemId))
-                            {
-                                m_questRewardItem[questId] = itemId;
-                            }
-                        }
-
-                        if (conditionColumn != null)
-                        {
-                            IReadOnlyList<long> ids = ReadLongList(rows[r].Get(conditionColumn.Index, rows[r].ExcelRow).Text);
-
-                            for (int i = 0; i < ids.Count; i++)
-                            {
-                                List<long> owners;
-
-                                if (!m_conditionOwners.TryGetValue(ids[i], out owners))
-                                {
-                                    owners = new List<long>();
-                                    m_conditionOwners[ids[i]] = owners;
-                                }
-
-                                owners.Add(questId);
-                            }
+                            m_ownerRewardItem[ownerId] = itemId;
                         }
                     }
+
+                    if (conditionColumn == null)
+                    {
+                        continue;
+                    }
+
+                    IReadOnlyList<long> ids = ReadLongList(rows[r].Get(conditionColumn.Index, rows[r].ExcelRow).Text);
+
+                    for (int i = 0; i < ids.Count; i++)
+                    {
+                        List<Owner> owners;
+
+                        if (!m_conditionOwners.TryGetValue(ids[i], out owners))
+                        {
+                            owners = new List<Owner>();
+                            m_conditionOwners[ids[i]] = owners;
+                        }
+
+                        owners.Add(new Owner(ownerId, markAsQuestOwned));
+
+                        if (markAsQuestOwned)
+                        {
+                            m_questOwnedConditions.Add(ids[i]);
+                        }
+                    }
+                }
+            }
+
+            /// <summary>一个"持有者"：引用了这条条件的**任务**或**成就**。</summary>
+            private readonly struct Owner
+            {
+                /// <summary>持有者编号（`Quest.id` 或 `Achievement.id`）。</summary>
+                public readonly long Id;
+
+                /// <summary>是不是任务（false = 成就）。两者**语义不同**，报错时必须说清是哪个。</summary>
+                public readonly bool IsQuest;
+
+                /// <summary>造一个持有者。</summary>
+                /// <param name="id">编号。</param>
+                /// <param name="isQuest">是不是任务。</param>
+                public Owner(long id, bool isQuest)
+                {
+                    Id = id;
+                    IsQuest = isQuest;
+                }
+
+                /// <summary>人话（例如「任务 3001」）。</summary>
+                /// <returns>描述。</returns>
+                public override string ToString()
+                {
+                    return (IsQuest ? "任务 " : "成就 ") + Id.ToString(CultureInfo.InvariantCulture);
                 }
             }
 
@@ -436,13 +573,13 @@ namespace NBC.ConfigKit
             /// <returns>别的任务发它返回 true。</returns>
             public bool IsRewardedByAnotherQuest(long conditionId, long itemId)
             {
-                List<long> owners;
+                List<Owner> owners;
 
                 if (!m_conditionOwners.TryGetValue(conditionId, out owners))
                 {
                     // 这个条件没被任何任务引用（单表校验会另报"没人用"之类的问题）
                     // ⇒ 只要有任何任务发这个物品就算有来源
-                    foreach (KeyValuePair<long, long> pair in m_questRewardItem)
+                    foreach (KeyValuePair<long, long> pair in m_ownerRewardItem)
                     {
                         if (pair.Value == itemId)
                         {
@@ -453,7 +590,7 @@ namespace NBC.ConfigKit
                     return false;
                 }
 
-                foreach (KeyValuePair<long, long> pair in m_questRewardItem)
+                foreach (KeyValuePair<long, long> pair in m_ownerRewardItem)
                 {
                     if (pair.Value != itemId)
                     {
@@ -462,7 +599,7 @@ namespace NBC.ConfigKit
 
                     for (int i = 0; i < owners.Count; i++)
                     {
-                        if (owners[i] != pair.Key)
+                        if (owners[i].Id != pair.Key)
                         {
                             return true;        // 是**别的**任务发的
                         }
@@ -487,7 +624,7 @@ namespace NBC.ConfigKit
             /// <returns>有返回 true。</returns>
             private bool IsAnyQuestRewarded(long itemId)
             {
-                foreach (KeyValuePair<long, long> pair in m_questRewardItem)
+                foreach (KeyValuePair<long, long> pair in m_ownerRewardItem)
                 {
                     if (pair.Value == itemId)
                     {

@@ -26,6 +26,7 @@ using System;
 using System.Collections.Generic;
 using NBC.Framework;           // M4-S1：`EventCenter`（全局事件中心）
 using NBC.Framework.Net.Adapter;
+using NBC.Game.Achievement;    // M4-S2：`AchievementRuntime` / `AchievementTracking` / `AchievementEvents`
 using NBC.Game.Battle;         // M4-S1：`ServerEventBridge`（服务端事件 → 事件中心）
 using NBC.Game.Config;         // M4-S1c：`ConfigMgr` / `GameTables`（真任务要读配置表）
 using NBC.Game.GameFlow;       // M4-S1c：`BattleSession`（条件 → 任务 → 发奖 那条链的装配）
@@ -151,6 +152,9 @@ namespace NBC.EditorTools
         /// <summary>进行中任务的显示行。</summary>
         private readonly List<QuestRow> m_trackingRows = new List<QuestRow>();
 
+        /// <summary>M4-S2：成就的追踪视图（每帧重填，避免每帧分配新列表）。</summary>
+        private readonly List<AchievementTracking> m_achievementRows = new List<AchievementTracking>();
+
         /// <summary>发奖记录（新的在前，最多 20 条）。</summary>
         private readonly List<string> m_rewards = new List<string>();
 
@@ -192,6 +196,12 @@ namespace NBC.EditorTools
             m_lastUpdateTime = EditorApplication.timeSinceStartup;
             EditorApplication.update += Tick;
 
+            // M4-S2：成就解锁/失败要**在界面上留痕**（成就没有玩家操作，不写日志就完全没有痕迹）
+            EventCenter.Instance.AddEventListener<AchievementUnlockedPayload>(
+                AchievementEvents.Unlocked, OnAchievementUnlocked);
+            EventCenter.Instance.AddEventListener<AchievementUnlockFailedPayload>(
+                AchievementEvents.UnlockFailed, OnAchievementUnlockFailed);
+
             LoadConfigs();      // M4-S1c：先把配置表喂进来（真任务要用）
         }
 
@@ -199,6 +209,12 @@ namespace NBC.EditorTools
         private void OnDisable()
         {
             EditorApplication.update -= Tick;
+
+            EventCenter.Instance.RemoveEventListener<AchievementUnlockedPayload>(
+                AchievementEvents.Unlocked, OnAchievementUnlocked);
+            EventCenter.Instance.RemoveEventListener<AchievementUnlockFailedPayload>(
+                AchievementEvents.UnlockFailed, OnAchievementUnlockFailed);
+
             CloseSession("窗口关闭");
 
             // ⚠️ 订阅了就必须退订：这两座桥都挂在全局的 `EventCenter` / `NetSession` 上，
@@ -289,6 +305,24 @@ namespace NBC.EditorTools
             }
 
             AddLog(line);
+        }
+
+        /// <summary>
+        /// M4-S2：成就解锁了。
+        /// <para>⚠️ 成就**没有玩家操作**（条件一齐就自动解锁），所以"什么时候解的"
+        /// 只有日志能告诉你 —— 玩家反馈"我明明打了 10 只狼"时，这里就是唯一的证据。</para>
+        /// </summary>
+        /// <param name="payload">载荷。</param>
+        private void OnAchievementUnlocked(AchievementUnlockedPayload payload)
+        {
+            AddLog("🏆 成就解锁：" + payload.AchievementId + "（奖励 " + payload.RewardId + " 已发）");
+        }
+
+        /// <summary>M4-S2：成就该解锁却没解开（配置问题）—— **必须显眼**，否则就是一条无声的悬案。</summary>
+        /// <param name="payload">载荷。</param>
+        private void OnAchievementUnlockFailed(AchievementUnlockFailedPayload payload)
+        {
+            AddLog("⚠️ 成就 " + payload.AchievementId + " 解锁失败：" + payload.Reason);
         }
 
         /// <summary>奖励接缝的编辑器实现：把"发奖"变成窗口里的一行日志。</summary>
@@ -507,6 +541,7 @@ namespace NBC.EditorTools
             DrawStatus();
             DrawQuestLoop();
             DrawRealQuests();
+            DrawRealAchievements();
             EditorGUILayout.Space();
             DrawLog();
 
@@ -1039,6 +1074,69 @@ namespace NBC.EditorTools
                 "进度**来自联机事件**：服务端死亡/掉落 → `ServerEventBridge` → `EventCenter` → 条件桥 → 条件系统。\n"
                 + "所以：先「连接」并「加入房间」，再去打怪（或勾「自动追击并攻击」），回来这里看进度与交付。",
                 MessageType.None);
+        }
+
+        /// <summary>
+        /// M4-S2：**成就**区。
+        /// <para>和真任务区是**同一条链** —— 成就与任务共用同一个 `ConditionTracker`，
+        /// 所以打怪时两条一起涨；差别只在"成都不清零、不用接、条件一齐当场解锁"。</para>
+        /// <para>⚠️ 成就是**跨局累计**的：它用的是 `ConditionTracker` 的持久进度，
+        /// 窗口重开、会话重建都不会把它清零（这正是成就与任务最本质的区别）。</para>
+        /// </summary>
+        private void DrawRealAchievements()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("成就（与任务共用条件系统；条件一齐当场解锁发奖）", EditorStyles.boldLabel);
+
+            if (m_questSession == null)
+            {
+                EditorGUILayout.LabelField("成就", "（配置表还没就绪，或这一局没装成就）");
+                return;
+            }
+
+            AchievementRuntime achievements = m_questSession.Achievements;
+
+            if (achievements == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "这一局**没有成就**：`AchievementConfig` 没加载。\n"
+                    + "踩一步就修好：菜单 「Tools/NBC/配置表/导入 TSV → ScriptableObject」"
+                    + "（`Achievement.tsv` 已经由 ConfigKit 生成好了），然后点这里的「重新加载配置表」。",
+                    MessageType.Warning);
+
+                if (GUILayout.Button("重新加载配置表", GUILayout.Height(22f)))
+                {
+                    LoadConfigs();
+                }
+
+                return;
+            }
+
+            achievements.CopyTrackings(m_achievementRows);
+
+            EditorGUILayout.LabelField("已解锁",
+                achievements.UnlockedCount + " / " + achievements.AchievementCount);
+
+            for (int i = 0; i < m_achievementRows.Count; i++)
+            {
+                AchievementTracking row = m_achievementRows[i];
+
+                EditorGUILayout.LabelField(
+                    "　" + (row.IsUnlocked ? "🏆 " : "　") + row.Name,
+                    "[" + row.AchievementId + "] " + row.Description);
+
+                for (int c = 0; c < row.Conditions.Count; c++)
+                {
+                    EditorGUILayout.LabelField("　　　　",
+                        row.Conditions[c].Description + "　" + row.Conditions[c].Current
+                        + "/" + row.Conditions[c].Required + (row.Conditions[c].IsMet ? "　✅" : string.Empty));
+                }
+            }
+
+            if (!string.IsNullOrEmpty(achievements.LastProblem))
+            {
+                EditorGUILayout.HelpBox(achievements.LastProblem, MessageType.Error);
+            }
         }
 
         /// <summary>画一行任务（标题 + 详情 + 一个动作按钮）。</summary>

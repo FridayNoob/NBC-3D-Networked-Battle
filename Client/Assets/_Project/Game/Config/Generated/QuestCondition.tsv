@@ -4,3 +4,6 @@ id	eventType	targetId	requiredCount	note
 4003	KillMonster	6002	3	清剿森林蜘蛛（原「采集草药」需要可交互物系统，M4+ 再做）
 4005	KillMonster	6003	1	击杀狼王
 4007	KillMonster	6001	3	清剿野狼
+4009	KillMonster	6001	10	累计击杀 10 只野狼
+4010	KillMonster	6003	1	击杀狼王
+4011	KillMonster	0	5	累计击杀 5 只任意怪

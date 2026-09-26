@@ -77,6 +77,10 @@ namespace NBC.ConfigKit.SelfTest
             Run("跨表：物品只在**自己任务**的奖励里 → CFG0021（循环依赖）", CircularRewardItem_IsReported);
             Run("跨表对照：掉落表里有 → 不报 CFG0021", DroppedItem_IsAccepted);
             Run("跨表：事件类型没有事件源 → **警告** CFG0022", EventTypeWithoutSource_IsWarned);
+            Run("跨表对照：**成就**要杀 10 只而副本只刷 2 只 → **不报** CFG0020（跨局累计）", AchievementKillBeyondCapacity_IsAccepted);
+            Run("跨表对照：`targetId = 0`（任意怪）→ **不报** CFG0020", AnyTargetKill_IsAccepted);
+            Run("跨表：**任务与成就共用**同一条条件 → CFG0023（运行期 Register 抛异常）", ConditionSharedByQuestAndAchievement_IsReported);
+            Run("跨表：**两个任务共用**同一条条件 → CFG0023", ConditionSharedByTwoQuests_IsReported);
             Run("表中间空行 → CFG0014（不许静默截断）", BlankRowInMiddle_IsReported);
             Run("一次报出全部错误（不是遇到第一个就停）", AllErrors_AreReportedAtOnce);
             Run("有结构错误时不再校验数据（避免连锁误报）", FatalStructure_StopsDataValidation);
@@ -680,6 +684,68 @@ namespace NBC.ConfigKit.SelfTest
         }
 
         /// <summary>
+        /// 阴性对照：**成就**要杀 10 只、副本只刷 2 只 → 不该报。
+        /// <para>⚠️ 这条同样是**实测逼出来的**：加了 `Achievement` 表之后，真表里
+        /// 「累计击杀 10 只野狼」被 CFG0020 报成错误。判据本身没错，错在**适用范围**：
+        /// 成就用 `resetProgress: false`，是**跨局累计**的（一局刷 2 只，打 5 局也能到 10），
+        /// 而任务必须**一局内做完** ⇒ "一局能提供多少"只对**任务**成立。</para>
+        /// <para>📌 所以"副本刷 2 只 + 要杀 10 只"这个**看起来一模一样**的数据，
+        /// 挂任务上是真错、挂成就上是正常的 —— 判据必须跟着语义走。</para>
+        /// </summary>
+        private static void AchievementKillBeyondCapacity_IsAccepted()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 2, killRequired: 1, achievementKill: 10));
+
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.QuestKillUnreachable),
+                "成就的跨局累计条件不该报 CFG0020。实际编号：" + string.Join(", ", Codes(diagnostics)));
+        }
+
+        /// <summary>
+        /// 阴性对照：`targetId = 0` 表示"**任意**怪" → 不该报。
+        /// <para>⚠️ 它不在任何副本的怪列表里是**必然的**（"任意"本来就不是某个编号），
+        /// 拿"副本刷不刷这种怪"去判它属于**纯误报**。真表里的「猎手的直觉
+        /// · 累计击杀 5 只任意怪」就是这么被误报的。</para>
+        /// </summary>
+        private static void AnyTargetKill_IsAccepted()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 2, killRequired: 1, anyTargetKill: true));
+
+            Check(!Codes(diagnostics).Contains(DiagnosticCodes.QuestKillUnreachable),
+                "targetId = 0（任意怪）不该报 CFG0020。实际编号：" + string.Join(", ", Codes(diagnostics)));
+        }
+
+        /// <summary>
+        /// **任务与成就共用**同一条条件 → CFG0023。
+        /// <para>⚠️ 这条只有**加了成就之后**才存在：以前只有任务时，"两个任务抢一条条件"
+        /// 就该被抓；有了成就，`Achievement` 与 `Quest` 抢同一条条件成了**新的**、
+        /// 同样会炸的第六种组合。</para>
+        /// <para>它为什么是**错误**而不是警告：`ConditionTracker.Register` 对重复登记
+        /// **当场抛 `InvalidOperationException`**（那段注释写得很清楚：静默覆盖会让 bug 永远查不出来）。
+        /// 所以数据单看完全正常，炸的是运行期 —— 而且成就**在启动时就登记**，
+        /// 于是表现是"任务接不了 / 一接就闪退"，跟配置表"看起来"毫无关系。</para>
+        /// </summary>
+        private static void ConditionSharedByQuestAndAchievement_IsReported()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 1, shareWithAchievement: true));
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ConditionSharedByOwners);
+
+            CheckContains(diagnostic.Message, "4001", "点名是哪条条件");
+            CheckContains(diagnostic.Message, "任务 3001", "说清**两边都是谁**（任务那一边）");
+            CheckContains(diagnostic.Message, "成就 9001", "说清**两边都是谁**（成就那一边）");
+            CheckContains(diagnostic.Message, "抛异常", "说清后果是运行期抛异常，不是\"不涨进度\"");
+        }
+
+        /// <summary>**两个任务共用**同一条条件 → CFG0023（这条不依赖成就表，是最基本的形态）。</summary>
+        private static void ConditionSharedByTwoQuests_IsReported()
+        {
+            DiagnosticBag diagnostics = Validate(CrossTableSource(wolvesInDungeon: 3, killRequired: 1, secondQuestSharesCondition: true));
+            Diagnostic diagnostic = FirstOf(diagnostics, DiagnosticCodes.ConditionSharedByOwners);
+
+            CheckContains(diagnostic.Message, "任务 3001", "列出第一个任务");
+            CheckContains(diagnostic.Message, "任务 3002", "列出第二个任务");
+        }
+
+        /// <summary>
         /// 造一份"任务 ↔ 副本 ↔ 掉落"的最小表集（跨表用例共用）。
         /// <para>参数就是**对照**：副本刷几只狼、任务要杀几只、是否制造循环奖励、是否有掉落来源、是否用 ReachArea。</para>
         /// </summary>
@@ -688,10 +754,16 @@ namespace NBC.ConfigKit.SelfTest
         /// <param name="circularCollect">是否加一条"收集 7001"（其奖励也是 7001 → 循环）。</param>
         /// <param name="alsoDrop">是否同时让 6001 掉 7001（用来做阴性对照）。</param>
         /// <param name="reachArea">是否加一条 ReachArea 条件。</param>
+        /// <param name="achievementKill">大于 0 时加一条**成就**条件"杀 6001 × N"（用来验证成就豁免 CFG0020）。</param>
+        /// <param name="anyTargetKill">是否给**任务**加一条"任意怪 × 5"（`targetId = 0`）。</param>
+        /// <param name="shareWithAchievement">是否让成就**引用任务那条条件 4001**（→ CFG0023）。</param>
+        /// <param name="secondQuestSharesCondition">是否加第二个任务、也引用 4001（→ CFG0023）。</param>
         /// <returns>表来源。</returns>
         private static InMemoryTableSource CrossTableSource(int wolvesInDungeon, int killRequired,
                                                            bool circularCollect = false, bool alsoDrop = false,
-                                                           bool reachArea = false)
+                                                           bool reachArea = false, int achievementKill = 0,
+                                                           bool anyTargetKill = false, bool shareWithAchievement = false,
+                                                           bool secondQuestSharesCondition = false)
         {
             var source = new InMemoryTableSource();
             string wolves = string.Join(",", Enumerable.Repeat("6001", wolvesInDungeon));
@@ -733,6 +805,16 @@ namespace NBC.ConfigKit.SelfTest
                 conditionLines.Add("4004|ReachArea|1|1|抵达某个区域");
             }
 
+            if (achievementKill > 0)
+            {
+                conditionLines.Add("4009|KillMonster|6001|" + achievementKill + "|累计击杀野狼");
+            }
+
+            if (anyTargetKill)
+            {
+                conditionLines.Add("4010|KillMonster|0|5|累计击杀任意怪");
+            }
+
             source.AddTable("QuestCondition", Grid(conditionLines.ToArray()), "QuestCondition.csv");
 
             // 奖励表：5001 发 7001（`circularCollect` 时正好是"自己给自己"）
@@ -743,15 +825,50 @@ namespace NBC.ConfigKit.SelfTest
                 "key|min(0)|min(0)|min(0)|min(0)",
                 "5001|100|50|7001|2"), "Reward.csv");
 
-            // 任务表：3001 = 条件 4001（+4002）→ 奖励 5001
-            string questConditions = circularCollect ? "4001,4002" : "4001";
+            // 任务表：3001 = 条件 4001（+4002/4010）→ 奖励 5001
+            var questConditionIds = new List<string> { "4001" };
 
-            source.AddTable("Quest", Grid(
+            if (circularCollect)
+            {
+                questConditionIds.Add("4002");
+            }
+
+            if (anyTargetKill)
+            {
+                questConditionIds.Add("4010");
+            }
+
+            var questLines = new List<string>
+            {
                 "id|name|desc|conditionIds|rewardId",
                 "编号|名称|描述|条件|奖励",
                 "int|string|string|ref:QuestCondition[]|ref:Reward",
                 "key|len(1,16)|len(1,64)||",
-                "3001|初次狩猎|测试用|" + questConditions + "|5001"), "Quest.csv");
+                "3001|初次狩猎|测试用|" + string.Join(",", questConditionIds) + "|5001",
+            };
+
+            // ⚠️ **故意**让第二个任务也引用 4001：`ConditionTracker.Register` 会当场抛异常，
+            //    所以这必须是 CFG0023（错误），不能是"提醒一下"。
+            if (secondQuestSharesCondition)
+            {
+                questLines.Add("3002|清剿蛛群|抢同一条条件|4001|5001");
+            }
+
+            source.AddTable("Quest", Grid(questLines.ToArray()), "Quest.csv");
+
+            // 成就表：9001 引用**成就专属**条件 4009（与 `Quest` 同构，只差语义：跨局累计）
+            //        —— `shareWithAchievement` 时改成引用 4001（**与任务共用** → CFG0023）
+            if (achievementKill > 0 || shareWithAchievement)
+            {
+                string achievementConditions = shareWithAchievement ? "4001" : "4009";
+
+                source.AddTable("Achievement", Grid(
+                    "id|name|desc|conditionIds|rewardId",
+                    "编号|名称|描述|完成条件|奖励",
+                    "int|string|string|ref:QuestCondition[]|ref:Reward",
+                    "key|len(1,16)|len(1,64)||",
+                    "9001|初出茅庐|累计击杀野狼|" + achievementConditions + "|5001"), "Achievement.csv");
+            }
 
             if (alsoDrop)
             {

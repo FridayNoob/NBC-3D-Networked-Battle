@@ -43,6 +43,7 @@ using System;
 using System.Collections.Generic;
 using NBC.Framework;
 using NBC.Framework.Input;
+using NBC.Game.Achievement;
 using NBC.Game.Battle;
 using NBC.Game.Config;
 using NBC.Game.Quest;
@@ -66,6 +67,11 @@ namespace NBC.Game.GameFlow
         /// <summary>任务运行时。</summary>
         private readonly QuestRuntime m_quests;
 
+        /// <summary>
+        /// 成就运行时（**可以是 null** —— 没给成就表时就没有成就，见 ctor 重载的说明）。
+        /// </summary>
+        private readonly AchievementRuntime m_achievements;
+
         /// <summary>输入 → 技能。</summary>
         private readonly SkillCaster m_caster;
 
@@ -82,9 +88,8 @@ namespace NBC.Game.GameFlow
         private bool m_disposed;
 
         /// <summary>
-        /// 装配一局。
-        /// <para>⚠️ 参数是**六张表 + 一个英雄编号**：本类刻意不自己去 `ConfigMgr` 拿，
-        /// 那样它就能在 EditMode 里用假表跑（同 M2-A / M2-B 的做法）。</para>
+        /// 装配一局（**不带成就** —— 等价于 <paramref name="achievements"/> 传 null）。
+        /// <para>保留这个重载是为了"这个项目不做成就也能跑"，也让 M2 那批调用点一行都不改。</para>
         /// </summary>
         /// <param name="quests">任务表。</param>
         /// <param name="conditions">条件表。</param>
@@ -97,6 +102,28 @@ namespace NBC.Game.GameFlow
         public BattleSession(QuestConfig quests, QuestConditionConfig conditions, RewardConfig rewards,
                              MonsterConfig monsters, HeroConfig heroes, SkillConfig skills,
                              int heroId, IQuestRewardSink rewardSink)
+            : this(quests, conditions, rewards, monsters, heroes, skills, null, heroId, rewardSink)
+        {
+        }
+
+        /// <summary>
+        /// 装配一局。
+        /// <para>⚠️ 参数是**六~七张表 + 一个英雄编号**：本类刻意不自己去 `ConfigMgr` 拿，
+        /// 那样它就能在 EditMode 里用假表跑（同 M2-A / M2-B 的做法）。</para>
+        /// </summary>
+        /// <param name="quests">任务表。</param>
+        /// <param name="conditions">条件表。</param>
+        /// <param name="rewards">奖励表。</param>
+        /// <param name="monsters">怪物表。</param>
+        /// <param name="heroes">英雄表。</param>
+        /// <param name="skills">技能表。</param>
+        /// <param name="achievements">成就表；**传 null 表示这一局不做成就**。</param>
+        /// <param name="heroId">玩家用哪个英雄（`Hero` 表主键）。</param>
+        /// <param name="rewardSink">发奖实现（M2 内存版；M4 换服务端权威）。</param>
+        public BattleSession(QuestConfig quests, QuestConditionConfig conditions, RewardConfig rewards,
+                             MonsterConfig monsters, HeroConfig heroes, SkillConfig skills,
+                             AchievementConfig achievements,
+                             int heroId, IQuestRewardSink rewardSink)
         {
             // -------- ① 造依赖（顺序就是依赖顺序） --------
             m_world = new BattleWorld(monsters, heroes, skills);
@@ -104,6 +131,18 @@ namespace NBC.Game.GameFlow
 
             m_conditions = new ConditionTracker(new InMemoryConditionProgressStore());
             m_quests = new QuestRuntime(quests, conditions, rewards, m_conditions, rewardSink);
+
+            // ⚠️ 成就与任务**共用同一个 `ConditionTracker`**（`Docs\20` §四 的核心复用）——
+            //    所以这里传的是 `m_conditions`，**不是新造一个**。
+            //    造第二个 tracker 的后果：任务打死的怪不涨成就进度，而**没有任何报错**。
+            //
+            // ⚠️ 顺序：成就必须在**桥接线之前**造好。成就是"构造即登记全部条件"，
+            //    而桥一旦开始喂事件，还没登记的条件就会被漏掉 —— 这个洞很隐蔽
+            //    （表现是"成就好像少算了前几只怪"）。
+            m_achievements = achievements == null
+                ? null
+                : new AchievementRuntime(achievements, conditions, rewards, m_conditions, rewardSink);
+
             m_caster = new SkillCaster(m_world, m_hero.InstanceId);
 
             // -------- ② 接线：游戏事件 -> 条件事件 --------
@@ -137,12 +176,22 @@ namespace NBC.Game.GameFlow
         /// `ConfigMgr.Get&lt;T&gt;()` 在表没加载时**抛异常**，而且报错会明确告诉你
         /// "忘了预加载"（M1-C4 定的报错三要素）。
         /// </para>
+        /// <para>
+        /// ⚠️ 成就表**故意用 `TryGet`**（而不是 `Get`）：缺成就表时这一局就没有成就
+        /// （<see cref="Achievements"/> 为 null），但**其余部分照常可玩**。
+        /// 理由：成就是"锦上添花"，不该因为它没导入就让整局起不来。
+        /// 而"表没加载"这件事**不会静默** —— `GameTables.PreloadAll` 的失败回调会先报一次，
+        /// 调试面板也会把"成就：未加载"写在明面上（见 `NetDebugWindow`）。
+        /// </para>
         /// </summary>
         /// <param name="heroId">玩家用哪个英雄。</param>
         /// <param name="rewardSink">发奖实现。</param>
         /// <returns>装配好的一局。</returns>
         public static BattleSession FromConfigMgr(int heroId, IQuestRewardSink rewardSink)
         {
+            AchievementConfig achievements;
+            ConfigMgr.Instance.TryGet<AchievementConfig>(out achievements);
+
             return new BattleSession(
                 ConfigMgr.Instance.Get<QuestConfig>(),
                 ConfigMgr.Instance.Get<QuestConditionConfig>(),
@@ -150,6 +199,7 @@ namespace NBC.Game.GameFlow
                 ConfigMgr.Instance.Get<MonsterConfig>(),
                 ConfigMgr.Instance.Get<HeroConfig>(),
                 ConfigMgr.Instance.Get<SkillConfig>(),
+                achievements,
                 heroId,
                 rewardSink);
         }
@@ -158,6 +208,14 @@ namespace NBC.Game.GameFlow
         public QuestRuntime Quests
         {
             get { return m_quests; }
+        }
+
+        /// <summary>
+        /// 成就运行时（**没给成就表时是 null** —— 调用方必须先判 null，见 `FromConfigMgr`）。
+        /// </summary>
+        public AchievementRuntime Achievements
+        {
+            get { return m_achievements; }
         }
 
         /// <summary>条件系统（调试面板要看进度时用）。</summary>
@@ -299,6 +357,16 @@ namespace NBC.Game.GameFlow
             builder.Append("  场上活怪：").Append(m_world.AliveMonsterCount)
                    .Append("，当前目标 #").Append(m_targetInstanceId).Append('\n');
             builder.Append(m_quests.DescribeActive());
+
+            if (m_achievements != null)
+            {
+                builder.Append(m_achievements.Describe());
+            }
+            else
+            {
+                builder.Append("[AchievementRuntime] 这一局没有成就（没给成就表）。\n");
+            }
+
             return builder.ToString();
         }
 
@@ -315,6 +383,16 @@ namespace NBC.Game.GameFlow
             // 顺序：先拆"订阅方"，再拆"被订阅方"，最后清"共享状态"
             // （`SkillCaster` 不订阅事件，所以没有它的退订动作）
             m_bridge.Dispose();
+
+            // ⚠️ 成就与任务**都要 Dispose**，而且都在 `m_conditions.Clear()` **之前**：
+            //    它们各自持有条件登记，`Clear()` 是"连登记表一起清掉"的粗粒度兜底。
+            //    顺序反了不会立刻出错（Clear 之后 Unregister 只是返回 false），
+            //    但会让"谁登记了什么"这笔账**在本类里对不上** —— 保持"谁登记谁注销"。
+            if (m_achievements != null)
+            {
+                m_achievements.Dispose();
+            }
+
             m_quests.Dispose();
             m_conditions.Clear();
         }

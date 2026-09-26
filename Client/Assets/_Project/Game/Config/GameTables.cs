@@ -41,8 +41,15 @@ namespace NBC.Game.Config
             "Monster",
             "Quest",
             "QuestCondition",
-            "Reward"
+            "Reward",
+
+            // M4-S2：成就（与任务**共用** `QuestCondition` / `Reward`，所以只多这一张表）
+            "Achievement"
         };
+
+        // ⚠️ 这里**故意没有** `Dungeon` / `DropTable`：它们是**服务端**读的
+        //    （服务端直接读 `Configs\Design\*.csv`，见 `Docs\27` §三）。
+        //    客户端拿到的是快照，不需要这两张表 —— 把它们加进来只会让每局多两次无用的资产加载。
 
         /// <summary>把全部表预加载起来（启动流程调用一次）。</summary>
         /// <param name="onDone">全部成功回调。</param>

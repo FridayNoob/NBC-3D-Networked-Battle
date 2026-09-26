@@ -1,0 +1,9 @@
+{
+  "table": "Achievement",
+  "fields": ["id", "name", "desc", "conditionIds", "rewardId"],
+  "rows": [
+    { "id": 9001, "name": "初出茅庐", "desc": "累计击杀 10 只野狼", "conditionIds": [ 4009 ], "rewardId": 5001 },
+    { "id": 9002, "name": "狼王终结者", "desc": "击杀狼王", "conditionIds": [ 4010 ], "rewardId": 5003 },
+    { "id": 9003, "name": "猎手的直觉", "desc": "累计击杀 5 只任意怪", "conditionIds": [ 4011 ], "rewardId": 5002 }
+  ]
+}

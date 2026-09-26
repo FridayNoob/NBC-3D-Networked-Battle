@@ -115,6 +115,13 @@ namespace NBC.ConfigKit
         /// **跨表**：用到了"当前没有事件源"的事件类型（**警告** —— 这是实现缺口，不是数据写错）。
         /// </summary>
         public const string EventTypeWithoutSource = "CFG0022";
+
+        /// <summary>
+        /// **跨表**：同一条 `QuestCondition` 被**多个持有者**（两个任务 / 任务 + 成就）引用。
+        /// <para>⇒ 运行期 `ConditionTracker.Register` **直接抛 `InvalidOperationException`**
+        /// （一个条件编号只允许一个持有者登记）。数据看着完全正常，炸的是运行期。</para>
+        /// </summary>
+        public const string ConditionSharedByOwners = "CFG0023";
     }
 
     /// <summary>

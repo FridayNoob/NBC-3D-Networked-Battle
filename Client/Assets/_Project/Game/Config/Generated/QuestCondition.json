@@ -6,6 +6,9 @@
     { "id": 4002, "eventType": "CollectItem", "targetId": 7001, "requiredCount": 2, "note": "带回狼皮" },
     { "id": 4003, "eventType": "KillMonster", "targetId": 6002, "requiredCount": 3, "note": "清剿森林蜘蛛（原「采集草药」需要可交互物系统，M4+ 再做）" },
     { "id": 4005, "eventType": "KillMonster", "targetId": 6003, "requiredCount": 1, "note": "击杀狼王" },
-    { "id": 4007, "eventType": "KillMonster", "targetId": 6001, "requiredCount": 3, "note": "清剿野狼" }
+    { "id": 4007, "eventType": "KillMonster", "targetId": 6001, "requiredCount": 3, "note": "清剿野狼" },
+    { "id": 4009, "eventType": "KillMonster", "targetId": 6001, "requiredCount": 10, "note": "累计击杀 10 只野狼" },
+    { "id": 4010, "eventType": "KillMonster", "targetId": 6003, "requiredCount": 1, "note": "击杀狼王" },
+    { "id": 4011, "eventType": "KillMonster", "targetId": 0, "requiredCount": 5, "note": "累计击杀 5 只任意怪" }
   ]
 }

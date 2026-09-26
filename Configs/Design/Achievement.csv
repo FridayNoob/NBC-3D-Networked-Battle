@@ -1,0 +1,7 @@
+id,name,desc,conditionIds,rewardId
+编号,名称,描述,完成条件（可多条）,奖励
+int,string,string,ref:QuestCondition[],ref:Reward
+key,"len(1,16)","len(1,64)",,
+9001,初出茅庐,累计击杀 10 只野狼,4009,5001
+9002,狼王终结者,击杀狼王,4010,5003
+9003,猎手的直觉,累计击杀 5 只任意怪,4011,5002
