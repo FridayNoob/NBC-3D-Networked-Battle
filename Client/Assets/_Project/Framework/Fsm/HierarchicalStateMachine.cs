@@ -41,6 +41,9 @@
 //  **④ 切到"当前已在的配置"是空操作**（返回 false、不记录、不触发事件）。
 // ============================================================================
 
+#nullable disable
+// ↑ 双端共用（服务端也编它，见 Server\NBC.Server.Game.csproj）：服务端开了可空、Unity 没开
+//   —— 与 Shared\ 同一处理由（M3-S6b，2026-09-23）。
 using System;
 using System.Collections.Generic;
 using NBC.Framework;

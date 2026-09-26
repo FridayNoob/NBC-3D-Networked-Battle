@@ -15,11 +15,30 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>NBC.Server.Game</RootNamespace>
     <AssemblyName>NBC.Server.Game</AssemblyName>
+    <!--
+      ⚠️ 这里**故意不加** NoWarn：`Framework\Fsm\**` 与 `Framework\Event\EventId.cs` 现在
+      自己写了 `#nullable disable`（照 `Shared\` 的规矩），所以 nullable 噪音已经消掉；
+      再加 `NoWarn` 只会把**本工程自己**的真实可空缺陷一起屏蔽掉。
+    -->
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
     <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
+  </ItemGroup>
+
+  <!-- ========================================================================
+       ★ A10 的状态机 + `EventId`：**服务端直接编源码复用**（M3-S6b 的 BOSS AI 用它）
+
+       ⚠️ 为什么还要 `EventId.cs`：`StateBase.OnEvent(EventId id)` 用到它 ——
+          **状态机自己那 5 个文件是纯 C#，但它引的 `EventId` 不是**（那句 `Debug.LogWarning`）。
+          这是 D14 结论的**第二层**：判"能不能进服务端"要看**整条依赖链**。
+       ⚠️ `UnityEngineDebugShim.cs`（本目录）就是为这一条日志准备的**编译期垫片**，
+         红线与长期解写在那个文件头里。
+       ======================================================================== -->
+  <ItemGroup>
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Fsm\**\*.cs" />
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Event\EventId.cs" />
   </ItemGroup>
 
   <!-- ========================================================================

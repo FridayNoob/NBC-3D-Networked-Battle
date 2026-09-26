@@ -19,6 +19,9 @@
 //     （比如 60 帧/秒下 0.3 秒 = 18 帧），用帧计数器判断。
 // ============================================================================
 
+#nullable disable
+// ↑ 双端共用（服务端也编它，见 Server\NBC.Server.Game.csproj）：服务端开了可空、Unity 没开
+//   —— 与 Shared\ 同一处理由（M3-S6b，2026-09-23）。
 using System;
 
 namespace NBC.Framework.Fsm

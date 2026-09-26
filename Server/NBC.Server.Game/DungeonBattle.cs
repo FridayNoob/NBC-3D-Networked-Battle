@@ -100,6 +100,12 @@ public sealed class BattleEntity
     /// <summary>是不是 BOSS（S6：BOSS 也是怪，但"+只数一个"用得上这个标记）。</summary>
     public bool IsBoss { get; private set; }
 
+    /// <summary>它一次普攻的伤害（英雄来自 `Skill` 表，怪来自 `Monster.attack`）。**每个单位各一份**。</summary>
+    public int AttackDamage { get; }
+
+    /// <summary>它的移动速度（毫米/帧）。英雄来自 `Hero` 表；怪用常量（表里还没有这一列，见 TODO）。</summary>
+    public int MoveSpeedMmPerTick { get; }
+
     /// <summary>造一个单位。</summary>
     /// <param name="id">实例编号。</param>
     /// <param name="configId">配置编号。</param>
@@ -112,9 +118,12 @@ public sealed class BattleEntity
     /// <param name="patrolMaxMm">巡逻上限。</param>
     /// <param name="playerId">所属玩家（0 = 无主）。</param>
     /// <param name="isBoss">是不是 BOSS。</param>
+    /// <param name="attackDamage">普攻伤害。</param>
+    /// <param name="moveSpeedMmPerTick">移动速度（毫米/帧）。</param>
     public BattleEntity(int id, int configId, int kind, int maxHp, int posXmm, int posZmm,
                         int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
-                        long playerId = 0, bool isBoss = false)
+                        long playerId = 0, bool isBoss = false,
+                        int attackDamage = 0, int moveSpeedMmPerTick = 0)
     {
         Id = id;
         ConfigId = configId;
@@ -128,6 +137,8 @@ public sealed class BattleEntity
         PatrolMaxMm = patrolMaxMm;
         PlayerId = playerId;
         IsBoss = isBoss;
+        AttackDamage = attackDamage;
+        MoveSpeedMmPerTick = moveSpeedMmPerTick;
     }
 
     /// <summary>推进一帧（冷却倒计时 + 巡逻移动 + 朝向）。</summary>
@@ -319,10 +330,24 @@ public sealed class DungeonBattle
     /// <summary>普攻冷却（帧）。15 帧 = 0.5 秒（30Hz）。</summary>
     public const int BasicAttackCooldownTicks = 15;
 
+    /// <summary>
+    /// 普通怪的移速（毫米/帧）：**表里还没有这一列**。
+    /// <para>⚠️ TODO(S6+)：`Monster` 表加一列 `moveSpeed` 之后改从表读（加列 = 加表，工具不用改）。
+    /// 现在先用常量，并在文件头/文档里记着 —— **别让它悄悄变成"没人知道的魔法数"**。</para>
+    /// </summary>
+    public const int MonsterMoveMmPerTick = 40;
+
+    /// <summary>BOSS 的追击速度（毫米/帧）。TODO(S6+)：同上，等 `Monster.moveSpeed` 那一列。</summary>
+    public const int BossMoveMmPerTick = 90;
+
     /// <summary>英雄的配置编号（M3 固定用剑士）。TODO(S6+)：让它跟玩家选的英雄走。</summary>
     public const int HeroConfigId = 1001;
 
     private readonly List<BattleEntity> _entities = new();
+
+    /// <summary>BOSS 大脑（每 tick 想一次，见 `BossBrain`）。</summary>
+    private readonly List<BossBrain> _brains = new();
+
     private int _nextEntityId = 1;
 
     /// <summary>英雄满速移动（毫米/帧）—— **来自 `Hero` 表**（毫米/秒 ÷ 30Hz）。</summary>
@@ -384,6 +409,9 @@ public sealed class DungeonBattle
         }
     }
 
+    /// <summary>本局所有 BOSS 大脑（探针/调试面板看 AI 状态用）。</summary>
+    public IReadOnlyList<BossBrain> Brains => _brains;
+
     /// <summary>BOSS 数量（`Kind == 1` 且配置号等于 `Dungeon.bossId` 的单位）。</summary>
     public int BossCount
     {
@@ -436,10 +464,12 @@ public sealed class DungeonBattle
     /// <returns>新单位。</returns>
     public BattleEntity AddEntity(int configId, int kind, int maxHp, int posXmm, int posZmm,
                                   int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
-                                  long playerId = 0, bool isBoss = false)
+                                  long playerId = 0, bool isBoss = false,
+                                  int attackDamage = 0, int moveSpeedMmPerTick = 0)
     {
         var entity = new BattleEntity(_nextEntityId, configId, kind, maxHp, posXmm, posZmm,
-                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm, playerId, isBoss);
+                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm, playerId, isBoss,
+                                      attackDamage, moveSpeedMmPerTick);
         _nextEntityId++;
         _entities.Add(entity);
         return entity;
@@ -494,7 +524,7 @@ public sealed class DungeonBattle
             return false;
         }
 
-        hero.ApplyMove(moveX, moveY, HeroMoveMmPerTick, PlayAreaHalfExtentMm);
+        hero.ApplyMove(moveX, moveY, hero.MoveSpeedMmPerTick, PlayAreaHalfExtentMm);
         return true;
     }
 
@@ -549,12 +579,71 @@ public sealed class DungeonBattle
             return false;
         }
 
-        ApplyDamage(targetId, BasicAttackDamage, attacker.Id);
+        ApplyDamage(targetId, attacker.AttackDamage, attacker.Id);
         attacker.StartAttackCooldown(BasicAttackCooldownTicks);
         return true;
     }
 
-    /// <summary>两个单位在平面上的整数距离（毫米，向下取整的近似：先比平方再开方太费，M3 用切比雪夫距离）。</summary>
+    /// <summary>找**最近的活英雄**（BOSS 选目标用）。没有就返回 null。</summary>
+    /// <param name="from">从谁那里量距离。</param>
+    /// <returns>英雄或 null。</returns>
+    public BattleEntity? NearestAliveHero(BattleEntity from)
+    {
+        BattleEntity? best = null;
+        int bestDistance = int.MaxValue;
+
+        for (int i = 0; i < _entities.Count; i++)
+        {
+            BattleEntity candidate = _entities[i];
+
+            if (candidate.Kind != 0 || !candidate.Alive)
+            {
+                continue;
+            }
+
+            int distance = DistanceMm(from, candidate);
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>够不够得着（切比雪夫距离 ≤ 普攻射程）。</summary>
+    /// <param name="a">甲。</param>
+    /// <param name="b">乙。</param>
+    /// <returns>够得着返回 true。</returns>
+    public bool InAttackRange(BattleEntity a, BattleEntity b)
+        => DistanceMm(a, b) <= BasicAttackRangeMm;
+
+    /// <summary>
+    /// 朝目标走一格（**整数轴**：把方向变成 ±1000 的量化轴，交给 `ApplyMove` 统一处理斜向不超速）。
+    /// </summary>
+    /// <param name="mover">要移动的单位。</param>
+    /// <param name="target">目标。</param>
+    /// <returns>确实移动了返回 true。</returns>
+    public bool MoveTowards(BattleEntity mover, BattleEntity target)
+    {
+        int dx = target.PosXmm - mover.PosXmm;
+        int dz = target.PosZmm - mover.PosZmm;
+
+        if (dx == 0 && dz == 0)
+        {
+            return false;
+        }
+
+        int moveX = dx == 0 ? 0 : (dx > 0 ? 1000 : -1000);
+        int moveY = dz == 0 ? 0 : (dz > 0 ? 1000 : -1000);
+
+        mover.ApplyMove(moveX, moveY, mover.MoveSpeedMmPerTick, PlayAreaHalfExtentMm);
+        return true;
+    }
+
+    /// <summary>把两个单位在平面上的整数距离（毫米，向下取整的近似：先比平方再开方太费，M3 用切比雪夫距离）。</summary>
     /// <param name="a">甲。</param>
     /// <param name="b">乙。</param>
     /// <returns>距离（毫米）。</returns>
@@ -603,6 +692,12 @@ public sealed class DungeonBattle
         for (int i = 0; i < _entities.Count; i++)
         {
             _entities[i].Step();
+        }
+
+        // AI 在"世界推进一步之后"想：它看到的是**本帧的位置**，决策也在本帧生效
+        for (int i = 0; i < _brains.Count; i++)
+        {
+            _brains[i].Think(this);
         }
     }
 
@@ -726,7 +821,10 @@ public sealed class DungeonBattle
             int spawnX = radius;
 
             battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
-                             patrolSpeedMmPerTick: 60, patrolMinMm: spawnX - 500, patrolMaxMm: spawnX + 500);
+                             patrolSpeedMmPerTick: MonsterMoveMmPerTick,
+                             patrolMinMm: spawnX - 500, patrolMaxMm: spawnX + 500,
+                             attackDamage: monster.Value.Attack,
+                             moveSpeedMmPerTick: MonsterMoveMmPerTick);
         }
 
         // BOSS：摆在对面（x = -radius），把"血量厚、攻击高"从表里带出来
@@ -738,7 +836,13 @@ public sealed class DungeonBattle
             return null;
         }
 
-        battle.AddEntity(boss.Value.Id, 1, boss.Value.Hp, -radius, 0, isBoss: true);
+        BattleEntity bossEntity = battle.AddEntity(boss.Value.Id, 1, boss.Value.Hp, -radius, 0,
+                                                  isBoss: true,
+                                                  attackDamage: boss.Value.Attack,
+                                                  moveSpeedMmPerTick: BossMoveMmPerTick);
+
+        // BOSS 由状态机驱动（见 `BossBrain`：Idle / Chase / Attack）
+        battle._brains.Add(new BossBrain(bossEntity));
 
         return battle;
     }

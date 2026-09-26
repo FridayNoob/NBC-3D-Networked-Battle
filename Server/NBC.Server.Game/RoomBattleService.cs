@@ -227,7 +227,9 @@ public sealed class RoomBattleService
 
             (int spawnX, int spawnZ) = DungeonBattle.HeroSpawnPoint(i);
             battle.AddEntity(DungeonBattle.HeroConfigId, 0, battle.HeroMaxHp, spawnX, spawnZ,
-                             playerId: playerId);
+                             playerId: playerId,
+                             attackDamage: battle.BasicAttackDamage,
+                             moveSpeedMmPerTick: battle.HeroMoveMmPerTick);
 
             Note?.Invoke($"玩家 {playerId}（{room.Seats[i].PlayerName}）进入副本，出生点 ({spawnX}, {spawnZ})mm");
         }

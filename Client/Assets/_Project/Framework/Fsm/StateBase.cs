@@ -23,6 +23,9 @@
 //     所以状态清单里"可被打断"那一列必须和代码对上 —— 这是 M2 写玩家状态时的检查项。
 // ============================================================================
 
+#nullable disable
+// ↑ 双端共用（服务端也编它，见 Server\NBC.Server.Game.csproj）：服务端开了可空、Unity 没开
+//   —— 与 Shared\ 同一处理由（M3-S6b，2026-09-23）。
 using NBC.Framework;
 
 namespace NBC.Framework.Fsm
