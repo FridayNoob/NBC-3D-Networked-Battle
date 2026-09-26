@@ -25,6 +25,6 @@ MonoBehaviour:
     skillIds: d2070000d3070000
   - id: 6003
     name: "\u72FC\u738B"
-    hp: 2000
+    hp: 1000
     attack: 60
     skillIds: d1070000d2070000
