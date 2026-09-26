@@ -56,6 +56,7 @@ internal static class Program
         Console.WriteLine("  NBC Server (Networked Battle Combat)");
         Console.WriteLine($"  Version : {version}");
         Console.WriteLine($"  Runtime : {Environment.Version}");
+        Console.WriteLine($"  Built   : {BuildTime()}");
         Console.WriteLine($"  Machine : {MachineName()}");
         Console.WriteLine("==============================================");
         Console.WriteLine();
@@ -90,6 +91,12 @@ internal static class Program
         {
             Console.WriteLine($"        掉落：{tables.DescribeDropsOf(monsterId)}");
         }
+
+        // ⚠️ 这里曾经想加一句"掉落 0 行就警告"，**实测发现走不到**，已删：
+        //    `CsvSheet.LoadMany` 对"表头 4 行 + 至少 1 行数据"是硬校验，
+        //    把 DropTable.csv 砍成只剩表头 → 直接 `[致命] DropTable.csv 少于 5 行` 且 return 3。
+        //    也就是说"0 行"在启动前就被挡住了 —— 再加个兜底分支只是**看着像有保护**（见 CS0162 那次教训）。
+        //    真要怀疑掉落没生效，看上面这几行就够：**服务端念的就是它真正读到的值**。
 
         var transport = new TcpServerTransport(port);
         var router = new ServerMessageRouter($"nbc-server/{version}");
@@ -263,6 +270,37 @@ internal static class Program
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 这个 exe 是什么时候编译出来的（程序集文件自己的时间戳）。
+    /// <para>⚠️ 为什么要打在横幅上：2026-09-26 负责人重启服务端后发现"新加的启动日志没出现"，
+    /// 根因不是代码 —— 是**他跑的是旧的 exe**（我上一次只做了 `-t:Compile` 编译校验，
+    /// 没写输出目录，`bin` 里还是几小时前的那份）。这类"改了却没生效"**不会报任何错**，
+    /// 只能靠"运行时自述它是谁"来抓。横幅上有时间，一眼就能和"我刚才改代码的时间"比。</para>
+    /// </summary>
+    /// <returns>本地时间字符串；取不到返回 `unknown`。</returns>
+    private static string BuildTime()
+    {
+        try
+        {
+            string path = Assembly.GetExecutingAssembly().Location;
+
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return "unknown";
+            }
+
+            return File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
+        }
+        catch (IOException)
+        {
+            return "unknown";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return "unknown";
+        }
     }
 
     /// <summary>机器名（`Environment.MachineName` 在某些容器里会抛，所以兜一下）。</summary>
