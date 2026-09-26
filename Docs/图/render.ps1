@@ -73,11 +73,16 @@ if (-not (Test-Path $PuppeteerConfig)) {
 
 if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
 
-# 清掉旧产物（免得改完名字后，旧 SVG 还躺在那里让人以为是最新的）
-Get-ChildItem $out -Filter *.svg -ErrorAction SilentlyContinue | Remove-Item -Force
-
-$temp = Join-Path $env:TEMP "nbc_mermaid"
+# ⚠️ 临时目录**按进程号隔离**（2026-09-26 实测踩到）：两个 agent 同时跑本脚本时，
+#    共享 `%TEMP%\nbc_mermaid` 会让两边互相覆写 .mmd / .svg / .log，
+#    表现是"某一方偶发退出码 1、而且连汇总表格都没打出来" —— 假失败里最难查的一类。
+$temp = Join-Path $env:TEMP ("nbc_mermaid_" + $PID)
 if (-not (Test-Path $temp)) { New-Item -ItemType Directory -Path $temp | Out-Null }
+
+# ⚠️ 旧产物**不在这里清**（原来开局就把 out\*.svg 全删了）：并发跑时，
+#    一方正在渲染、另一方把它的产物删掉 → "退出码 0 但没有产物"。
+#    改成**跑完再清**：算出本次应有的产物清单，把清单外的旧 SVG 删掉（见文件末）。
+$expectedSvgs = @()
 
 # ---------------------------------------------------------------- 逐 md 抠块渲染
 # 两类目录：
@@ -125,6 +130,7 @@ foreach ($target in $targets) {
         if ($isArtifact) {
             $svg = Join-Path $out ("{0}-{1}.svg" -f $base, $n)
             $shown = "{0}-{1}.svg" -f $base, $n
+            $expectedSvgs += $svg
         }
         else {
             $svg = Join-Path $temp ("check-{0}-{1}.svg" -f $base, $n)
@@ -197,5 +203,16 @@ Write-Output ($rows | Format-Table -AutoSize | Out-String).TrimEnd()
 
 Write-Output ("渲染 {0} 块（产物 {1} 块、仅校验 {2} 块），失败 {3} 块；产物目录：{4}" -f `
     $total, $artifactCount, $checkCount, $failed, $out)
+
+# ---------------------------------------------------------------- 清掉清单外的旧产物
+# （改完图的名字后，旧的 SVG 还躺在 out\ 里会让人以为它是最新的 —— 所以必须清，
+#   但只能在**跑完之后**清，见文件前面对并发的说明）
+$stale = @(Get-ChildItem $out -Filter *.svg -ErrorAction SilentlyContinue |
+    Where-Object { $expectedSvgs -notcontains $_.FullName })
+
+if ($stale.Count -gt 0) {
+    foreach ($s in $stale) { Remove-Item $s.FullName -Force }
+    Write-Output ("清掉 {0} 个不再对应的旧产物：{1}" -f $stale.Count, (($stale | ForEach-Object { $_.Name }) -join "、"))
+}
 
 if ($failed -gt 0) { exit 1 }
