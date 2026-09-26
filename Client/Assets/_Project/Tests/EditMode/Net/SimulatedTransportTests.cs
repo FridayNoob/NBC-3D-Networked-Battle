@@ -82,8 +82,14 @@ namespace NBC.Tests.EditMode
             sim.FrameReceived += got.Add;
 
             sim.Send(Payload(1));                  // 上行：该 100ms 后到 inner
-            inner.PushFrame(Payload(2));            // 下行：该 100ms 后到上层
+            inner.PushFrame(Payload(2));            // 下行：先入 inner 的队列
 
+            // ⚠️ **必须 Pump 一次**：`FakeTransport`（和真传输同一个契约）**只在 `Pump` 里交帧** ——
+            //    不 Pump 的话那段字节还躺在 inner 的队列里，模拟器根本还没"收到"它。
+            //    2026-09-23 第一版就漏了这一步，红在"到 100ms 应当交给上层"（期望 1、实际 0）。
+            sim.Pump();
+
+            Assert.AreEqual(1, sim.InFlightCount, "上、下行各有一条在路上（这正是延迟模拟的全部意义）");
             Assert.AreEqual(0, inner.SentFrames.Count, "还没到时间，不该送出去");
             Assert.AreEqual(0, got.Count, "还没到时间，不该交上来");
 
