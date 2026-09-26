@@ -118,8 +118,19 @@ namespace NBC.EditorTools
         /// <summary>上次推进的时刻（算 delta 用）。</summary>
         private double m_lastUpdateTime;
 
+        /// <summary>日志框的高度（像素）—— 见 `DrawLog`：外层滚动之后必须给固定高度。</summary>
+        private const float LogBoxHeight = 170f;
+
         /// <summary>日志滚动位置。</summary>
         private Vector2 m_logScroll;
+
+        /// <summary>
+        /// 整窗滚动位置（2026-09-26 补）。
+        /// <para>⚠️ 这个窗口原来是一整列、**没有任何滚动容器**：节一多（状态 / 房间 / 世界 / 掉落 / 输入 /
+        /// 任务条件 / 日志），下半截就被窗口边界裁掉，而且**没有办法翻到**——
+        /// 负责人实测"全屏也看不到任务完成情况"。加一个外层滚动视图 + 顶部常驻摘要行即可。</para>
+        /// </summary>
+        private Vector2 m_scroll;
 
         /// <summary>打开窗口。</summary>
         [MenuItem("Tools/NBC/网络/网络调试窗口")]
@@ -269,6 +280,15 @@ namespace NBC.EditorTools
         /// <summary>画界面。</summary>
         private void OnGUI()
         {
+            // ⚠️ 2026-09-26：这个窗口原来是一整列、**没有滚动**的 —— 节一多（状态/房间/世界/掉落/输入/
+            //    任务条件/日志），下半截就被裁掉且**翻不到**（负责人："全屏也看不到任务完成情况"）。
+            //    现在分两层：
+            //      ① **顶部常驻摘要行**（在滚动视图外面）—— 最要紧的几个数不用滚就能看到；
+            //      ② 其余内容统一放进**整窗滚动视图** —— 滚轮 / 拖拽都能翻到底。
+            DrawSummaryLine();
+
+            m_scroll = EditorGUILayout.BeginScrollView(m_scroll);
+
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("服务端", EditorStyles.boldLabel);
 
@@ -349,6 +369,56 @@ namespace NBC.EditorTools
                     "（或在仓库根目录跑 dotnet build Server\\NBC.sln -m:1 之后用上面这个 exe）",
                     MessageType.Info);
             }
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        /// <summary>
+        /// 顶部**常驻摘要行**：不滚动也能看到的那几个数（会话 / 房间 / 世界 / **任务进度** / 事件计数 / 输入）。
+        /// <para>为什么要它：整窗滚动解决了"看不到"，但**最要紧的数仍要滚一下才能看到**；
+        /// 而调试时你反复要看的恰恰就是"任务涨没涨、事件有没有来"。所以把它钉在顶上。</para>
+        /// </summary>
+        private void DrawSummaryLine()
+        {
+            if (m_session == null)
+            {
+                EditorGUILayout.LabelField("会话：未连接（点下面的「连接」）", EditorStyles.wordWrappedMiniLabel);
+                EditorGUILayout.Space();
+                return;
+            }
+
+            SnapshotView world = m_session.World;
+
+            EditorGUILayout.LabelField(
+                "会话：" + m_session.State
+                + "（玩家 " + m_session.PlayerId
+                + "，RTT " + (m_session.RttMs < 0 ? "?" : m_session.RttMs + "ms") + "）"
+                + "　房间：" + (m_session.InRoom
+                    ? m_session.CurrentRoom.RoomId + "（" + m_session.CurrentRoom.Members.Count
+                      + "/" + m_session.CurrentRoom.Capacity + "）"
+                    : "无")
+                + "　世界：" + world.AliveCount + "/" + world.EntityCount
+                + " 活着（帧 " + world.ServerTick + "）",
+                EditorStyles.wordWrappedMiniLabel);
+
+            string quest = "任务：（未开始 —— 先连接）";
+            ConditionProgress progress;
+
+            if (m_conditions != null && m_conditions.TryGetProgress(DemoConditionKey, out progress))
+            {
+                quest = "任务：" + progress + (progress.IsMet ? " ✅ 已达成" : "（还差 " + progress.Remaining + " 只）")
+                    + "，达成回调 " + m_demoConditionMetCount + " 次";
+            }
+
+            EditorGUILayout.LabelField(
+                quest
+                + "　服务端事件：伤害 " + m_session.HitsReceived
+                + "、死亡 " + m_session.DeathsReceived
+                + "、掉落 " + m_session.DropsReceived
+                + "　输入已发 " + m_session.InputsSent,
+                EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.Space();
         }
 
         /// <summary>画状态区。</summary>
@@ -741,12 +811,15 @@ namespace NBC.EditorTools
             }
         }
 
-        /// <summary>画日志区。</summary>
+        /// <summary>画日志区（**固定高度的内层滚动**，见 `OnGUI` 里"整窗滚动"的说明）。</summary>
         private void DrawLog()
         {
-            EditorGUILayout.LabelField("日志（最近 " + MaxLogLines + " 条）", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("日志（最近 " + MaxLogLines + " 条；框内可滚轮）", EditorStyles.boldLabel);
 
-            m_logScroll = EditorGUILayout.BeginScrollView(m_logScroll, GUILayout.ExpandHeight(true));
+            // ⚠️ 原来是 `GUILayout.ExpandHeight(true)` —— 放进**外层滚动视图**之后那个写法会失去意义
+            //    （外层高度是无界的）⇒ 日志框塌成 0 高、一条都看不见。改成固定高度：
+            //    外层管"整窗翻页"、内层管"日志自己翻"，各管一段，互不打架。
+            m_logScroll = EditorGUILayout.BeginScrollView(m_logScroll, GUILayout.Height(LogBoxHeight));
 
             for (int i = 0; i < m_log.Count; i++)
             {
