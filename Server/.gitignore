@@ -39,3 +39,6 @@ _net-probe/
 #       （`_db-probe` 与 `_api-probe` 不同，它**没有**任何依赖本机路径的 HintPath，
 #        技术上是可以进仓库的）。这条记在 `Docs\27` §11.8，等负责人定夺。
 _db-probe/
+# M4-S3 起：按 **asmdef 边界**分别编译的闸门（补上"单程序集闸门抓不到 CS0012"的盲区）。
+# 生成物全部可重建（Tools\Check-AsmdefBoundaries.ps1），不进仓库。
+_asmdef-probe/

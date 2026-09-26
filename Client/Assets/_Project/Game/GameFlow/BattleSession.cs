@@ -191,15 +191,8 @@ namespace NBC.Game.GameFlow
         /// </summary>
         /// <param name="heroId">玩家用哪个英雄。</param>
         /// <param name="rewardSink">发奖实现。</param>
-        /// <param name="rewardLedger">
-        /// 已发奖励台账。**传 null 表示用内存版**。
-        /// <para>⚠️ 客户端这一侧**暂时只能是内存版**：进度还在本地（M4-S3 只做了服务端数据层），
-        /// 所以"跨进程不重复发奖"在这里本来就不成立。等成就挪到服务端权威时，
-        /// 这里必须换成持久化实现 —— `InMemoryRewardLedger` 的文件头写明了它的边界。</para>
-        /// </param>
         /// <returns>装配好的一局。</returns>
-        public static BattleSession FromConfigMgr(int heroId, IQuestRewardSink rewardSink,
-                                                 IRewardLedger rewardLedger = null)
+        public static BattleSession FromConfigMgr(int heroId, IQuestRewardSink rewardSink)
         {
             AchievementConfig achievements;
             ConfigMgr.Instance.TryGet<AchievementConfig>(out achievements);
@@ -214,7 +207,30 @@ namespace NBC.Game.GameFlow
                 achievements,
                 heroId,
                 rewardSink,
-                rewardLedger);
+                // ⚠️ **这里刻意传 null（= 内存台账），而且刻意不给本方法加台账参数** ——
+                //    两个理由，第二个是编译器逼出来的：
+                //
+                //    ① **客户端本来就没有持久化台账**：进度还在本地（M4-S3 只做了服务端数据层），
+                //       所以"跨进程不重复发奖"在这一侧根本不成立。给一个用不上的参数
+                //       就是"猜测性的通用"。
+                //
+                //    ② ⚠️ **加了参数会让 `NBC.Boot` 编不过**（2026-09-26 负责人实测的 CS0012）：
+                //       `M2DemoBehaviour` 在 `Boot\`，它调用本方法；而我给本方法加了一个
+                //       `IRewardLedger` 可选参数（那个类型在 `NBC.Shared`）——
+                //       C# **必须解析被调方法的完整签名（含可选参数的默认值）**，
+                //       于是 `NBC.Boot` 就需要引用 `NBC.Shared`，而它没引 ⇒
+                //       `error CS0012: The type 'IRewardLedger' is defined in an assembly
+                //        that is not referenced.`
+                //
+                //       ⚠️ **这一个错误单程序集闸门（`_api-probe`）永远抓不到** ——
+                //       它把所有源码编进同一个程序集，没有"程序集边界"这回事。
+                //       这就是"闸门绿 ≠ Unity 绿"的第 N 次现场（也是新形态：
+                //       **类型是通过「被调方法的签名」泄漏的，源码里一个字都没提它**）。
+                //       ⇒ 已落成 `Server\_asmdef-probe`（按 asmdef 边界分别编译），见那个目录的说明。
+                //
+                //    📌 判据：**一个"没人用得上"的参数，代价不只是多一行 ——
+                //       它会把一个程序集依赖钉进调用方的依赖图里。**
+                null);
         }
 
         /// <summary>任务运行时（UI 要接它的状态与事件）。</summary>
