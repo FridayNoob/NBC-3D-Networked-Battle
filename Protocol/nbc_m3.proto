@@ -151,7 +151,7 @@ message PlayerInput
     int32  client_tick         = 2;   // 客户端自己的帧号（日志/对账用，不是权威）
     int32  move_x              = 3;   // -1000..1000（= -1..+1）
     int32  move_y              = 4;
-    uint32 action_bits         = 5;   // 本帧**新按下**的动作（第 i 位 = 动作 i）
+    uint32 action_bits         = 5;   // 本帧**新按下**的动作（第 0 位 = 技能1/普攻，见上面的说明）
     uint32 action_release_bits = 6;   // 本帧**新松开**的动作
     int32  target_entity_id    = 7;   // 当前目标（服务端会校验它是否合法）
 }

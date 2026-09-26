@@ -482,6 +482,74 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  六、输入上行（S5b：只发意图）
+        // ====================================================================
+
+        /// <summary>发输入：字段原样（轴、动作位、目标、player_id 必须是我自己）。</summary>
+        [Test]
+        public void SendInput_CarriesAxesActionsAndMyPlayerId()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            session.SendInput(moveX: 500, moveY: -250, actionBits: 1u, actionReleaseBits: 0u, targetEntityId: 3);
+
+            ClientMessage sent = ClientMessage.Parser.ParseFrom(fake.LastSent);
+            Assert.AreEqual(ClientMessage.PayloadOneofCase.Input, sent.PayloadCase);
+            Assert.AreEqual(7, sent.Input.PlayerId, "player_id 必须是服务端发给我自己的那个（夹具里是 7）");
+            Assert.AreEqual(500, sent.Input.MoveX);
+            Assert.AreEqual(-250, sent.Input.MoveY);
+            Assert.AreEqual(1u, sent.Input.ActionBits, "第 0 位 = 技能1/普攻");
+            Assert.AreEqual(3, sent.Input.TargetEntityId);
+            Assert.AreEqual(1, session.InputsSent);
+        }
+
+        /// <summary>A7 的 `InputCommand` 能**直接**转成协议输入（量化约定是同一套，不用换算）。</summary>
+        [Test]
+        public void SendInput_FromInputCommand_MapsEveryField()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            session.SendInput(new NBC.Framework.Input.InputCommand(
+                tick: 42, moveX: 1000, moveY: -1000, actionBits: 2u, actionReleaseBits: 4u));
+
+            ClientMessage sent = ClientMessage.Parser.ParseFrom(fake.LastSent);
+            Assert.AreEqual(1000, sent.Input.MoveX, "轴直接就是协议轴（A7 已经量化到 -1000..1000）");
+            Assert.AreEqual(-1000, sent.Input.MoveY);
+            Assert.AreEqual(2u, sent.Input.ActionBits);
+            Assert.AreEqual(4u, sent.Input.ActionReleaseBits);
+        }
+
+        /// <summary>`client_tick` 是"第几条输入"（M3 没有客户端逻辑帧，见 `NextInputSeq` 的注释）。</summary>
+        [Test]
+        public void SendInput_ClientTickIncrementsPerInput()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            session.SendInput(0, 0);
+            session.SendInput(0, 0);
+            session.SendInput(0, 0);
+
+            Assert.AreEqual(3, session.InputsSent);
+
+            ClientMessage last = ClientMessage.Parser.ParseFrom(fake.LastSent);
+            Assert.AreEqual(3, last.Input.ClientTick, "序号应当逐条递增（服务端日志对账用）");
+        }
+
+        /// <summary>没上线就发输入：抛异常（和 `Send` 同一条判据，不静默丢）。</summary>
+        [Test]
+        public void SendInput_BeforeOnline_Throws()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = new NetSession(fake, "测试玩家");
+
+            Assert.Throws<InvalidOperationException>(() => session.SendInput(1000, 0));
+            Assert.AreEqual(0, session.InputsSent, "报错了就不该记「发出去过」");
+        }
+
+        // ====================================================================
         //  辅助
         // ====================================================================
 

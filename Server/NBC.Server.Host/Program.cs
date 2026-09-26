@@ -84,6 +84,9 @@ internal static class Program
         var battles = new RoomBattleService(transport, rooms.Registry);
         battles.Note += line => Log(quiet, "[战斗] " + line);
 
+        // 输入上行（S5b）：客户端只发**意图**，服务端说了算（动多远、打不打得到）
+        battles.RegisterHandlers(router);
+
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
 
         transport.SessionOpened += session =>
@@ -109,7 +112,7 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
-        Console.WriteLine($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom");
+        Console.WriteLine($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input");
         Console.WriteLine($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
         Console.WriteLine("       按 Ctrl+C 退出。");
         Console.WriteLine();
@@ -157,6 +160,8 @@ internal static class Program
         Console.WriteLine($"[统计] 房间 {rooms.Registry.RoomCount} 个，席位表广播 {rooms.StateBroadcasts} 份");
         Console.WriteLine($"[统计] 战斗世界 {battles.BattleCount} 个，推进 {battles.TicksRun} 帧，" +
                           $"快照送出 {battles.SnapshotsSent} 份，回收世界 {battles.BattlesDropped} 个");
+        Console.WriteLine($"[统计] 收到输入 {battles.InputsReceived} 条（拒绝 {battles.InputsRejected}），" +
+                          $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

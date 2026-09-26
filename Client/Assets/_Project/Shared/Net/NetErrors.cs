@@ -31,6 +31,14 @@ namespace NBC.Shared.Net
         /// <summary>指定的房间不存在。</summary>
         public const int RoomNotFound = 1003;
 
+        /// <summary>
+        /// 输入里的 `player_id` 不是这个会话的玩家（M3-S5b）。
+        /// <para>⚠️ 这是**权威被违反**（客户端 bug 或作弊），必须响亮地回一条；
+        /// 而"射程不够 / 冷却中"这类**由世界状态决定**的拒绝只记日志、不回错误
+        /// （客户端自己那份世界能看到原因，回错误会变成每帧刷屏）。</para>
+        /// </summary>
+        public const int PlayerMismatch = 1004;
+
         /// <summary>把错误码说成人话（服务端兜底用；正常情况下服务端会给出更具体的一句）。</summary>
         /// <param name="code">错误码。</param>
         /// <returns>人话。</returns>
@@ -44,6 +52,8 @@ namespace NBC.Shared.Net
                     return "你已经在一个房间里了";
                 case RoomNotFound:
                     return "房间不存在";
+                case PlayerMismatch:
+                    return "输入里的玩家 id 不是你的";
                 default:
                     return "未知错误（" + code + "）";
             }

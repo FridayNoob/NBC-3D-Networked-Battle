@@ -57,6 +57,12 @@ public sealed class BattleEntity
     /// <summary>0 = 英雄，1 = 怪物（对应 `EBattleAgentKind`）。</summary>
     public int Kind { get; }
 
+    /// <summary>
+    /// 这个单位属于哪个玩家（**0 = 无主**，例如怪物）。
+    /// <para>M3-S5b 加的：一个席位一个英雄，服务端靠它把"收到的输入"对到"该动哪个单位"上。</para>
+    /// </summary>
+    public long PlayerId { get; }
+
     /// <summary>当前血量（**永不为负**；归零即死亡）。</summary>
     public int Hp { get; private set; }
 
@@ -87,6 +93,9 @@ public sealed class BattleEntity
     /// <summary>当前巡逻方向：+1 / -1。</summary>
     public int PatrolDir { get; private set; } = 1;
 
+    /// <summary>普攻冷却还剩几帧（&gt; 0 时打不出来）。**由 `Step()` 每帧递减**。</summary>
+    public int AttackCooldownTicksLeft { get; private set; }
+
     /// <summary>造一个单位。</summary>
     /// <param name="id">实例编号。</param>
     /// <param name="configId">配置编号。</param>
@@ -97,8 +106,10 @@ public sealed class BattleEntity
     /// <param name="patrolSpeedMmPerTick">巡逻速度（毫米/帧）。</param>
     /// <param name="patrolMinMm">巡逻下限。</param>
     /// <param name="patrolMaxMm">巡逻上限。</param>
+    /// <param name="playerId">所属玩家（0 = 无主）。</param>
     public BattleEntity(int id, int configId, int kind, int maxHp, int posXmm, int posZmm,
-                        int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0)
+                        int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
+                        long playerId = 0)
     {
         Id = id;
         ConfigId = configId;
@@ -110,11 +121,17 @@ public sealed class BattleEntity
         PatrolSpeedMmPerTick = patrolSpeedMmPerTick;
         PatrolMinMm = patrolMinMm;
         PatrolMaxMm = patrolMaxMm;
+        PlayerId = playerId;
     }
 
-    /// <summary>推进一帧（巡逻移动 + 朝向）。</summary>
+    /// <summary>推进一帧（冷却倒计时 + 巡逻移动 + 朝向）。</summary>
     public void Step()
     {
+        if (AttackCooldownTicksLeft > 0)
+        {
+            AttackCooldownTicksLeft--;
+        }
+
         if (!Alive || PatrolSpeedMmPerTick == 0)
         {
             return;
@@ -140,6 +157,90 @@ public sealed class BattleEntity
     /// <summary>扣血（只由 <see cref="DungeonBattle.ApplyDamage"/> 调，保证口径一致）。</summary>
     /// <param name="remainingHp">结算后的血量。</param>
     public void SetHp(int remainingHp) => Hp = remainingHp < 0 ? 0 : remainingHp;
+
+    /// <summary>开始一次普攻冷却（判定通过之后由 `DungeonBattle` 调）。</summary>
+    /// <param name="ticks">冷却帧数。</param>
+    public void StartAttackCooldown(int ticks) => AttackCooldownTicksLeft = ticks;
+
+    /// <summary>
+    /// 按量化输入移动一格（**整数运算**：轴是千分之一，速度是"毫米/帧"）。
+    /// <para>
+    /// 斜向不超速：两轴都非零时按 `1000/1414` 缩放（√2 的整数近似），
+    /// 于是"合速度"仍然是一个 `speedMmPerTick`，不会出现"斜着走更快"这种手感 bug。
+    /// </para>
+    /// </summary>
+    /// <param name="moveX">左右轴（-1000..1000）。</param>
+    /// <param name="moveY">前后轴（-1000..1000）。</param>
+    /// <param name="speedMmPerTick">满速时的毫米/帧。</param>
+    /// <param name="halfExtentMm">场地半径（毫米），出界钳位。</param>
+    public void ApplyMove(int moveX, int moveY, int speedMmPerTick, int halfExtentMm)
+    {
+        if (!Alive)
+        {
+            return;
+        }
+
+        int axis = Math.Abs(moveX) > Math.Abs(moveY) ? Math.Abs(moveX) : Math.Abs(moveY);
+
+        if (axis == 0)
+        {
+            return;
+        }
+
+        if (axis > 1000)
+        {
+            axis = 1000;        // 越界的轴直接当满速（服务端不信任客户端给的数）
+        }
+
+        int dx = moveX * speedMmPerTick / axis;
+        int dz = moveY * speedMmPerTick / axis;
+
+        if (moveX != 0 && moveY != 0)
+        {
+            dx = dx * 1000 / 1414;
+            dz = dz * 1000 / 1414;
+        }
+
+        PosXmm = Clamp(PosXmm + dx, -halfExtentMm, halfExtentMm);
+        PosZmm = Clamp(PosZmm + dz, -halfExtentMm, halfExtentMm);
+
+        if (dx != 0 || dz != 0)
+        {
+            FacingDeg = FacingOf(dx, dz);
+        }
+    }
+
+    /// <summary>取整数。</summary>
+    /// <param name="value">值。</param>
+    /// <param name="min">下限。</param>
+    /// <param name="max">上限。</param>
+    /// <returns>钳位后的值。</returns>
+    private static int Clamp(int value, int min, int max)
+        => value < min ? min : (value > max ? max : value);
+
+    /// <summary>把位移方向变成 0..359 的朝向（八向就够；M3 不做平滑转身，两家也不必一致）。</summary>
+    /// <param name="dx">X 位移。</param>
+    /// <param name="dz">Z 位移。</param>
+    /// <returns>朝向（度）。</returns>
+    private static int FacingOf(int dx, int dz)
+    {
+        if (dx == 0)
+        {
+            return dz > 0 ? 0 : 180;
+        }
+
+        if (dz == 0)
+        {
+            return dx > 0 ? 90 : 270;
+        }
+
+        if (dx > 0)
+        {
+            return dz > 0 ? 45 : 135;
+        }
+
+        return dz > 0 ? 315 : 225;
+    }
 
     /// <summary>转成协议里的快照条目。</summary>
     /// <returns>快照条目。</returns>
@@ -199,6 +300,27 @@ public readonly struct DamageResult
 /// <summary>一局副本战斗的**权威世界**（M3 状态同步）。</summary>
 public sealed class DungeonBattle
 {
+    /// <summary>英雄满速移动（毫米/帧）。150 × 30Hz = 4.5 米/秒 —— 走路偏快、跑步偏慢，先这么定。</summary>
+    public const int HeroMoveMmPerTick = 150;
+
+    /// <summary>场地半径（毫米）：出界钳位。5 米见方，够 M3 演示走位。</summary>
+    public const int PlayAreaHalfExtentMm = 5000;
+
+    /// <summary>普攻伤害。TODO(S6)：接 `Skill` 配置表之后从表里读。</summary>
+    public const int BasicAttackDamage = 30;
+
+    /// <summary>普攻射程（毫米，切比雪夫距离）。</summary>
+    public const int BasicAttackRangeMm = 2000;
+
+    /// <summary>普攻冷却（帧）。15 帧 = 0.5 秒（30Hz）。</summary>
+    public const int BasicAttackCooldownTicks = 15;
+
+    /// <summary>英雄的配置编号。TODO(S6)：从 `Dungeon`/`Hero` 表里读。</summary>
+    public const int HeroConfigId = 1001;
+
+    /// <summary>英雄的最大血量。</summary>
+    public const int HeroMaxHp = 300;
+
     private readonly List<BattleEntity> _entities = new();
     private int _nextEntityId = 1;
 
@@ -273,15 +395,151 @@ public sealed class DungeonBattle
     /// <param name="patrolSpeedMmPerTick">巡逻速度（毫米/帧）。</param>
     /// <param name="patrolMinMm">巡逻下限。</param>
     /// <param name="patrolMaxMm">巡逻上限。</param>
+    /// <param name="playerId">所属玩家（0 = 无主）。</param>
     /// <returns>新单位。</returns>
     public BattleEntity AddEntity(int configId, int kind, int maxHp, int posXmm, int posZmm,
-                                  int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0)
+                                  int patrolSpeedMmPerTick = 0, int patrolMinMm = 0, int patrolMaxMm = 0,
+                                  long playerId = 0)
     {
         var entity = new BattleEntity(_nextEntityId, configId, kind, maxHp, posXmm, posZmm,
-                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm);
+                                      patrolSpeedMmPerTick, patrolMinMm, patrolMaxMm, playerId);
         _nextEntityId++;
         _entities.Add(entity);
         return entity;
+    }
+
+    /// <summary>找某个玩家的英雄（没有就返回 null）。</summary>
+    /// <param name="playerId">玩家 id。</param>
+    /// <returns>英雄或 null。</returns>
+    public BattleEntity? FindHeroOfPlayer(long playerId)
+    {
+        for (int i = 0; i < _entities.Count; i++)
+        {
+            if (_entities[i].Kind == 0 && _entities[i].PlayerId == playerId)
+            {
+                return _entities[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>把某个玩家的英雄移出世界（他离开房间了）。</summary>
+    /// <param name="playerId">玩家 id。</param>
+    /// <returns>确实移除了返回 true。</returns>
+    public bool RemoveHeroOfPlayer(long playerId)
+    {
+        for (int i = 0; i < _entities.Count; i++)
+        {
+            if (_entities[i].Kind == 0 && _entities[i].PlayerId == playerId)
+            {
+                _entities.RemoveAt(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 给某个玩家的英雄施加一帧移动（**服务端权威**：这里决定走多远、能不能走）。
+    /// </summary>
+    /// <param name="playerId">玩家 id。</param>
+    /// <param name="moveX">左右轴（-1000..1000）。</param>
+    /// <param name="moveY">前后轴（-1000..1000）。</param>
+    /// <returns>确实移动了返回 true（英雄不存在或已死返回 false）。</returns>
+    public bool ApplyMoveToHero(long playerId, int moveX, int moveY)
+    {
+        BattleEntity? hero = FindHeroOfPlayer(playerId);
+
+        if (hero == null)
+        {
+            return false;
+        }
+
+        hero.ApplyMove(moveX, moveY, HeroMoveMmPerTick, PlayAreaHalfExtentMm);
+        return true;
+    }
+
+    /// <summary>
+    /// 普攻判定（**服务端说了算**）：目标存在、活着、在射程内、冷却已好 —— 四条都满足才扣血。
+    /// <para>拒绝理由会写进 `reason`（人话），由调用方记日志；**不**回 `ErrorResponse`
+    /// （原因由世界状态决定，客户端自己那份世界看得到，回错误会变成每帧刷屏）。</para>
+    /// </summary>
+    /// <param name="attacker">出手的单位。</param>
+    /// <param name="targetId">目标实例编号。</param>
+    /// <param name="reason">被拒的原因（成功时为空串）。</param>
+    /// <returns>真的打中了返回 true。</returns>
+    public bool TryBasicAttack(BattleEntity attacker, int targetId, out string reason)
+    {
+        reason = string.Empty;
+
+        if (!attacker.Alive)
+        {
+            reason = "出手的单位已经死了";
+            return false;
+        }
+
+        if (attacker.AttackCooldownTicksLeft > 0)
+        {
+            reason = $"普攻还在冷却（还剩 {attacker.AttackCooldownTicksLeft} 帧）";
+            return false;
+        }
+
+        BattleEntity? target = Find(targetId);
+
+        if (target == null)
+        {
+            reason = $"目标 {targetId} 不存在";
+            return false;
+        }
+
+        if (!target.Alive)
+        {
+            reason = $"目标 {targetId} 已经死了";
+            return false;
+        }
+
+        if (target.Kind == attacker.Kind)
+        {
+            reason = "不能打自己人";
+            return false;
+        }
+
+        if (DistanceMm(attacker, target) > BasicAttackRangeMm)
+        {
+            reason = $"目标 {targetId} 在射程外（{DistanceMm(attacker, target)}mm > {BasicAttackRangeMm}mm）";
+            return false;
+        }
+
+        ApplyDamage(targetId, BasicAttackDamage, attacker.Id);
+        attacker.StartAttackCooldown(BasicAttackCooldownTicks);
+        return true;
+    }
+
+    /// <summary>两个单位在平面上的整数距离（毫米，向下取整的近似：先比平方再开方太费，M3 用切比雪夫距离）。</summary>
+    /// <param name="a">甲。</param>
+    /// <param name="b">乙。</param>
+    /// <returns>距离（毫米）。</returns>
+    public static int DistanceMm(BattleEntity a, BattleEntity b)
+    {
+        int dx = Math.Abs(a.PosXmm - b.PosXmm);
+        int dz = Math.Abs(a.PosZmm - b.PosZmm);
+        return dx > dz ? dx : dz;
+    }
+
+    /// <summary>第 `index` 个席位的出生点（确定性：同一席位每次都在同一个地方）。</summary>
+    /// <param name="index">席位序号（0 起）。</param>
+    /// <returns>(x, z) 毫米。</returns>
+    public static (int X, int Z) HeroSpawnPoint(int index)
+    {
+        switch (index & 3)
+        {
+            case 0: return (-1000, 0);
+            case 1: return (1000, 0);
+            case 2: return (0, -1000);
+            default: return (0, 1000);
+        }
     }
 
     /// <summary>按实例编号找单位。</summary>
@@ -349,7 +607,12 @@ public sealed class DungeonBattle
     }
 
     /// <summary>
-    /// M3 的临时关卡：1 个英雄 + 2 个巡逻的狼。
+    /// M3 的临时关卡：**只有怪**（2 只巡逻的狼）。
+    /// <para>
+    /// ⚠️ 2026-09-23（S5b）改过：原来这里顺手放了一个"英雄"，现在**英雄由席位决定**
+    /// （`RoomBattleService` 每个席位补一个英雄、席位走了就移出）——
+    /// 否则 2 人房里会多出一个没人控制的幽灵英雄。
+    /// </para>
     /// <para>⚠️ TODO(S6)：改从 `Dungeon` / `Monster` 配置表生成（S6 加表**不改工具代码**）。</para>
     /// </summary>
     /// <param name="roomId">房号。</param>
@@ -358,9 +621,6 @@ public sealed class DungeonBattle
     public static DungeonBattle CreateStarterDungeon(string roomId, int dungeonId)
     {
         var battle = new DungeonBattle(roomId, dungeonId);
-
-        // 英雄：站在原点，不动（M3 还没有输入上行驱动它 —— 那是 S5 的后半段）
-        battle.AddEntity(configId: 1001, kind: 0, maxHp: 300, posXmm: 0, posZmm: 0);
 
         // 两只狼：在 2 米区间里来回巡逻（60 毫米/帧 ≈ 1.8 米/秒）
         battle.AddEntity(configId: 6001, kind: 1, maxHp: 120, posXmm: 2000, posZmm: 1000,

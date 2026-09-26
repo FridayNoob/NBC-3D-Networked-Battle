@@ -38,6 +38,7 @@
 using System;
 using System.Collections.Generic;
 using Google.Protobuf;
+using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Protocol;
 using NBC.Shared.Net;
@@ -123,6 +124,9 @@ namespace NBC.Game.Net
 
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
+
+        /// <summary>发出去的输入序号（见 `NextInputSeq`）。</summary>
+        private int m_inputSeq;
 
         /// <summary>最近一次测到的往返延迟（毫秒；-1 = 还没测到）。</summary>
         private int m_rttMs = -1;
@@ -214,6 +218,9 @@ namespace NBC.Game.Net
 
         /// <summary>发出去过多少个心跳。</summary>
         public long PingsSent { get; private set; }
+
+        /// <summary>发出去过多少条输入（S5b）。</summary>
+        public long InputsSent { get; private set; }
 
         /// <summary>收到过多少个 Pong。</summary>
         public long PongsReceived { get; private set; }
@@ -442,6 +449,60 @@ namespace NBC.Game.Net
         public void LeaveRoom()
         {
             Send(new ClientMessage { LeaveRoom = new LeaveRoomRequest() });
+        }
+
+        /// <summary>
+        /// 把一帧输入命令发出去（**只发意图**，D3；服务端决定走多远、打不打得到）。
+        /// <para>沿用 A7 的量化约定：`InputCommand` 的轴就是协议里的轴，不需要换算。</para>
+        /// </summary>
+        /// <param name="command">A7 的输入命令。</param>
+        /// <param name="targetEntityId">当前目标（服务端会校验）。</param>
+        public void SendInput(InputCommand command, int targetEntityId = 0)
+        {
+            SendInput(command.MoveX, command.MoveY, command.ActionBits, command.ActionReleaseBits, targetEntityId);
+        }
+
+        /// <summary>
+        /// 发一帧输入（轴的量化约定见 A7：-1000..1000 = -1..+1，第 0 位 = 技能1/普攻）。
+        /// </summary>
+        /// <param name="moveX">左右轴（-1000..1000）。</param>
+        /// <param name="moveY">前后轴（-1000..1000）。</param>
+        /// <param name="actionBits">本帧新按下的动作位。</param>
+        /// <param name="actionReleaseBits">本帧新松开的动作位。</param>
+        /// <param name="targetEntityId">当前目标（0 = 没有）。</param>
+        public void SendInput(int moveX, int moveY, uint actionBits = 0, uint actionReleaseBits = 0,
+                              int targetEntityId = 0)
+        {
+            Send(new ClientMessage
+            {
+                Input = new PlayerInput
+                {
+                    PlayerId = PlayerId,
+                    ClientTick = NextInputSeq(),
+                    MoveX = moveX,
+                    MoveY = moveY,
+                    ActionBits = actionBits,
+                    ActionReleaseBits = actionReleaseBits,
+                    TargetEntityId = targetEntityId,
+                },
+            });
+
+            InputsSent++;
+        }
+
+        /// <summary>
+        /// 下一条输入的序号。
+        /// <para>
+        /// ⚠️ 协议里这个字段叫 `client_tick`，但 M3 **没有客户端逻辑帧**（不做预测，D4）——
+        /// 所以这里给的是"第几条输入"，只用于服务端日志对账，**不是**权威帧号。
+        /// M4 做预测+回滚时，它才会变成真正的客户端帧号。
+        /// </para>
+        /// </summary>
+        /// <returns>序号。</returns>
+        private int NextInputSeq()
+        {
+            m_inputSeq++;
+            return m_inputSeq;
         }
 
         // ====================================================================

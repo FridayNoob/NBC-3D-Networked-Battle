@@ -128,6 +128,35 @@ public sealed class Room
         return null;
     }
 
+    /// <summary>
+    /// 按**玩家 id** 找席位（M3-S5b 加的）。
+    /// <para>
+    /// ⚠️ 为什么和 <see cref="Find(ClientSession)"/> 并存而不是二选一：
+    /// 传输层按**会话**认人（`SessionId`），而世界里的英雄按**玩家**认人（`PlayerId`）。
+    /// 两者在 M3 是一一对应的，但**不是同一个东西** —— 硬合成一个，将来接账号系统
+    /// （一个玩家可能换会话/重连）时就得回头拆。
+    /// </para>
+    /// </summary>
+    /// <param name="playerId">玩家 id。</param>
+    /// <returns>席位或 null。</returns>
+    public RoomSeat? FindByPlayerId(long playerId)
+    {
+        if (playerId <= 0)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < _seats.Count; i++)
+        {
+            if (_seats[i].Session.PlayerId == playerId)
+            {
+                return _seats[i];
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>加一个席位（**调用方必须先确认没满、且这个人不在房里**）。</summary>
     /// <param name="session">会话。</param>
     /// <param name="playerName">玩家名。</param>

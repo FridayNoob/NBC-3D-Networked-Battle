@@ -55,6 +55,18 @@ namespace NBC.EditorTools
         /// <summary>指定房号（留空 = 让服务端按副本安排一个）。</summary>
         [SerializeField] private string m_roomId = "";
 
+        /// <summary>输入：左右轴（-1000..1000，沿用 A7 的量化约定）。</summary>
+        [SerializeField] private int m_inputX;
+
+        /// <summary>输入：前后轴（-1000..1000）。</summary>
+        [SerializeField] private int m_inputY;
+
+        /// <summary>勾上就每帧把当前输入发出去（模拟「一直按着方向」）。</summary>
+        [SerializeField] private bool m_inputContinuous;
+
+        /// <summary>当前目标（攻击发给谁；0 = 没目标）。</summary>
+        [SerializeField] private int m_targetEntityId;
+
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
 
@@ -115,7 +127,25 @@ namespace NBC.EditorTools
             }
 
             m_session.Pump(deltaMs);
+            SendContinuousInput();
             Repaint();
+        }
+
+        /// <summary>
+        /// 勾了「持续发送」就每帧发一条输入（模拟"一直按着方向键"）。
+        /// <para>
+        /// ⚠️ 客户端**发多密都不影响速度** —— 服务端每 tick 只应用一次（移动是状态）。
+        /// 这里按编辑器帧率发（可能 60+/秒），正好也是在验证这条限速。
+        /// </para>
+        /// </summary>
+        private void SendContinuousInput()
+        {
+            if (!m_inputContinuous || m_session == null || !m_session.IsOnline || !m_session.InRoom)
+            {
+                return;
+            }
+
+            m_session.SendInput(m_inputX, m_inputY, 0u, 0u, m_targetEntityId);
         }
 
         /// <summary>画界面。</summary>
@@ -241,7 +271,6 @@ namespace NBC.EditorTools
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("房间与席位", EditorStyles.boldLabel);
-
             NBC.Protocol.RoomState room = m_session.CurrentRoom;
 
             if (room == null || string.IsNullOrEmpty(room.RoomId))
@@ -275,6 +304,73 @@ namespace NBC.EditorTools
             }
 
             DrawWorld();
+            DrawInput();
+        }
+
+        /// <summary>画输入区（S5b：客户端只发**意图**，能走多远/打不打得到由服务端说了算）。</summary>
+        private void DrawInput()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("输入（只发意图）", EditorStyles.boldLabel);
+
+            bool canInput = m_session != null && m_session.IsOnline && m_session.InRoom;
+
+            using (new EditorGUI.DisabledScope(!canInput))
+            {
+                m_inputX = EditorGUILayout.IntSlider("左右（-1000..1000）", m_inputX, -1000, 1000);
+                m_inputY = EditorGUILayout.IntSlider("前后（-1000..1000）", m_inputY, -1000, 1000);
+                m_inputContinuous = EditorGUILayout.Toggle("持续发送（模拟一直按着）", m_inputContinuous);
+                m_targetEntityId = EditorGUILayout.IntField("目标实例编号（0 = 不打）", m_targetEntityId);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("发一次输入", GUILayout.Height(22f)))
+                    {
+                        m_session.SendInput(m_inputX, m_inputY, 0u, 0u, m_targetEntityId);
+                    }
+
+                    if (GUILayout.Button("普攻目标（第 0 位）", GUILayout.Height(22f)))
+                    {
+                        m_session.SendInput(m_inputX, m_inputY, 1u, 0u, m_targetEntityId);
+                    }
+
+                    if (GUILayout.Button("自动选一只活怪当目标", GUILayout.Height(22f)))
+                    {
+                        m_targetEntityId = FirstAliveMonsterId();
+                    }
+                }
+            }
+
+            if (!canInput)
+            {
+                EditorGUILayout.LabelField("提示", "要先「连接」并「加入房间」才能发输入");
+            }
+
+            EditorGUILayout.LabelField("已发输入", m_session == null ? "0" : m_session.InputsSent.ToString());
+        }
+
+        /// <summary>从本地世界副本里挑一只活着的怪当目标（省得手填编号）。</summary>
+        /// <returns>实例编号；没有就返回 0。</returns>
+        private int FirstAliveMonsterId()
+        {
+            if (m_session == null)
+            {
+                return 0;
+            }
+
+            SnapshotView world = m_session.World;
+
+            for (int i = 0; i < world.Entities.Count; i++)
+            {
+                NBC.Protocol.EntitySnapshot e = world.Entities[i];
+
+                if (e.Kind == 1 && e.Alive)
+                {
+                    return e.EntityId;
+                }
+            }
+
+            return 0;
         }
 
         /// <summary>画世界区（服务端快照的本地副本 —— M3 客户端的"画面数据"全在这儿）。</summary>
