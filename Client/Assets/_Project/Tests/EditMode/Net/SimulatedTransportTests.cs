@@ -89,7 +89,9 @@ namespace NBC.Tests.EditMode
             //    2026-09-23 第一版就漏了这一步，红在"到 100ms 应当交给上层"（期望 1、实际 0）。
             sim.Pump();
 
-            Assert.AreEqual(1, sim.InFlightCount, "上、下行各有一条在路上（这正是延迟模拟的全部意义）");
+            // ⚠️ 是 **2** 条（上行 1 + 下行 1）。2026-09-23 我先写成了 1 ——
+            //    提示语里自己都写着"上、下行各有一条"，数字却写错。**断言里的数字必须算出来**（本项目第 7 次）。
+            Assert.AreEqual(2, sim.InFlightCount, "上、下行各有一条在路上（这正是延迟模拟的全部意义）");
             Assert.AreEqual(0, inner.SentFrames.Count, "还没到时间，不该送出去");
             Assert.AreEqual(0, got.Count, "还没到时间，不该交上来");
 
