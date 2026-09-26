@@ -1,0 +1,45 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cd62cb1be9f9d054ea767b552e53a2a3, type: 3}
+  m_Name: DropTableConfig
+  m_EditorClassIdentifier: 
+  rows:
+  - id: 1
+    monsterId: 6001
+    itemId: 9001
+    countMin: 1
+    countMax: 2
+    chancePerTenThousand: 5000
+  - id: 2
+    monsterId: 6001
+    itemId: 9002
+    countMin: 1
+    countMax: 1
+    chancePerTenThousand: 3000
+  - id: 3
+    monsterId: 6002
+    itemId: 9001
+    countMin: 1
+    countMax: 3
+    chancePerTenThousand: 7000
+  - id: 4
+    monsterId: 6003
+    itemId: 9003
+    countMin: 1
+    countMax: 1
+    chancePerTenThousand: 10000
+  - id: 5
+    monsterId: 6003
+    itemId: 9001
+    countMin: 2
+    countMax: 5
+    chancePerTenThousand: 10000
