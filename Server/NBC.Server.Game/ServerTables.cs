@@ -148,6 +148,45 @@ public readonly struct DungeonRow
     }
 }
 
+/// <summary>`DropTable` 表里的一行（**怪物死亡时掷哪几个物品**，S7 新加的表）。</summary>
+public readonly struct DropRow
+{
+    /// <summary>编号（主键）。</summary>
+    public readonly int Id;
+
+    /// <summary>哪个怪掉的（`Monster` 表主键）。</summary>
+    public readonly int MonsterId;
+
+    /// <summary>物品编号。⚠️ M3 **还没有 `Item` 表**（背包/物品是 M5+），所以这里先用裸编号。</summary>
+    public readonly int ItemId;
+
+    /// <summary>最少几个。</summary>
+    public readonly int CountMin;
+
+    /// <summary>最多几个。</summary>
+    public readonly int CountMax;
+
+    /// <summary>掉落概率（**万分比**：`5000` = 50%，见 `Docs\17` §4.1）。</summary>
+    public readonly int ChancePerTenThousand;
+
+    /// <summary>记一行。</summary>
+    /// <param name="id">编号。</param>
+    /// <param name="monsterId">怪编号。</param>
+    /// <param name="itemId">物品编号。</param>
+    /// <param name="countMin">最少几个。</param>
+    /// <param name="countMax">最多几个。</param>
+    /// <param name="chancePerTenThousand">概率（万分比）。</param>
+    public DropRow(int id, int monsterId, int itemId, int countMin, int countMax, int chancePerTenThousand)
+    {
+        Id = id;
+        MonsterId = monsterId;
+        ItemId = itemId;
+        CountMin = countMin;
+        CountMax = countMax;
+        ChancePerTenThousand = chancePerTenThousand;
+    }
+}
+
 /// <summary>`Skill` 表里服务端要用的那一列（M3 只取伤害）。</summary>
 public readonly struct SkillRow
 {
@@ -180,6 +219,9 @@ public sealed class ServerTables
     private readonly Dictionary<int, HeroRow> _heroes = new();
     private readonly Dictionary<int, SkillRow> _skills = new();
 
+    /// <summary>按怪分组的掉落行（**按主键排序**，保证掷骰顺序确定）。</summary>
+    private readonly Dictionary<int, List<DropRow>> _drops = new();
+
     /// <summary>表是从哪个目录读的（排查用）。</summary>
     public string SourceDirectory { get; }
 
@@ -194,6 +236,31 @@ public sealed class ServerTables
 
     /// <summary>技能表行数。</summary>
     public int SkillCount => _skills.Count;
+
+    /// <summary>掉落表行数。</summary>
+    public int DropCount
+    {
+        get
+        {
+            int count = 0;
+
+            foreach (KeyValuePair<int, List<DropRow>> pair in _drops)
+            {
+                count += pair.Value.Count;
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>取某个怪的掉落行（**按主键升序**；没有就返回空表）。</summary>
+    /// <param name="monsterId">怪编号。</param>
+    /// <returns>掉落行。</returns>
+    public IReadOnlyList<DropRow> FindDrops(int monsterId)
+    {
+        List<DropRow>? rows;
+        return _drops.TryGetValue(monsterId, out rows) ? rows : (IReadOnlyList<DropRow>)System.Array.Empty<DropRow>();
+    }
 
     private ServerTables(string sourceDirectory)
     {
@@ -227,7 +294,7 @@ public sealed class ServerTables
     /// <summary>一句人话（启动日志用）。</summary>
     /// <returns>描述。</returns>
     public string Describe()
-        => $"配置表：副本 {DungeonCount}、怪 {MonsterCount}、英雄 {HeroCount}、技能 {SkillCount}" +
+        => $"配置表：副本 {DungeonCount}、怪 {MonsterCount}、英雄 {HeroCount}、技能 {SkillCount}、掉落 {DropCount}" +
            $"（来自 {SourceDirectory}）";
 
     /// <summary>
@@ -252,7 +319,7 @@ public sealed class ServerTables
 
         try
         {
-            foreach (CsvSheet sheet in CsvSheet.LoadMany(directory, "Dungeon", "Monster", "Hero", "Skill"))
+            foreach (CsvSheet sheet in CsvSheet.LoadMany(directory, "Dungeon", "Monster", "Hero", "Skill", "DropTable"))
             {
                 switch (sheet.TableName)
                 {
@@ -306,6 +373,29 @@ public sealed class ServerTables
                                 sheet.Str(r, "name"),
                                 sheet.Int(r, "damage"));
                             result._skills[row.Id] = row;
+                        }
+
+                        break;
+
+                    case "DropTable":
+                        for (int r = 0; r < sheet.RowCount; r++)
+                        {
+                            var row = new DropRow(
+                                sheet.Int(r, "id"),
+                                sheet.Int(r, "monsterId"),
+                                sheet.Int(r, "itemId"),
+                                sheet.Int(r, "countMin"),
+                                sheet.Int(r, "countMax"),
+                                sheet.Int(r, "chancePerTenThousand"));
+
+                            List<DropRow>? list;
+                            if (!result._drops.TryGetValue(row.MonsterId, out list))
+                            {
+                                list = new List<DropRow>();
+                                result._drops[row.MonsterId] = list;
+                            }
+
+                            list.Add(row);
                         }
 
                         break;

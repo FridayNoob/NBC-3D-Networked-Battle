@@ -84,6 +84,9 @@ public sealed class RoomBattleService
     private readonly ServerTables _tables;
     private readonly Dictionary<string, DungeonBattle> _battles = new(StringComparer.Ordinal);
 
+    /// <summary>取掉落事件用的缓冲（每帧复用，避免每帧分配）。</summary>
+    private readonly List<DropEvent> _dropBuffer = new();
+
     /// <summary>每个玩家**最近一条**输入（移动是"状态"，所以只留最新的一条，见文件头第二节）。</summary>
     private readonly Dictionary<long, PendingInput> _inputs = new();
 
@@ -124,6 +127,9 @@ public sealed class RoomBattleService
 
     /// <summary>累计有几次普攻没打出去（射程外/冷却中/目标没了 —— 只记日志）。</summary>
     public long AttacksRefused { get; private set; }
+
+    /// <summary>累计广播出去多少条掉落事件（S7）。</summary>
+    public long DropsSent { get; private set; }
 
     /// <summary>把输入处理器注册进路由（**显式注册**，见 `ServerMessageRouter`）。</summary>
     /// <param name="router">路由。</param>
@@ -166,7 +172,8 @@ public sealed class RoomBattleService
             ReconcileHeroes(battle, room);      // ② 先让"席位"与"英雄"对上，再吃输入
             ApplyInputs(battle, room);          // ③ 移动是状态：每帧用最新那条
             battle.Step();                      // ④
-            BroadcastSnapshot(battle, room);    // ⑤
+            BroadcastDrops(battle, room);       // ⑤ 掉落事件（S7）：**同一份字节发给全房**
+            BroadcastSnapshot(battle, room);    // ⑥
             TicksRun++;
         }
     }
@@ -403,6 +410,49 @@ public sealed class RoomBattleService
         }
 
         SnapshotsSent += sent;
+        return sent;
+    }
+
+    /// <summary>
+    /// 把这一帧产生的**掉落事件**发给房里的每个人（S7）。
+    /// <para>⚠️ 与快照同一条规矩：`ToByteArray()` **只做一次**，同一份字节发给所有人 ——
+    /// "两边收到同一份掉落"就是这么保证的（不是"两边各掷一次、结果正好一样"）。</para>
+    /// </summary>
+    /// <param name="battle">世界。</param>
+    /// <param name="room">房间。</param>
+    /// <returns>发出去几份。</returns>
+    private int BroadcastDrops(DungeonBattle battle, Room room)
+    {
+        battle.CopyPendingDrops(_dropBuffer);
+
+        if (_dropBuffer.Count == 0)
+        {
+            return 0;
+        }
+
+        int sent = 0;
+
+        for (int d = 0; d < _dropBuffer.Count; d++)
+        {
+            byte[] payload = new ServerMessage
+            {
+                Event = new ServerEvent { Drop = _dropBuffer[d] },
+            }.ToByteArray();
+
+            for (int i = 0; i < room.Seats.Count; i++)
+            {
+                if (_transport.Send(room.Seats[i].Session.SessionId, payload))
+                {
+                    sent++;
+                }
+            }
+
+            DropsSent++;
+            Note?.Invoke($"掉落：物品 {_dropBuffer[d].ItemId} × {_dropBuffer[d].Count}" +
+                         $"（归玩家 {_dropBuffer[d].WinnerPlayerId}）");
+        }
+
+        _dropBuffer.Clear();
         return sent;
     }
 

@@ -348,6 +348,15 @@ public sealed class DungeonBattle
     /// <summary>BOSS 大脑（每 tick 想一次，见 `BossBrain`）。</summary>
     private readonly List<BossBrain> _brains = new();
 
+    /// <summary>待广播的服务端事件（掉落等；由 `RoomBattleService` 每帧取走，S7）。</summary>
+    private readonly List<DropEvent> _pendingDrops = new();
+
+    /// <summary>本局的**确定性**随机数（见 `BattleRandom` 的注释：为什么不能用 `System.Random`）。</summary>
+    private readonly BattleRandom _random;
+
+    /// <summary>配置表（掷掉落要用；手工造的世界可以是 null = 不掉落）。</summary>
+    private ServerTables? _tables;
+
     private int _nextEntityId = 1;
 
     /// <summary>英雄满速移动（毫米/帧）—— **来自 `Hero` 表**（毫米/秒 ÷ 30Hz）。</summary>
@@ -448,7 +457,14 @@ public sealed class DungeonBattle
         HeroMoveMmPerTick = heroMoveMmPerTick;
         HeroMaxHp = heroMaxHp;
         BasicAttackDamage = basicAttackDamage;
+
+        // 种子：**同一房间的同一局要能复现**（M3 用固定常数 + 房号派生；历史对局的复现要记种子，属 M5）
+        _random = new BattleRandom(0x5EED_2026 ^ StableHash(roomId));
     }
+
+    /// <summary>把配置表挂上来（`FromDungeon` 会调；挂上之后"怪死"才会掷掉落）。</summary>
+    /// <param name="tables">配置表。</param>
+    public void AttachTables(ServerTables tables) => _tables = tables;
 
     /// <summary>加一个单位。</summary>
     /// <param name="configId">配置编号。</param>
@@ -718,10 +734,95 @@ public sealed class DungeonBattle
             return DamageResult.Missing();
         }
 
+        bool wasAlive = target.Alive;
+
         DamageOutcome outcome = DamageMath.Resolve(target.Hp, damage);
         target.SetHp(outcome.RemainingHp);
 
+        // **从活着打到死**那一下才掷掉落（打尸体不重复掉，M2 已经在共享层钉过"打 0 血不判致死"）
+        if (wasAlive && !target.Alive && target.Kind == 1 && _tables != null)
+        {
+            BattleEntity? attacker = Find(attackerId);
+            long winner = attacker == null ? 0 : attacker.PlayerId;
+            RollDrops(_tables, target.ConfigId, winner);
+        }
+
         return DamageResult.Success(target, outcome, attackerId);
+    }
+
+    /// <summary>
+    /// 取走待广播的掉落事件（**取走即清空**；`RoomBattleService` 每帧调一次）。
+    /// </summary>
+    /// <param name="buffer">接收结果的表（会先清空）。</param>
+    public void CopyPendingDrops(List<DropEvent> buffer)
+    {
+        buffer.Clear();
+
+        for (int i = 0; i < _pendingDrops.Count; i++)
+        {
+            buffer.Add(_pendingDrops[i]);
+        }
+
+        _pendingDrops.Clear();
+    }
+
+    /// <summary>
+    /// 掷这个怪掉什么（**服务端权威**，S7）。概率是万分比；数量在 `countMin..countMax` 之间。
+    /// <para>⚠️ 只有**从活着打到死**那一下才掷（`killed` 为 true），打尸体不重复掉。</para>
+    /// </summary>
+    /// <param name="tables">配置表。</param>
+    /// <param name="monsterConfigId">死的那个怪的配置号。</param>
+    /// <param name="winnerPlayerId">归谁（M3 = 击杀者）。</param>
+    /// <returns>掉了几种（0 = 什么都没掉）。</returns>
+    public int RollDrops(ServerTables tables, int monsterConfigId, long winnerPlayerId)
+    {
+        IReadOnlyList<DropRow> rows = tables.FindDrops(monsterConfigId);
+        int rolled = 0;
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            DropRow row = rows[i];
+
+            if (row.ChancePerTenThousand <= 0)
+            {
+                continue;       // 概率 0 = 这个怪这一条永不掉
+            }
+
+            if (_random.NextPerTenThousand() >= row.ChancePerTenThousand)
+            {
+                continue;
+            }
+
+            int min = row.CountMin < 1 ? 1 : row.CountMin;
+            int max = row.CountMax < min ? min : row.CountMax;
+            int count = min + _random.Next(max - min + 1);
+
+            _pendingDrops.Add(new DropEvent
+            {
+                ItemId = row.ItemId,
+                Count = count,
+                WinnerPlayerId = winnerPlayerId,
+            });
+
+            rolled++;
+        }
+
+        return rolled;
+    }
+
+    /// <summary>把字符串房号搅成一个稳定的整数（同一房号永远同一个值）。</summary>
+    /// <param name="roomId">房号。</param>
+    /// <returns>散列值。</returns>
+    private static int StableHash(string roomId)
+    {
+        int hash = 17;
+
+        for (int i = 0; i < roomId.Length; i++)
+        {
+            hash = unchecked(hash * 31 + roomId[i]);
+        }
+
+        return hash;
     }
 
     /// <summary>把整个世界拍成一张快照（D5：**每 tick 全量**）。</summary>
@@ -820,7 +921,8 @@ public sealed class DungeonBattle
             int z = (i - (monsters.Length - 1) / 2) * 1500;
             int spawnX = radius;
 
-            battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
+            battle.AttachTables(tables);
+        battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
                              patrolSpeedMmPerTick: MonsterMoveMmPerTick,
                              patrolMinMm: spawnX - 500, patrolMaxMm: spawnX + 500,
                              attackDamage: monster.Value.Attack,
