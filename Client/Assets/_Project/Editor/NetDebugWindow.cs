@@ -29,6 +29,7 @@ using NBC.Framework.Net.Adapter;
 using NBC.Game.Battle;         // M4-S1：`ServerEventBridge`（服务端事件 → 事件中心）
 using NBC.Game.Net;
 using NBC.Game.Quest;          // M4-S1：`ConditionEventBridge`（事件中心 → 条件系统，M2 就有的那座桥）
+using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
 using UnityEditor;
 using UnityEngine;
@@ -70,6 +71,19 @@ namespace NBC.EditorTools
 
         /// <summary>当前目标（攻击发给谁；0 = 没目标）。</summary>
         [SerializeField] private int m_targetEntityId;
+
+        /// <summary>
+        /// M4-S1b：**自动追击并攻击**（负责人实测"目标不在范围内，难测"才加的）。
+        /// <para>⚠️ 它只是**替你按键**：位置、伤害、掉落照样全由服务端算 —— 这不是客户端预测，
+        /// 而是个调试工具（和"持续发送"同一性质）。</para>
+        /// </summary>
+        [SerializeField] private bool m_autoChase;
+
+        /// <summary>自动追击：距离下一次可以按键还剩几帧（与服务端冷却同源）。</summary>
+        private int m_autoAttackCooldownTicks;
+
+        /// <summary>自动追击：一共按了多少次普攻（界面上看得见"到底有没有按出去"）。</summary>
+        private int m_autoAttackCount;
 
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
@@ -163,7 +177,76 @@ namespace NBC.EditorTools
 
             m_session.Pump(deltaMs);
             SendContinuousInput();
+            TickAutoChase();
             Repaint();
+        }
+
+        /// <summary>
+        /// M4-S1b：自动追击并攻击（每编辑器帧一次；关掉开关就什么都不做）。
+        /// <para>做三件事：① 目标死了/没了就换成**最近的活怪**；② 不在射程内就朝它走；
+        /// ③ 进了射程就**按一下普攻**再等冷却（和服务端同一个冷却常量）。</para>
+        /// <para>⚠️ 距离用**切比雪夫距离** —— 与服务端 `DungeonBattle.DistanceMm` 同一种量法；
+        /// 用欧氏距离会在四角误判成"还差一点"，于是你会站在射程边上永远不按攻击。</para>
+        /// </summary>
+        private void TickAutoChase()
+        {
+            if (!m_autoChase || m_session == null || !m_session.IsOnline || !m_session.InRoom)
+            {
+                return;
+            }
+
+            SnapshotView world = m_session.World;
+            NBC.Protocol.EntitySnapshot mine = world.FindHero(m_session.PlayerId);
+
+            if (mine == null)
+            {
+                // 快照里还没有"我的英雄"（刚进房 / 已经死了）—— 什么都不发
+                m_autoAttackCooldownTicks = 0;
+                return;
+            }
+
+            NBC.Protocol.EntitySnapshot target = FindEntity(world, m_targetEntityId);
+
+            if (target == null || !target.Alive)
+            {
+                m_targetEntityId = NearestAliveMonsterId();
+                target = FindEntity(world, m_targetEntityId);
+
+                if (target == null)
+                {
+                    return;     // 没怪可打了（副本清完）
+                }
+            }
+
+            int distance = Chebyshev(mine, target);
+
+            if (distance > BattleRules.BasicAttackRangeMm)
+            {
+                int moveX = target.PosXMm == mine.PosXMm ? 0 : (target.PosXMm > mine.PosXMm ? 1000 : -1000);
+                int moveY = target.PosZMm == mine.PosZMm ? 0 : (target.PosZMm > mine.PosZMm ? 1000 : -1000);
+
+                m_autoAttackCooldownTicks = 0;      // 赶路时不用按攻击
+                m_inputX = moveX;                   // 让滑条跟着动，界面上看得见在往哪走
+                m_inputY = moveY;
+                m_session.SendInput(moveX, moveY, 0u, 0u, m_targetEntityId);
+                return;
+            }
+
+            // 射程内：站住 + 按一下普攻（按下 → 下一帧松开 → 等冷却，模拟"点一下"）
+            m_inputX = 0;
+            m_inputY = 0;
+
+            if (m_autoAttackCooldownTicks > 0)
+            {
+                bool release = m_autoAttackCooldownTicks == BattleRules.BasicAttackCooldownTicks;
+                m_autoAttackCooldownTicks--;
+                m_session.SendInput(0, 0, 0u, release ? 1u : 0u, m_targetEntityId);
+                return;
+            }
+
+            m_session.SendInput(0, 0, 1u, 0u, m_targetEntityId);
+            m_autoAttackCount++;
+            m_autoAttackCooldownTicks = BattleRules.BasicAttackCooldownTicks;
         }
 
         /// <summary>
@@ -402,6 +485,19 @@ namespace NBC.EditorTools
 
             using (new EditorGUI.DisabledScope(!canInput))
             {
+                // ---- M4-S1b：自动追击（负责人实测"目标不在范围内，难测"） ----
+                m_autoChase = EditorGUILayout.Toggle("自动追击并攻击（调试用）", m_autoChase);
+
+                if (m_autoChase)
+                {
+                    EditorGUILayout.HelpBox(
+                        "会自动朝目标走过去（按服务端算的切比雪夫距离判断射程），进了 2000mm 就按一下普攻、"
+                        + "再等冷却（15 帧）。目标死了会自动换最近的活怪。\n"
+                        + "⚠️ 它**只是替你按键**：位置、伤害、掉落照样全由服务端算 —— 这是调试工具，不是客户端预测。",
+                        MessageType.None);
+                }
+
+                EditorGUILayout.Space();
                 m_inputX = EditorGUILayout.IntSlider("左右（-1000..1000）", m_inputX, -1000, 1000);
                 m_inputY = EditorGUILayout.IntSlider("前后（-1000..1000）", m_inputY, -1000, 1000);
                 m_inputContinuous = EditorGUILayout.Toggle("持续发送（模拟一直按着）", m_inputContinuous);
@@ -419,11 +515,13 @@ namespace NBC.EditorTools
                         m_session.SendInput(m_inputX, m_inputY, 1u, 0u, m_targetEntityId);
                     }
 
-                    if (GUILayout.Button("自动选一只活怪当目标", GUILayout.Height(22f)))
+                    if (GUILayout.Button("选最近的活怪当目标", GUILayout.Height(22f)))
                     {
-                        m_targetEntityId = FirstAliveMonsterId();
+                        m_targetEntityId = NearestAliveMonsterId();
                     }
                 }
+
+                DrawTargetHint();
             }
 
             if (!canInput)
@@ -432,11 +530,54 @@ namespace NBC.EditorTools
             }
 
             EditorGUILayout.LabelField("已发输入", m_session == null ? "0" : m_session.InputsSent.ToString());
+
+            if (m_autoChase && canInput)
+            {
+                EditorGUILayout.LabelField("自动追击", "已按 " + m_autoAttackCount
+                    + " 次普攻；冷却剩余 " + m_autoAttackCooldownTicks + " 帧");
+            }
         }
 
-        /// <summary>从本地世界副本里挑一只活着的怪当目标（省得手填编号）。</summary>
+        /// <summary>
+        /// 把"目标在不在射程内"直接写出来（原来只有一个目标编号，得自己去算，
+        /// 于是现象是"打了没反应"，而且不报错 —— 这正是负责人说的"目标不在范围内，难测"）。
+        /// </summary>
+        private void DrawTargetHint()
+        {
+            if (m_session == null || m_targetEntityId == 0)
+            {
+                return;
+            }
+
+            SnapshotView world = m_session.World;
+            NBC.Protocol.EntitySnapshot mine = world.FindHero(m_session.PlayerId);
+            NBC.Protocol.EntitySnapshot target = FindEntity(world, m_targetEntityId);
+
+            if (mine == null || target == null)
+            {
+                EditorGUILayout.LabelField("目标", "快照里还没看到" + (mine == null ? "你自己" : "目标")
+                    + "（等一张快照 / 先确认自己活着）");
+                return;
+            }
+
+            int distance = Chebyshev(mine, target);
+            bool inRange = distance <= BattleRules.BasicAttackRangeMm;
+
+            EditorGUILayout.LabelField("距离", distance + " mm"
+                + (inRange ? "　✅ 在射程内（" + BattleRules.BasicAttackRangeMm + "mm）" : "　❌ 太远，打不到"));
+
+            EditorGUILayout.LabelField("我 / 目标",
+                "我 (" + mine.PosXMm + ", " + mine.PosZMm + ") → 目标 (" + target.PosXMm + ", " + target.PosZMm + ")"
+                + "，目标 HP " + target.Hp + "/" + target.MaxHp);
+        }
+
+        /// <summary>
+        /// 从本地世界副本里挑**离我最近的**活怪当目标（省得手填编号）。
+        /// <para>⚠️ 原来叫 `FirstAliveMonsterId`：它取"快照里第一只活怪"，而快照顺序是**创建顺序**
+        /// ⇒ 常常给你指到地图另一头的那只（负责人就撞上了"目标不在范围内，难测"）。</para>
+        /// </summary>
         /// <returns>实例编号；没有就返回 0。</returns>
-        private int FirstAliveMonsterId()
+        private int NearestAliveMonsterId()
         {
             if (m_session == null)
             {
@@ -444,18 +585,64 @@ namespace NBC.EditorTools
             }
 
             SnapshotView world = m_session.World;
+            NBC.Protocol.EntitySnapshot mine = world.FindHero(m_session.PlayerId);
+
+            int bestId = 0;
+            int bestDistance = int.MaxValue;
 
             for (int i = 0; i < world.Entities.Count; i++)
             {
                 NBC.Protocol.EntitySnapshot e = world.Entities[i];
 
-                if (e.Kind == 1 && e.Alive)
+                if (e.Kind != 1 || !e.Alive)
                 {
-                    return e.EntityId;
+                    continue;
+                }
+
+                // 找不到自己的英雄时（快照还没到）退化成"第一只活怪"
+                int distance = mine == null ? 0 : Chebyshev(mine, e);
+
+                if (bestId == 0 || distance < bestDistance)
+                {
+                    bestId = e.EntityId;
+                    bestDistance = distance;
                 }
             }
 
-            return 0;
+            return bestId;
+        }
+
+        /// <summary>按实例编号找单位（找不到返回 null）。</summary>
+        /// <param name="world">本地世界副本。</param>
+        /// <param name="entityId">实例编号。</param>
+        /// <returns>单位或 null。</returns>
+        private static NBC.Protocol.EntitySnapshot FindEntity(SnapshotView world, int entityId)
+        {
+            if (world == null || entityId == 0)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < world.Entities.Count; i++)
+            {
+                if (world.Entities[i].EntityId == entityId)
+                {
+                    return world.Entities[i];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>切比雪夫距离（毫米）——**与服务端 `DungeonBattle.DistanceMm` 同一种量法**。</summary>
+        /// <param name="a">甲。</param>
+        /// <param name="b">乙。</param>
+        /// <returns>距离。</returns>
+        private static int Chebyshev(NBC.Protocol.EntitySnapshot a, NBC.Protocol.EntitySnapshot b)
+        {
+            int dx = Math.Abs(a.PosXMm - b.PosXMm);
+            int dz = Math.Abs(a.PosZMm - b.PosZMm);
+            return dx > dz ? dx : dz;
         }
 
         /// <summary>画世界区（服务端快照的本地副本 —— M3 客户端的"画面数据"全在这儿）。</summary>

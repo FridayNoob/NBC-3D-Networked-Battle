@@ -161,8 +161,74 @@ namespace NBC.Tests.EditMode
         }
 
         // ====================================================================
+        //  六、M4-S1b：认出"哪个英雄是我"
+        // ====================================================================
+
+        /// <summary>
+        /// 靠 `owner_player_id` 认出**我的**英雄 —— 两个英雄时也**不能认错人**。
+        /// <para>⚠️ 这条规则为什么值得单独钉：只按 `kind == 0`（"第一个英雄"）找的话，
+        /// 两个客户端时会把**别人的**角色当成自己的 —— 表现层把血条画错人、
+        /// 调试工具去操纵别人的角色，而且**不报错、看着很正常**。</para>
+        /// </summary>
+        [Test]
+        public void FindHero_MatchesOwnerPlayerId_NotJustTheFirstHero()
+        {
+            SnapshotView view = new SnapshotView();
+
+            // 手搭一张快照：两个英雄（主人 7 / 8）+ 一只怪（无主）
+            var snapshot = new WorldSnapshot { ServerTick = 5 };
+
+            snapshot.Entities.Add(Hero(id: 1, configId: 1001, hp: 1200, owner: 7));
+            snapshot.Entities.Add(Hero(id: 2, configId: 1002, hp: 800, owner: 8));
+            snapshot.Entities.Add(new EntitySnapshot
+            {
+                EntityId = 3, ConfigId = 6001, Kind = 1, Hp = 300, MaxHp = 300, Alive = true,
+            });
+
+            view.Apply(snapshot);
+
+            EntitySnapshot mine = view.FindHero(8);
+
+            Assert.IsNotNull(mine, "玩家 8 的英雄应当在快照里");
+            Assert.AreEqual(2, mine.EntityId, "认的是**主人是我**的那个，不是快照里第一个英雄");
+            Assert.AreEqual(8, mine.OwnerPlayerId);
+
+            Assert.AreEqual(1, view.FindHero(7).EntityId, "换个玩家 id 就该换一个人");
+            Assert.IsNull(view.FindHero(9), "没有这个玩家的英雄 → null（**不许**退回第一个英雄）");
+            Assert.IsNull(view.FindHero(0), "0 = 无主，直接 null");
+
+            // 自己的英雄死了 → 也不该返回（否则调用方会去操纵一具尸体）
+            var afterDeath = new WorldSnapshot { ServerTick = 6 };
+            afterDeath.Entities.Add(Hero(id: 2, configId: 1002, hp: 0, owner: 8));
+
+            view.Apply(afterDeath);
+
+            Assert.IsNull(view.FindHero(8), "自己的英雄死了 → 返回 null");
+        }
+
+        // ====================================================================
         //  辅助
         // ====================================================================
+
+        /// <summary>造一个英雄单位（M4-S1b：带 `owner_player_id`）。</summary>
+        /// <param name="id">实例编号。</param>
+        /// <param name="configId">英雄配置编号。</param>
+        /// <param name="hp">当前血量。</param>
+        /// <param name="owner">归属玩家 id。</param>
+        /// <returns>快照条目。</returns>
+        private static EntitySnapshot Hero(int id, int configId, int hp, long owner)
+        {
+            return new EntitySnapshot
+            {
+                EntityId = id,
+                ConfigId = configId,
+                Kind = 0,
+                Hp = hp,
+                MaxHp = 1200,
+                Alive = hp > 0,
+                OwnerPlayerId = owner,
+            };
+        }
 
         /// <summary>造一张快照（[帧号] + 若干个 [实例号, 类型, 血量, 是否活着]）。</summary>
         /// <param name="tick">服务端帧号。</param>

@@ -274,6 +274,10 @@ public sealed class BattleEntity
             PosZMm = PosZmm,
             FacingDeg = FacingDeg,
             Alive = Alive,
+
+            // M4-S1b：英雄带上"归哪个玩家"（怪是 0）—— 客户端靠它认出**哪个是自己**
+            // （两个客户端时只看 kind 是分不出你我的，见 `EntitySnapshot` 的协议注释）。
+            OwnerPlayerId = PlayerId,
         };
     }
 }
@@ -322,13 +326,21 @@ public sealed class DungeonBattle
 
     /// <summary>
     /// 普攻射程（毫米，切比雪夫距离）。
+    /// <para>⚠️ **真值在共享层**（`NBC.Shared.Battle.BattleRules.BasicAttackRangeMm`）：
+    /// 客户端也要用它（调试窗的"自动追击"要知道走到哪儿停下、以后的射程提示同理），
+    /// 两边各写一份就会**静默漂移** —— 服务端改了射程、客户端还在老位置按键，
+    /// 表现是"走到一半就停住不打"，且不报错（见 `BattleRules.cs` 文件头）。这里只是别名。</para>
     /// <para>⚠️ TODO(S6+)：表里还没有"射程"这一列（`Skill` 表只有伤害与命中帧）。
     /// 加起来是"加表"的事，等真需要不同技能不同射程时再做 —— **别提前占坑**。</para>
     /// </summary>
-    public const int BasicAttackRangeMm = 2000;
+    public const int BasicAttackRangeMm = BattleRules.BasicAttackRangeMm;
 
-    /// <summary>普攻冷却（帧）。15 帧 = 0.5 秒（30Hz）。</summary>
-    public const int BasicAttackCooldownTicks = 15;
+    /// <summary>
+    /// 普攻冷却（帧）。15 帧 = 0.5 秒（30Hz）。
+    /// <para>⚠️ 同 `BasicAttackRangeMm`：真值在共享层 `BattleRules.BasicAttackCooldownTicks`
+    /// （客户端调试窗的"自动追击"要按同一个节奏按键）。</para>
+    /// </summary>
+    public const int BasicAttackCooldownTicks = BattleRules.BasicAttackCooldownTicks;
 
     /// <summary>
     /// 普通怪的移速（毫米/帧）：**表里还没有这一列**。
@@ -339,6 +351,23 @@ public sealed class DungeonBattle
 
     /// <summary>BOSS 的追击速度（毫米/帧）。TODO(S6+)：同上，等 `Monster.moveSpeed` 那一列。</summary>
     public const int BossMoveMmPerTick = 90;
+
+    /// <summary>
+    /// BOSS 的**仇恨范围**（毫米）：英雄在这个距离内才会被锁定。
+    /// <para>⚠️ 为什么必须有它（2026-09-26 负责人实测："老是被 BOSS 打死、没法测"）：
+    /// 原来 `BossBrain` 每帧无脑取"最近的活英雄" ⇒ BOSS **全图锁定**，
+    /// 于是"先清小怪、再打 BOSS"这条最基本的副本打法**根本不存在**：
+    /// 一进房它就朝你走过来（90mm/帧），然后以 `Monster.attack`=60 / 0.5 秒（= **120 dps**）
+    /// 把 1200 血的英雄在 **10 秒左右**磨掉 —— 你甚至没时间跑到狼那边。</para>
+    /// <para>取值 **2200mm**：只比普攻射程（2000mm）大一点，语义是
+    /// "**够得着就追，够不着就回家**"，而不是"全图仇恨"。超出这个距离 BOSS 会**回出生点**（leash）。</para>
+    /// <para>⚠️ TODO(M4+)：它应该是 `Dungeon` 表的一列（和 `Monster.moveSpeed` 一样待补）。
+    /// 现在先用常量并在此记明 —— **别让它悄悄变成"没人知道的魔法数"**。</para>
+    /// </summary>
+    public const int BossAggroRangeMm = 2200;
+
+    /// <summary>BOSS 回位（leash）的松弛量（毫米）：离家没超过它就站着不动，免得原地抖。</summary>
+    public const int BossLeashSlackMm = 200;
 
     /// <summary>英雄的配置编号（M3 固定用剑士）。TODO(S6+)：让它跟玩家选的英雄走。</summary>
     public const int HeroConfigId = 1001;
@@ -649,9 +678,20 @@ public sealed class DungeonBattle
     /// <param name="target">目标。</param>
     /// <returns>确实移动了返回 true。</returns>
     public bool MoveTowards(BattleEntity mover, BattleEntity target)
+        => MoveTowardsPoint(mover, target.PosXmm, target.PosZmm);
+
+    /// <summary>
+    /// 朝**一个坐标**走一格（BOSS 回家用它；`MoveTowards` 内部也走这里 —— **一处实现**，
+    /// 免得"追人"和"回家"两套方向算法迟早不一致）。
+    /// </summary>
+    /// <param name="mover">要移动的单位。</param>
+    /// <param name="x">目标 X（毫米）。</param>
+    /// <param name="z">目标 Z（毫米）。</param>
+    /// <returns>确实移动了返回 true。</returns>
+    public bool MoveTowardsPoint(BattleEntity mover, int x, int z)
     {
-        int dx = target.PosXmm - mover.PosXmm;
-        int dz = target.PosZmm - mover.PosZmm;
+        int dx = x - mover.PosXmm;
+        int dz = z - mover.PosZmm;
 
         if (dx == 0 && dz == 0)
         {
@@ -670,23 +710,39 @@ public sealed class DungeonBattle
     /// <param name="b">乙。</param>
     /// <returns>距离（毫米）。</returns>
     public static int DistanceMm(BattleEntity a, BattleEntity b)
+        => DistanceMmToPoint(a, b.PosXmm, b.PosZmm);
+
+    /// <summary>单位到一个坐标的切比雪夫距离（毫米）；BOSS 的"回家"与"仇恨范围"判定都用它。</summary>
+    /// <param name="a">单位。</param>
+    /// <param name="x">目标 X（毫米）。</param>
+    /// <param name="z">目标 Z（毫米）。</param>
+    /// <returns>距离（毫米）。</returns>
+    public static int DistanceMmToPoint(BattleEntity a, int x, int z)
     {
-        int dx = Math.Abs(a.PosXmm - b.PosXmm);
-        int dz = Math.Abs(a.PosZmm - b.PosZmm);
+        int dx = Math.Abs(a.PosXmm - x);
+        int dz = Math.Abs(a.PosZmm - z);
         return dx > dz ? dx : dz;
     }
 
-    /// <summary>第 `index` 个席位的出生点（确定性：同一席位每次都在同一个地方）。</summary>
+    /// <summary>
+    /// 第 `index` 个席位的出生点（确定性：同一席位每次都在同一个地方）。
+    /// <para>⚠️ 半径从 1000mm 收到 **500mm**（2026-09-26，与 `BossAggroRangeMm` 一起改的）：
+    /// BOSS 出生在 <c>-SpawnRadiusMm</c>（副本 1001 = −3000mm），而出生点原来在离原点 1000mm 处
+    /// ⇒ 0 号席位 (`-1000, 0`) 距 BOSS **正好 2000mm = BOSS 普攻射程**，
+    /// **一进房就在它脸上**（这也是负责人"老被打死"的直接原因）。</para>
+    /// <para>收到 500mm 之后，四个席位距 BOSS 的最小距离是 <c>3000 − 500 = 2500mm</c>，
+    /// 已经**大于仇恨范围 2200mm** ⇒ 进房先安全，交不交战由你决定。</para>
+    /// </summary>
     /// <param name="index">席位序号（0 起）。</param>
     /// <returns>(x, z) 毫米。</returns>
     public static (int X, int Z) HeroSpawnPoint(int index)
     {
         switch (index & 3)
         {
-            case 0: return (-1000, 0);
-            case 1: return (1000, 0);
-            case 2: return (0, -1000);
-            default: return (0, 1000);
+            case 0: return (-500, 0);
+            case 1: return (500, 0);
+            case 2: return (0, -500);
+            default: return (0, 500);
         }
     }
 

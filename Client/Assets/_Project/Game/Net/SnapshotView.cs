@@ -150,6 +150,35 @@ namespace NBC.Game.Net
             return null;
         }
 
+        /// <summary>
+        /// 找**属于某个玩家**的英雄（M4-S1b）。
+        /// <para>⚠️ 为什么要靠 `owner_player_id` 而不是"第一个 `kind == 0`"：快照里**所有英雄都在**，
+        /// 只按种类找的话，两个客户端时**分不出你我** —— 表现层会把血条画错人、
+        /// 调试工具会操纵别人的角色，而这两种都是**静默**的（不报错、看起来正常）。</para>
+        /// <para>⚠️ 只返回**活着**的英雄：死了就没有"我的英雄"可操作了（调用方自己决定怎么办）。</para>
+        /// </summary>
+        /// <param name="playerId">玩家 id（0 或不匹配时返回 null）。</param>
+        /// <returns>我的英雄；没有则 null。</returns>
+        public EntitySnapshot FindHero(long playerId)
+        {
+            if (playerId == 0)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < m_entities.Count; i++)
+            {
+                EntitySnapshot e = m_entities[i];
+
+                if (e.Kind == 0 && e.Alive && e.OwnerPlayerId == playerId)
+                {
+                    return e;
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>清空（断开/重连时用）。</summary>
         public void Clear()
         {

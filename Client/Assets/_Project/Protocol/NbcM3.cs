@@ -42,35 +42,36 @@ namespace NBC.Protocol {
             "bVBoYXNlIqEBCgtQbGF5ZXJJbnB1dBIRCglwbGF5ZXJfaWQYASABKAMSEwoL",
             "Y2xpZW50X3RpY2sYAiABKAUSDgoGbW92ZV94GAMgASgFEg4KBm1vdmVfeRgE",
             "IAEoBRITCgthY3Rpb25fYml0cxgFIAEoDRIbChNhY3Rpb25fcmVsZWFzZV9i",
-            "aXRzGAYgASgNEhgKEHRhcmdldF9lbnRpdHlfaWQYByABKAUipwEKDkVudGl0",
+            "aXRzGAYgASgNEhgKEHRhcmdldF9lbnRpdHlfaWQYByABKAUiwAEKDkVudGl0",
             "eVNuYXBzaG90EhEKCWVudGl0eV9pZBgBIAEoBRIRCgljb25maWdfaWQYAiAB",
             "KAUSDAoEa2luZBgDIAEoBRIKCgJocBgEIAEoBRIOCgZtYXhfaHAYBSABKAUS",
             "EAoIcG9zX3hfbW0YBiABKAUSEAoIcG9zX3pfbW0YByABKAUSEgoKZmFjaW5n",
-            "X2RlZxgIIAEoBRINCgVhbGl2ZRgJIAEoCCJOCg1Xb3JsZFNuYXBzaG90EhMK",
-            "C3NlcnZlcl90aWNrGAEgASgFEigKCGVudGl0aWVzGAIgAygLMhYubmJjLm0z",
-            "LkVudGl0eVNuYXBzaG90IlwKC0RhbWFnZUV2ZW50EhMKC2F0dGFja2VyX2lk",
-            "GAEgASgFEhEKCXRhcmdldF9pZBgCIAEoBRIPCgdhcHBsaWVkGAMgASgFEhQK",
-            "DHJlbWFpbmluZ19ocBgEIAEoBSJTCgpEZWF0aEV2ZW50EhEKCWVudGl0eV9p",
-            "ZBgBIAEoBRIRCgljb25maWdfaWQYAiABKAUSDAoEa2luZBgDIAEoBRIRCglr",
-            "aWxsZXJfaWQYBCABKAUiRQoJRHJvcEV2ZW50Eg8KB2l0ZW1faWQYASABKAUS",
-            "DQoFY291bnQYAiABKAUSGAoQd2lubmVyX3BsYXllcl9pZBgDIAEoAyKFAQoL",
-            "U2VydmVyRXZlbnQSJQoGZGFtYWdlGAEgASgLMhMubmJjLm0zLkRhbWFnZUV2",
-            "ZW50SAASIwoFZGVhdGgYAiABKAsyEi5uYmMubTMuRGVhdGhFdmVudEgAEiEK",
-            "BGRyb3AYAyABKAsyES5uYmMubTMuRHJvcEV2ZW50SABCBwoFZXZlbnQiiQIK",
-            "DVNlcnZlck1lc3NhZ2USLQoNaGFuZHNoYWtlX2FjaxgBIAEoCzIULm5iYy5t",
-            "My5IYW5kc2hha2VBY2tIABIcCgRwb25nGAIgASgLMgwubmJjLm0zLlBvbmdI",
-            "ABInCgpyb29tX3N0YXRlGAMgASgLMhEubmJjLm0zLlJvb21TdGF0ZUgAEikK",
-            "CHNuYXBzaG90GAQgASgLMhUubmJjLm0zLldvcmxkU25hcHNob3RIABIkCgVl",
-            "dmVudBgFIAEoCzITLm5iYy5tMy5TZXJ2ZXJFdmVudEgAEiYKBWVycm9yGAYg",
-            "ASgLMhUubmJjLm0zLkVycm9yUmVzcG9uc2VIAEIJCgdwYXlsb2FkIuQBCg1D",
-            "bGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIRLm5iYy5tMy5IYW5k",
-            "c2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBpbmdIABIsCglqb2lu",
-            "X3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1ZXN0SAASJAoFaW5w",
-            "dXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIuCgpsZWF2ZV9yb29t",
-            "GAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RIAEIJCgdwYXlsb2Fk",
-            "KlQKCVJvb21QaGFzZRIWChJST09NX1BIQVNFX1dBSVRJTkcQABIWChJST09N",
-            "X1BIQVNFX1JVTk5JTkcQARIXChNST09NX1BIQVNFX0ZJTklTSEVEEAJCD6oC",
-            "DE5CQy5Qcm90b2NvbGIGcHJvdG8z"));
+            "X2RlZxgIIAEoBRINCgVhbGl2ZRgJIAEoCBIXCg9vd25lcl9wbGF5ZXJfaWQY",
+            "CiABKAMiTgoNV29ybGRTbmFwc2hvdBITCgtzZXJ2ZXJfdGljaxgBIAEoBRIo",
+            "CghlbnRpdGllcxgCIAMoCzIWLm5iYy5tMy5FbnRpdHlTbmFwc2hvdCJcCgtE",
+            "YW1hZ2VFdmVudBITCgthdHRhY2tlcl9pZBgBIAEoBRIRCgl0YXJnZXRfaWQY",
+            "AiABKAUSDwoHYXBwbGllZBgDIAEoBRIUCgxyZW1haW5pbmdfaHAYBCABKAUi",
+            "UwoKRGVhdGhFdmVudBIRCgllbnRpdHlfaWQYASABKAUSEQoJY29uZmlnX2lk",
+            "GAIgASgFEgwKBGtpbmQYAyABKAUSEQoJa2lsbGVyX2lkGAQgASgFIkUKCURy",
+            "b3BFdmVudBIPCgdpdGVtX2lkGAEgASgFEg0KBWNvdW50GAIgASgFEhgKEHdp",
+            "bm5lcl9wbGF5ZXJfaWQYAyABKAMihQEKC1NlcnZlckV2ZW50EiUKBmRhbWFn",
+            "ZRgBIAEoCzITLm5iYy5tMy5EYW1hZ2VFdmVudEgAEiMKBWRlYXRoGAIgASgL",
+            "MhIubmJjLm0zLkRlYXRoRXZlbnRIABIhCgRkcm9wGAMgASgLMhEubmJjLm0z",
+            "LkRyb3BFdmVudEgAQgcKBWV2ZW50IokCCg1TZXJ2ZXJNZXNzYWdlEi0KDWhh",
+            "bmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMuSGFuZHNoYWtlQWNrSAASHAoE",
+            "cG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAASJwoKcm9vbV9zdGF0ZRgDIAEo",
+            "CzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghzbmFwc2hvdBgEIAEoCzIVLm5i",
+            "Yy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZlbnQYBSABKAsyEy5uYmMubTMu",
+            "U2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEoCzIVLm5iYy5tMy5FcnJvclJl",
+            "c3BvbnNlSABCCQoHcGF5bG9hZCLkAQoNQ2xpZW50TWVzc2FnZRImCgloYW5k",
+            "c2hha2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtlSAASHAoEcGluZxgCIAEo",
+            "CzIMLm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29tGAMgASgLMhcubmJjLm0z",
+            "LkpvaW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQgASgLMhMubmJjLm0zLlBs",
+            "YXllcklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEoCzIYLm5iYy5tMy5MZWF2",
+            "ZVJvb21SZXF1ZXN0SABCCQoHcGF5bG9hZCpUCglSb29tUGhhc2USFgoSUk9P",
+            "TV9QSEFTRV9XQUlUSU5HEAASFgoSUk9PTV9QSEFTRV9SVU5OSU5HEAESFwoT",
+            "Uk9PTV9QSEFTRV9GSU5JU0hFRBACQg+qAgxOQkMuUHJvdG9jb2xiBnByb3Rv",
+            "Mw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -84,7 +85,7 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.RoomMember), global::NBC.Protocol.RoomMember.Parser, new[]{ "PlayerId", "PlayerName", "IsHost", "Ready" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.RoomState), global::NBC.Protocol.RoomState.Parser, new[]{ "RoomId", "DungeonId", "Members", "Capacity", "Phase" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.PlayerInput), global::NBC.Protocol.PlayerInput.Parser, new[]{ "PlayerId", "ClientTick", "MoveX", "MoveY", "ActionBits", "ActionReleaseBits", "TargetEntityId" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.EntitySnapshot), global::NBC.Protocol.EntitySnapshot.Parser, new[]{ "EntityId", "ConfigId", "Kind", "Hp", "MaxHp", "PosXMm", "PosZMm", "FacingDeg", "Alive" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.EntitySnapshot), global::NBC.Protocol.EntitySnapshot.Parser, new[]{ "EntityId", "ConfigId", "Kind", "Hp", "MaxHp", "PosXMm", "PosZMm", "FacingDeg", "Alive", "OwnerPlayerId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.WorldSnapshot), global::NBC.Protocol.WorldSnapshot.Parser, new[]{ "ServerTick", "Entities" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.DamageEvent), global::NBC.Protocol.DamageEvent.Parser, new[]{ "AttackerId", "TargetId", "Applied", "RemainingHp" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.DeathEvent), global::NBC.Protocol.DeathEvent.Parser, new[]{ "EntityId", "ConfigId", "Kind", "KillerId" }, null, null, null, null),
@@ -2586,7 +2587,7 @@ namespace NBC.Protocol {
     public const int ActionBitsFieldNumber = 5;
     private uint actionBits_;
     /// <summary>
-    /// 本帧**新按下**的动作（第 i 位 = 动作 i）
+    /// 本帧**新按下**的动作（第 0 位 = 技能1/普攻，见上面的说明）
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -2955,6 +2956,7 @@ namespace NBC.Protocol {
       posZMm_ = other.posZMm_;
       facingDeg_ = other.facingDeg_;
       alive_ = other.alive_;
+      ownerPlayerId_ = other.ownerPlayerId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -3081,6 +3083,27 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "owner_player_id" field.</summary>
+    public const int OwnerPlayerIdFieldNumber = 10;
+    private long ownerPlayerId_;
+    /// <summary>
+    /// M4-S1b 追加（**兼容改动**：proto3 里加字段是兼容的，CONTRACT_VERSION 保持 1）。
+    ///
+    /// ⚠️ 为什么必须有它：客户端得知道**快照里哪个英雄是自己**。
+    ///    原来只有 `kind`（0 = 英雄），两个客户端时**分不出你我** ——
+    ///    于是"自动走向目标""把血条画在我头上"这类事**没法做**，只能靠"猜第一个活着的英雄"，
+    ///    而猜错的表现是"我的调试工具在操纵别人的角色"，**静默且看起来很正常**。
+    ///    `0` = 无主（怪物、或还没分配席位的英雄）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long OwnerPlayerId {
+      get { return ownerPlayerId_; }
+      set {
+        ownerPlayerId_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -3105,6 +3128,7 @@ namespace NBC.Protocol {
       if (PosZMm != other.PosZMm) return false;
       if (FacingDeg != other.FacingDeg) return false;
       if (Alive != other.Alive) return false;
+      if (OwnerPlayerId != other.OwnerPlayerId) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -3121,6 +3145,7 @@ namespace NBC.Protocol {
       if (PosZMm != 0) hash ^= PosZMm.GetHashCode();
       if (FacingDeg != 0) hash ^= FacingDeg.GetHashCode();
       if (Alive != false) hash ^= Alive.GetHashCode();
+      if (OwnerPlayerId != 0L) hash ^= OwnerPlayerId.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -3175,6 +3200,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(72);
         output.WriteBool(Alive);
       }
+      if (OwnerPlayerId != 0L) {
+        output.WriteRawTag(80);
+        output.WriteInt64(OwnerPlayerId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3221,6 +3250,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(72);
         output.WriteBool(Alive);
       }
+      if (OwnerPlayerId != 0L) {
+        output.WriteRawTag(80);
+        output.WriteInt64(OwnerPlayerId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3257,6 +3290,9 @@ namespace NBC.Protocol {
       }
       if (Alive != false) {
         size += 1 + 1;
+      }
+      if (OwnerPlayerId != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(OwnerPlayerId);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3296,6 +3332,9 @@ namespace NBC.Protocol {
       }
       if (other.Alive != false) {
         Alive = other.Alive;
+      }
+      if (other.OwnerPlayerId != 0L) {
+        OwnerPlayerId = other.OwnerPlayerId;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -3348,6 +3387,10 @@ namespace NBC.Protocol {
             Alive = input.ReadBool();
             break;
           }
+          case 80: {
+            OwnerPlayerId = input.ReadInt64();
+            break;
+          }
         }
       }
     #endif
@@ -3397,6 +3440,10 @@ namespace NBC.Protocol {
           }
           case 72: {
             Alive = input.ReadBool();
+            break;
+          }
+          case 80: {
+            OwnerPlayerId = input.ReadInt64();
             break;
           }
         }

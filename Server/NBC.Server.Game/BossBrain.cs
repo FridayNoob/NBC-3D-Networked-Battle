@@ -35,13 +35,19 @@
 //  判据与 M2-C 的装配层一致：**规则一处实现**（否则"BOSS 打人"和"英雄打人"会各有一套数值口径）。
 //
 //  ---------------------------------------------------------------------------
-//  五、决策表（M3 的全部 AI 就这三条，故意做小）
+//  五、决策表（M3 的全部 AI 就这四条，故意做小）
 //  ---------------------------------------------------------------------------
+//      **仇恨范围外没有目标**    → **Idle**（站着；离家了就**走回出生点**＝leash）
 //      没有活着的英雄          → **Idle**（站着）
 //      有英雄但超出普攻射程    → **Chase**（朝最近的英雄走）
 //      在射程内                → **Attack**（普攻；冷却中会被 `TryBasicAttack` 拒掉，状态不用管）
-//  ⚠️ TODO(S6+)：BOSS 技能（`Skill` 表已有 damage / hitFrames）、狂暴阶段、仇恨切换都**还没做** ——
-//     它们属于"把 AI 做厚"，而 M3 的验收是**打死 BOSS**，先把闭环跑通。
+//
+//  ⚠️ **仇恨范围**（`DungeonBattle.BossAggroRangeMm` = 2200mm）是 2026-09-26 补的，
+//     起因是负责人实测"老是被 BOSS 打死、没法测"：原来这里无脑取"最近的活英雄"，
+//     BOSS 会**全图追人**（90mm/帧）并以 60 点/0.5 秒把 1200 血的英雄 10 秒磨死，
+//     ⇒ "先清小怪再打 BOSS"这条最基本的副本打法**根本不存在**。
+//     现在超出范围就丢目标 → 回 Idle → 走回出生点，交不交战由玩家决定。
+//     ⚠️ TODO(M4+)：BOSS 技能（`Skill` 表已有 damage / hitFrames）、狂暴阶段、仇恨切换**还没做**。
 // ============================================================================
 
 using NBC.Framework.Fsm;
@@ -79,11 +85,21 @@ public sealed class BossBrain
     {
         _boss = boss;
 
+        // 出生点 = 它的"家"（leash 的目标点）。构造时抓一次就够 —— 之后它自己会走。
+        HomeXmm = boss.PosXmm;
+        HomeZmm = boss.PosZmm;
+
         _fsm.Register(EBossState.Idle, new IdleState(this));
         _fsm.Register(EBossState.Chase, new ChaseState(this));
         _fsm.Register(EBossState.Attack, new AttackState(this));
         _fsm.Start(EBossState.Idle);
     }
+
+    /// <summary>它的"家"（出生点）X —— 脱离仇恨后走回这里。</summary>
+    public int HomeXmm { get; }
+
+    /// <summary>它的"家"（出生点）Z。</summary>
+    public int HomeZmm { get; }
 
     /// <summary>它驱动的单位。</summary>
     public BattleEntity Boss => _boss;
@@ -99,17 +115,49 @@ public sealed class BossBrain
 
     /// <summary>
     /// 想一帧：更新目标 → 推进状态机（决策与动作都在状态的 `OnUpdate` 里）。
+    /// <para>⚠️ **目标在仇恨范围外时视为没有目标**（`_target = null`）—— 这就是 leash 的实现方式：
+    /// 状态机那边只认"有没有目标"，于是 Chase/Attack 会自动退回 Idle 并**走回出生点**
+    /// （见 `DungeonBattle.BossAggroRangeMm` 的注释：没有它 BOSS 会全图追人，副本没法玩）。</para>
     /// </summary>
     /// <param name="battle">世界。</param>
     public void Think(DungeonBattle battle)
     {
         _battle = battle;
-        _target = battle.NearestAliveHero(_boss);
+
+        BattleEntity? nearest = battle.NearestAliveHero(_boss);
+
+        if (nearest != null
+            && DungeonBattle.DistanceMm(_boss, nearest) > DungeonBattle.BossAggroRangeMm)
+        {
+            nearest = null;     // 够不着 → 当没看见（而不是"永远锁定"）
+        }
+
+        _target = nearest;
 
         // ⚠️ 帧号用**逻辑帧**（`DungeonBattle.Tick`），不是真实时间 —— 见文件头第三节
         int frame = (int)battle.Tick;
 
         _fsm.Tick(frame);
+    }
+
+    /// <summary>
+    /// 没目标时：离家超过松弛量就**走回出生点**，已经在家/在松弛范围内就站着（免得原地抖）。
+    /// </summary>
+    internal void ReturnHome()
+    {
+        DungeonBattle? battle = _battle;
+
+        if (battle == null)
+        {
+            return;
+        }
+
+        if (DungeonBattle.DistanceMmToPoint(_boss, HomeXmm, HomeZmm) <= DungeonBattle.BossLeashSlackMm)
+        {
+            return;
+        }
+
+        battle.MoveTowardsPoint(_boss, HomeXmm, HomeZmm);
     }
 
     /// <summary>记一次状态切换（状态入口处调，便于排查抖动）。</summary>
@@ -124,7 +172,7 @@ public sealed class BossBrain
     /// <summary>当前世界（`Think` 之前为 null）。</summary>
     internal DungeonBattle? Battle => _battle;
 
-    /// <summary>站着不动（没有目标时）。</summary>
+    /// <summary>站着不动（没有目标时）——**离家了就回家**。</summary>
     private sealed class IdleState : StateBase<EBossState>
     {
         private readonly BossBrain _brain;
@@ -139,7 +187,7 @@ public sealed class BossBrain
         /// <summary>名字（调试面板用）。</summary>
         public override string Name => "站桩";
 
-        /// <summary>每帧：一旦有目标就转去追。</summary>
+        /// <summary>每帧：有目标（且在仇恨范围内）就转去追；没目标就先回出生点。</summary>
         /// <param name="tick">帧信息。</param>
         public override void OnUpdate(in StateTick tick)
         {
@@ -147,7 +195,10 @@ public sealed class BossBrain
             {
                 _brain.NoteTransition();
                 _brain._fsm.TryChangeState(EBossState.Chase);
+                return;
             }
+
+            _brain.ReturnHome();
         }
     }
 
