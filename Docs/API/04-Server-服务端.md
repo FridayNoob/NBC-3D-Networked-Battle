@@ -142,6 +142,30 @@ FlushAsync()  ← 按"落库时机"调（异步）
 ⚠️ 写台账用的是 **`ON DUPLICATE KEY UPDATE`** 而不是 `INSERT IGNORE` ——
 后者会把**所有**错误降级成警告，包括"外键不存在"，那就成了"发奖记录悄悄没写进去且不报错"。
 
+### 4.6 账号与登录（**M4-S3 / SRV-06 收口**）
+
+| 类 | 职责 | 一句话规矩 |
+| --- | --- | --- |
+| `IAccountStore`（在 **Core**） | 接缝：`LoginResult Login(account, passwordDigest)` | **同步、只查内存** —— 它跑在网络泵的握手里 |
+| `AccountDirectory`（Data） | 启动时一次 `account JOIN player_profile` 读进内存 | `OrdinalIgnoreCase`（**跟库的 `_ci` 排序规则一致**）；密码**先验**再看档案 |
+| `AccountDao`（Data） | 只写 `last_login_at = NOW()` | **让数据库自己打时间**（别和 `created_at` 混时区） |
+| `LoginAuditWriter`（Data） | 登录审计"入队 + 单飞排空" | 与 `BattleRecordWriter` **同一套形状**（握手里只许入队） |
+
+⚠️ **配方是双端契约**：`NBC.Shared.Auth.PasswordDigest`（**唯一实现**，两端编同一份源码）
+```
+线上：digest = SHA256(明文密码)          ← 客户端算，明文不过网络
+入库：stored = SHA256(salt + digest)     ← 服务端算，与 account.password_hash 比
+```
+**改这条配方必须同步重算种子数据**（`Docs\08` 的 4 行 + `Docs\08c` 幂等迁移），
+否则 4 个测试账号全部登不上 —— 而 `_db-probe`【八】的**阳性对照**就是盯这件事的。
+
+⚠️ **身份不许静默降级**：带账号的握手失败就**拒**（先回说明再断开），
+**不是**"那就当游客吧"（那会让玩家以为自己登录了，战绩却记到别人头上）。
+没接数据库时也会明确说"用不了 + 下一步怎么做"。
+
+⚠️ 摘要**没有任何出口**：不进日志、不进 `HandshakeAck.Reason`、不进 `LoginResult`
+（`_net-probe`【十五】有一条专门翻遍所有服务端 Note 找它）。
+
 ---
 
 ## 五、`NBC.Server.Host` —— 控制台进程（SRV-01 / SRV-17 / SRV-20）

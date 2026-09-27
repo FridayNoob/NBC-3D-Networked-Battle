@@ -24,59 +24,60 @@ namespace NBC.Protocol {
     static NbcM3Reflection() {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
-            "CgxuYmNfbTMucHJvdG8SBm5iYy5tMyJSCglIYW5kc2hha2USGAoQcHJvdG9j",
+            "CgxuYmNfbTMucHJvdG8SBm5iYy5tMyJ8CglIYW5kc2hha2USGAoQcHJvdG9j",
             "b2xfdmVyc2lvbhgBIAEoBRIWCg5jbGllbnRfdmVyc2lvbhgCIAEoCRITCgtw",
-            "bGF5ZXJfbmFtZRgDIAEoCSKGAQoMSGFuZHNoYWtlQWNrEhAKCGFjY2VwdGVk",
-            "GAEgASgIEhgKEHByb3RvY29sX3ZlcnNpb24YAiABKAUSFgoOc2VydmVyX3Zl",
-            "cnNpb24YAyABKAkSEQoJcGxheWVyX2lkGAQgASgDEg4KBnJlYXNvbhgFIAEo",
-            "CRIPCgd0aWNrX2h6GAYgASgFIh4KBFBpbmcSFgoOY2xpZW50X3RpbWVfbXMY",
-            "ASABKAMiNgoEUG9uZxIWCg5jbGllbnRfdGltZV9tcxgBIAEoAxIWCg5zZXJ2",
-            "ZXJfdGltZV9tcxgCIAEoAyI2Cg9Kb2luUm9vbVJlcXVlc3QSDwoHcm9vbV9p",
-            "ZBgBIAEoCRISCgpkdW5nZW9uX2lkGAIgASgFIhIKEExlYXZlUm9vbVJlcXVl",
-            "c3QiLgoNRXJyb3JSZXNwb25zZRIMCgRjb2RlGAEgASgFEg8KB21lc3NhZ2UY",
-            "AiABKAkiVAoKUm9vbU1lbWJlchIRCglwbGF5ZXJfaWQYASABKAMSEwoLcGxh",
-            "eWVyX25hbWUYAiABKAkSDwoHaXNfaG9zdBgDIAEoCBINCgVyZWFkeRgEIAEo",
-            "CCKJAQoJUm9vbVN0YXRlEg8KB3Jvb21faWQYASABKAkSEgoKZHVuZ2Vvbl9p",
-            "ZBgCIAEoBRIjCgdtZW1iZXJzGAMgAygLMhIubmJjLm0zLlJvb21NZW1iZXIS",
-            "EAoIY2FwYWNpdHkYBCABKAUSIAoFcGhhc2UYBSABKA4yES5uYmMubTMuUm9v",
-            "bVBoYXNlIqEBCgtQbGF5ZXJJbnB1dBIRCglwbGF5ZXJfaWQYASABKAMSEwoL",
-            "Y2xpZW50X3RpY2sYAiABKAUSDgoGbW92ZV94GAMgASgFEg4KBm1vdmVfeRgE",
-            "IAEoBRITCgthY3Rpb25fYml0cxgFIAEoDRIbChNhY3Rpb25fcmVsZWFzZV9i",
-            "aXRzGAYgASgNEhgKEHRhcmdldF9lbnRpdHlfaWQYByABKAUiwAEKDkVudGl0",
-            "eVNuYXBzaG90EhEKCWVudGl0eV9pZBgBIAEoBRIRCgljb25maWdfaWQYAiAB",
-            "KAUSDAoEa2luZBgDIAEoBRIKCgJocBgEIAEoBRIOCgZtYXhfaHAYBSABKAUS",
-            "EAoIcG9zX3hfbW0YBiABKAUSEAoIcG9zX3pfbW0YByABKAUSEgoKZmFjaW5n",
-            "X2RlZxgIIAEoBRINCgVhbGl2ZRgJIAEoCBIXCg9vd25lcl9wbGF5ZXJfaWQY",
-            "CiABKAMiTgoNV29ybGRTbmFwc2hvdBITCgtzZXJ2ZXJfdGljaxgBIAEoBRIo",
-            "CghlbnRpdGllcxgCIAMoCzIWLm5iYy5tMy5FbnRpdHlTbmFwc2hvdCJcCgtE",
-            "YW1hZ2VFdmVudBITCgthdHRhY2tlcl9pZBgBIAEoBRIRCgl0YXJnZXRfaWQY",
-            "AiABKAUSDwoHYXBwbGllZBgDIAEoBRIUCgxyZW1haW5pbmdfaHAYBCABKAUi",
-            "UwoKRGVhdGhFdmVudBIRCgllbnRpdHlfaWQYASABKAUSEQoJY29uZmlnX2lk",
-            "GAIgASgFEgwKBGtpbmQYAyABKAUSEQoJa2lsbGVyX2lkGAQgASgFIkUKCURy",
-            "b3BFdmVudBIPCgdpdGVtX2lkGAEgASgFEg0KBWNvdW50GAIgASgFEhgKEHdp",
-            "bm5lcl9wbGF5ZXJfaWQYAyABKAMihQEKC1NlcnZlckV2ZW50EiUKBmRhbWFn",
-            "ZRgBIAEoCzITLm5iYy5tMy5EYW1hZ2VFdmVudEgAEiMKBWRlYXRoGAIgASgL",
-            "MhIubmJjLm0zLkRlYXRoRXZlbnRIABIhCgRkcm9wGAMgASgLMhEubmJjLm0z",
-            "LkRyb3BFdmVudEgAQgcKBWV2ZW50IokCCg1TZXJ2ZXJNZXNzYWdlEi0KDWhh",
-            "bmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMuSGFuZHNoYWtlQWNrSAASHAoE",
-            "cG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAASJwoKcm9vbV9zdGF0ZRgDIAEo",
-            "CzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghzbmFwc2hvdBgEIAEoCzIVLm5i",
-            "Yy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZlbnQYBSABKAsyEy5uYmMubTMu",
-            "U2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEoCzIVLm5iYy5tMy5FcnJvclJl",
-            "c3BvbnNlSABCCQoHcGF5bG9hZCLkAQoNQ2xpZW50TWVzc2FnZRImCgloYW5k",
-            "c2hha2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtlSAASHAoEcGluZxgCIAEo",
-            "CzIMLm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29tGAMgASgLMhcubmJjLm0z",
-            "LkpvaW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQgASgLMhMubmJjLm0zLlBs",
-            "YXllcklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEoCzIYLm5iYy5tMy5MZWF2",
-            "ZVJvb21SZXF1ZXN0SABCCQoHcGF5bG9hZCpUCglSb29tUGhhc2USFgoSUk9P",
-            "TV9QSEFTRV9XQUlUSU5HEAASFgoSUk9PTV9QSEFTRV9SVU5OSU5HEAESFwoT",
-            "Uk9PTV9QSEFTRV9GSU5JU0hFRBACQg+qAgxOQkMuUHJvdG9jb2xiBnByb3Rv",
-            "Mw=="));
+            "bGF5ZXJfbmFtZRgDIAEoCRIPCgdhY2NvdW50GAQgASgJEhcKD3Bhc3N3b3Jk",
+            "X2RpZ2VzdBgFIAEoCSKYAQoMSGFuZHNoYWtlQWNrEhAKCGFjY2VwdGVkGAEg",
+            "ASgIEhgKEHByb3RvY29sX3ZlcnNpb24YAiABKAUSFgoOc2VydmVyX3ZlcnNp",
+            "b24YAyABKAkSEQoJcGxheWVyX2lkGAQgASgDEg4KBnJlYXNvbhgFIAEoCRIP",
+            "Cgd0aWNrX2h6GAYgASgFEhAKCG5pY2tuYW1lGAcgASgJIh4KBFBpbmcSFgoO",
+            "Y2xpZW50X3RpbWVfbXMYASABKAMiNgoEUG9uZxIWCg5jbGllbnRfdGltZV9t",
+            "cxgBIAEoAxIWCg5zZXJ2ZXJfdGltZV9tcxgCIAEoAyI2Cg9Kb2luUm9vbVJl",
+            "cXVlc3QSDwoHcm9vbV9pZBgBIAEoCRISCgpkdW5nZW9uX2lkGAIgASgFIhIK",
+            "EExlYXZlUm9vbVJlcXVlc3QiLgoNRXJyb3JSZXNwb25zZRIMCgRjb2RlGAEg",
+            "ASgFEg8KB21lc3NhZ2UYAiABKAkiVAoKUm9vbU1lbWJlchIRCglwbGF5ZXJf",
+            "aWQYASABKAMSEwoLcGxheWVyX25hbWUYAiABKAkSDwoHaXNfaG9zdBgDIAEo",
+            "CBINCgVyZWFkeRgEIAEoCCKJAQoJUm9vbVN0YXRlEg8KB3Jvb21faWQYASAB",
+            "KAkSEgoKZHVuZ2Vvbl9pZBgCIAEoBRIjCgdtZW1iZXJzGAMgAygLMhIubmJj",
+            "Lm0zLlJvb21NZW1iZXISEAoIY2FwYWNpdHkYBCABKAUSIAoFcGhhc2UYBSAB",
+            "KA4yES5uYmMubTMuUm9vbVBoYXNlIqEBCgtQbGF5ZXJJbnB1dBIRCglwbGF5",
+            "ZXJfaWQYASABKAMSEwoLY2xpZW50X3RpY2sYAiABKAUSDgoGbW92ZV94GAMg",
+            "ASgFEg4KBm1vdmVfeRgEIAEoBRITCgthY3Rpb25fYml0cxgFIAEoDRIbChNh",
+            "Y3Rpb25fcmVsZWFzZV9iaXRzGAYgASgNEhgKEHRhcmdldF9lbnRpdHlfaWQY",
+            "ByABKAUiwAEKDkVudGl0eVNuYXBzaG90EhEKCWVudGl0eV9pZBgBIAEoBRIR",
+            "Cgljb25maWdfaWQYAiABKAUSDAoEa2luZBgDIAEoBRIKCgJocBgEIAEoBRIO",
+            "CgZtYXhfaHAYBSABKAUSEAoIcG9zX3hfbW0YBiABKAUSEAoIcG9zX3pfbW0Y",
+            "ByABKAUSEgoKZmFjaW5nX2RlZxgIIAEoBRINCgVhbGl2ZRgJIAEoCBIXCg9v",
+            "d25lcl9wbGF5ZXJfaWQYCiABKAMiTgoNV29ybGRTbmFwc2hvdBITCgtzZXJ2",
+            "ZXJfdGljaxgBIAEoBRIoCghlbnRpdGllcxgCIAMoCzIWLm5iYy5tMy5FbnRp",
+            "dHlTbmFwc2hvdCJcCgtEYW1hZ2VFdmVudBITCgthdHRhY2tlcl9pZBgBIAEo",
+            "BRIRCgl0YXJnZXRfaWQYAiABKAUSDwoHYXBwbGllZBgDIAEoBRIUCgxyZW1h",
+            "aW5pbmdfaHAYBCABKAUiUwoKRGVhdGhFdmVudBIRCgllbnRpdHlfaWQYASAB",
+            "KAUSEQoJY29uZmlnX2lkGAIgASgFEgwKBGtpbmQYAyABKAUSEQoJa2lsbGVy",
+            "X2lkGAQgASgFIkUKCURyb3BFdmVudBIPCgdpdGVtX2lkGAEgASgFEg0KBWNv",
+            "dW50GAIgASgFEhgKEHdpbm5lcl9wbGF5ZXJfaWQYAyABKAMihQEKC1NlcnZl",
+            "ckV2ZW50EiUKBmRhbWFnZRgBIAEoCzITLm5iYy5tMy5EYW1hZ2VFdmVudEgA",
+            "EiMKBWRlYXRoGAIgASgLMhIubmJjLm0zLkRlYXRoRXZlbnRIABIhCgRkcm9w",
+            "GAMgASgLMhEubmJjLm0zLkRyb3BFdmVudEgAQgcKBWV2ZW50IokCCg1TZXJ2",
+            "ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMuSGFu",
+            "ZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAASJwoK",
+            "cm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghzbmFw",
+            "c2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZlbnQY",
+            "BSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEoCzIV",
+            "Lm5iYy5tMy5FcnJvclJlc3BvbnNlSABCCQoHcGF5bG9hZCLkAQoNQ2xpZW50",
+            "TWVzc2FnZRImCgloYW5kc2hha2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtl",
+            "SAASHAoEcGluZxgCIAEoCzIMLm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29t",
+            "GAMgASgLMhcubmJjLm0zLkpvaW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQg",
+            "ASgLMhMubmJjLm0zLlBsYXllcklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEo",
+            "CzIYLm5iYy5tMy5MZWF2ZVJvb21SZXF1ZXN0SABCCQoHcGF5bG9hZCpUCglS",
+            "b29tUGhhc2USFgoSUk9PTV9QSEFTRV9XQUlUSU5HEAASFgoSUk9PTV9QSEFT",
+            "RV9SVU5OSU5HEAESFwoTUk9PTV9QSEFTRV9GSU5JU0hFRBACQg+qAgxOQkMu",
+            "UHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.Handshake), global::NBC.Protocol.Handshake.Parser, new[]{ "ProtocolVersion", "ClientVersion", "PlayerName" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.HandshakeAck), global::NBC.Protocol.HandshakeAck.Parser, new[]{ "Accepted", "ProtocolVersion", "ServerVersion", "PlayerId", "Reason", "TickHz" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.Handshake), global::NBC.Protocol.Handshake.Parser, new[]{ "ProtocolVersion", "ClientVersion", "PlayerName", "Account", "PasswordDigest" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.HandshakeAck), global::NBC.Protocol.HandshakeAck.Parser, new[]{ "Accepted", "ProtocolVersion", "ServerVersion", "PlayerId", "Reason", "TickHz", "Nickname" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.Ping), global::NBC.Protocol.Ping.Parser, new[]{ "ClientTimeMs" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.Pong), global::NBC.Protocol.Pong.Parser, new[]{ "ClientTimeMs", "ServerTimeMs" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.JoinRoomRequest), global::NBC.Protocol.JoinRoomRequest.Parser, new[]{ "RoomId", "DungeonId" }, null, null, null, null),
@@ -122,6 +123,11 @@ namespace NBC.Protocol {
   #region Messages
   /// <summary>
   //// 客户端连上之后发的第一条消息。
+  ////
+  //// ⚠️ M4-S3（SRV-06 真正的登录）**新增 4、5 两个字段**，是**兼容改动**（只加字段）：
+  ////    · 老客户端不填 ⇒ `account` 为空 ⇒ 服务端按**游客**处理（老行为一字不变）
+  ////    · 老服务端收到新客户端 ⇒ 未识别字段被 proto3 忽略 ⇒ 退回游客
+  ////    ⇒ 所以 `CONTRACT_VERSION` **保持不变**（判据见本文件顶部）。
   /// </summary>
   public sealed partial class Handshake : pb::IMessage<Handshake>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
@@ -160,6 +166,8 @@ namespace NBC.Protocol {
       protocolVersion_ = other.protocolVersion_;
       clientVersion_ = other.clientVersion_;
       playerName_ = other.playerName_;
+      account_ = other.account_;
+      passwordDigest_ = other.passwordDigest_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -203,7 +211,7 @@ namespace NBC.Protocol {
     public const int PlayerNameFieldNumber = 3;
     private string playerName_ = "";
     /// <summary>
-    /// 玩家名（M3 还没有账号系统）
+    /// 玩家名（**游客**用；登录成功时服务端改用档案昵称）
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -211,6 +219,36 @@ namespace NBC.Protocol {
       get { return playerName_; }
       set {
         playerName_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "account" field.</summary>
+    public const int AccountFieldNumber = 4;
+    private string account_ = "";
+    /// <summary>
+    /// 登录名；**留空 = 游客**（M4-S3 追加）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Account {
+      get { return account_; }
+      set {
+        account_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "password_digest" field.</summary>
+    public const int PasswordDigestFieldNumber = 5;
+    private string passwordDigest_ = "";
+    /// <summary>
+    /// = SHA256(明文密码) 的小写十六进制（M4-S3 追加）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string PasswordDigest {
+      get { return passwordDigest_; }
+      set {
+        passwordDigest_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
@@ -232,6 +270,8 @@ namespace NBC.Protocol {
       if (ProtocolVersion != other.ProtocolVersion) return false;
       if (ClientVersion != other.ClientVersion) return false;
       if (PlayerName != other.PlayerName) return false;
+      if (Account != other.Account) return false;
+      if (PasswordDigest != other.PasswordDigest) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -242,6 +282,8 @@ namespace NBC.Protocol {
       if (ProtocolVersion != 0) hash ^= ProtocolVersion.GetHashCode();
       if (ClientVersion.Length != 0) hash ^= ClientVersion.GetHashCode();
       if (PlayerName.Length != 0) hash ^= PlayerName.GetHashCode();
+      if (Account.Length != 0) hash ^= Account.GetHashCode();
+      if (PasswordDigest.Length != 0) hash ^= PasswordDigest.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -272,6 +314,14 @@ namespace NBC.Protocol {
         output.WriteRawTag(26);
         output.WriteString(PlayerName);
       }
+      if (Account.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Account);
+      }
+      if (PasswordDigest.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(PasswordDigest);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -294,6 +344,14 @@ namespace NBC.Protocol {
         output.WriteRawTag(26);
         output.WriteString(PlayerName);
       }
+      if (Account.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Account);
+      }
+      if (PasswordDigest.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(PasswordDigest);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -312,6 +370,12 @@ namespace NBC.Protocol {
       }
       if (PlayerName.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(PlayerName);
+      }
+      if (Account.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Account);
+      }
+      if (PasswordDigest.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(PasswordDigest);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -333,6 +397,12 @@ namespace NBC.Protocol {
       }
       if (other.PlayerName.Length != 0) {
         PlayerName = other.PlayerName;
+      }
+      if (other.Account.Length != 0) {
+        Account = other.Account;
+      }
+      if (other.PasswordDigest.Length != 0) {
+        PasswordDigest = other.PasswordDigest;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -361,6 +431,14 @@ namespace NBC.Protocol {
             PlayerName = input.ReadString();
             break;
           }
+          case 34: {
+            Account = input.ReadString();
+            break;
+          }
+          case 42: {
+            PasswordDigest = input.ReadString();
+            break;
+          }
         }
       }
     #endif
@@ -386,6 +464,14 @@ namespace NBC.Protocol {
           }
           case 26: {
             PlayerName = input.ReadString();
+            break;
+          }
+          case 34: {
+            Account = input.ReadString();
+            break;
+          }
+          case 42: {
+            PasswordDigest = input.ReadString();
             break;
           }
         }
@@ -438,6 +524,7 @@ namespace NBC.Protocol {
       playerId_ = other.playerId_;
       reason_ = other.reason_;
       tickHz_ = other.tickHz_;
+      nickname_ = other.nickname_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -531,6 +618,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "nickname" field.</summary>
+    public const int NicknameFieldNumber = 7;
+    private string nickname_ = "";
+    /// <summary>
+    /// 服务端认定的显示名（登录 = 档案昵称；游客 = 发来的 player_name）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Nickname {
+      get { return nickname_; }
+      set {
+        nickname_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -552,6 +654,7 @@ namespace NBC.Protocol {
       if (PlayerId != other.PlayerId) return false;
       if (Reason != other.Reason) return false;
       if (TickHz != other.TickHz) return false;
+      if (Nickname != other.Nickname) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -565,6 +668,7 @@ namespace NBC.Protocol {
       if (PlayerId != 0L) hash ^= PlayerId.GetHashCode();
       if (Reason.Length != 0) hash ^= Reason.GetHashCode();
       if (TickHz != 0) hash ^= TickHz.GetHashCode();
+      if (Nickname.Length != 0) hash ^= Nickname.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -607,6 +711,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(48);
         output.WriteInt32(TickHz);
       }
+      if (Nickname.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(Nickname);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -641,6 +749,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(48);
         output.WriteInt32(TickHz);
       }
+      if (Nickname.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(Nickname);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -668,6 +780,9 @@ namespace NBC.Protocol {
       }
       if (TickHz != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TickHz);
+      }
+      if (Nickname.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Nickname);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -698,6 +813,9 @@ namespace NBC.Protocol {
       }
       if (other.TickHz != 0) {
         TickHz = other.TickHz;
+      }
+      if (other.Nickname.Length != 0) {
+        Nickname = other.Nickname;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -738,6 +856,10 @@ namespace NBC.Protocol {
             TickHz = input.ReadInt32();
             break;
           }
+          case 58: {
+            Nickname = input.ReadString();
+            break;
+          }
         }
       }
     #endif
@@ -775,6 +897,10 @@ namespace NBC.Protocol {
           }
           case 48: {
             TickHz = input.ReadInt32();
+            break;
+          }
+          case 58: {
+            Nickname = input.ReadString();
             break;
           }
         }

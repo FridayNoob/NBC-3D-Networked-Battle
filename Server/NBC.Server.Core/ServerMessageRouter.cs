@@ -35,6 +35,7 @@
 using System;
 using System.Collections.Generic;
 using NBC.Protocol;
+using NBC.Shared.Auth;
 using NBC.Shared.Net;
 
 namespace NBC.Server.Core;
@@ -100,6 +101,23 @@ public sealed class ServerMessageRouter
     /// </summary>
     private readonly IPlayerSlotProvider? _slots;
 
+    /// <summary>
+    /// 账号表（**可空**：没接数据库时为 null ⇒ 账号登录用不了，游客照旧）。
+    /// <para>⚠️ 与 <see cref="_slots"/> 一样是 Core 里的接缝，实现住在 `NBC.Server.Data`。</para>
+    /// </summary>
+    private readonly IAccountStore? _accounts;
+
+    /// <summary>
+    /// 登录成功（参数是完整结果：账号编号 / 玩家编号 / 昵称）。
+    /// <para>
+    /// ⚠️ 为什么把整个 <see cref="LoginResult"/> 传出去、而不是只传一个 `account_id`：
+    /// 监听方（Host）既要**记审计**又要**写日志**，日志想写"账号 → 玩家（昵称）"。
+    /// 只给一个 id 的话监听方得自己再查一遍 —— 那正是「在信息最全的地方记账」的反面。
+    /// </para>
+    /// <para>⚠️ 监听方**只许入队**，不许在握手里等 IO。</para>
+    /// </summary>
+    public event Action<LoginResult>? AccountLoggedIn;
+
     /// <summary>建一个路由。</summary>
     /// <param name="serverVersion">服务端版本标识（只进日志与 `HandshakeAck`，用于排查）。</param>
     /// <param name="slots">
@@ -107,10 +125,20 @@ public sealed class ServerMessageRouter
     /// <para>⚠️ 这个降级路径是**必须保留**的：`_net-probe` 在没有数据库的环境里跑，
     /// 而它的用例断言 `PlayerId == 1`、`== 2`。退回老行为，那 93 条才不会红。</para>
     /// </param>
-    public ServerMessageRouter(string? serverVersion = null, IPlayerSlotProvider? slots = null)
+    /// <param name="accounts">
+    /// 账号表；**传 null = 没有数据库** ⇒ 带账号的握手会被拒（并说清"为什么用不了"），
+    /// 不带账号的游客握手**一字不变**。
+    /// <para>⚠️ 为什么这里**不**"登录失败就退回游客"：那会让玩家以为自己登录了
+    /// （界面显示已登录，战绩却记到别人头上）。**身份这种事不许静默降级。**</para>
+    /// </param>
+    public ServerMessageRouter(
+        string? serverVersion = null,
+        IPlayerSlotProvider? slots = null,
+        IAccountStore? accounts = null)
     {
         _serverVersion = string.IsNullOrEmpty(serverVersion) ? "nbc-server/unknown" : serverVersion!;
         _slots = slots;
+        _accounts = accounts;
 
         // 握手是**内建**的：既不能被替换，也不可能忘记注册
         _handlers[ClientMessage.PayloadOneofCase.Handshake] = HandleHandshake;
@@ -252,6 +280,14 @@ public sealed class ServerMessageRouter
                 $"协议版本不一致（客户端 v{hello.ProtocolVersion} ≠ 服务端 v{NetContract.Version}）");
         }
 
+        // ⚠️ 身份只有两条路，**没有第三种**（身份这种事不许静默降级）：
+        //    ① 给了账号 ⇒ **必须登进去**（失败就拒，并说清为什么）
+        //    ② 没给账号 ⇒ **游客**，走 M3 的老路（槽位 / 计数器）
+        if (!string.IsNullOrEmpty(hello.Account))
+        {
+            return HandleAccountLogin(session, hello);
+        }
+
         // 玩家编号从哪来（见 `IPlayerSlotProvider` 文件头）：
         //   ① 接了数据库 ⇒ **领一个真实存在的档案槽位**（断开时还回去 ⇒ 反复连接会复用 1~4）
         //   ② 没接数据库 / 槽位用完了 ⇒ 退回"第几个连上来的"计数器（老行为）
@@ -283,8 +319,102 @@ public sealed class ServerMessageRouter
             PlayerId = session.PlayerId,
             TickHz = NetContract.TickRate,
             Reason = string.Empty,
+            Nickname = session.PlayerName,
         };
 
         return DispatchResult.ReplyWith(new ServerMessage { HandshakeAck = accepted });
+    }
+
+    /// <summary>
+    /// 账号登录（M4-S3 / SRV-06 真正的登录）。
+    ///
+    /// <para>
+    /// 成功时 `player_id` 来自**账号自己的档案**（`player_profile.player_id`）——
+    /// 所以**重连还是同一个人**，战绩累计到同一个人身上。
+    /// 这是它与游客槽位（"第几个连上来的"）最本质的区别。
+    /// </para>
+    /// </summary>
+    /// <param name="session">会话。</param>
+    /// <param name="hello">握手内容（已确认 `Account` 非空）。</param>
+    /// <returns>结果。</returns>
+    private DispatchResult HandleAccountLogin(ClientSession session, Handshake hello)
+    {
+        // ① 服务端有没有能力做账号登录（没接数据库就没有）
+        if (_accounts == null)
+        {
+            return RejectLogin(session, hello,
+                "服务端没有接数据库，账号登录用不了。请把登录名留空、用游客进；" +
+                "或在服务端设环境变量 NBC_DB_PASSWORD 后重启（见 Docs\\11 §三）。");
+        }
+
+        // ② 客户端有没有带密码摘要
+        //    ⚠️ 摘要形状先自检：**别把畸形输入送给比较函数**（那样只会得到一句"密码不对"，
+        //       而真正的原因是客户端根本没发密码 —— 两种原因的修法完全不同）
+        if (!PasswordDigest.LooksLikeDigest(hello.PasswordDigest))
+        {
+            return RejectLogin(session, hello,
+                $"登录请求里的密码摘要形状不对（应当是 {PasswordDigest.HexLength} 个小写十六进制字符，" +
+                $"实际 {(string.IsNullOrEmpty(hello.PasswordDigest) ? "为空" : hello.PasswordDigest.Length + " 个字符")}）。" +
+                "客户端应当用共享层 NBC.Shared.Auth.PasswordDigest.FromPassword 算摘要。");
+        }
+
+        // ③ 真正校验（实现只查内存，见 IAccountStore 文件头）
+        LoginResult login = _accounts.Login(hello.Account, hello.PasswordDigest);
+
+        if (!login.Accepted)
+        {
+            // ⚠️ 这里**只把 Reason 发出去**：摘要 / 密码 / salt **一个字都不进日志与错误消息**
+            return RejectLogin(session, hello, login.Reason);
+        }
+
+        session.AccountId = login.AccountId;
+        session.PlayerId = login.PlayerId;
+        session.PlayerName = login.Nickname;
+        session.Phase = SessionPhase.InLobby;
+
+        Action<LoginResult>? loggedIn = AccountLoggedIn;
+
+        if (loggedIn != null)
+        {
+            // ⚠️ 监听方只许入队（`LoginAuditWriter`），不许在这里等数据库
+            loggedIn(login);
+        }
+
+        var accepted = new HandshakeAck
+        {
+            Accepted = true,
+            ProtocolVersion = NetContract.Version,
+            ServerVersion = _serverVersion,
+            PlayerId = session.PlayerId,
+            TickHz = NetContract.TickRate,
+            Reason = string.Empty,
+            Nickname = session.PlayerName,
+        };
+
+        return DispatchResult.ReplyWith(new ServerMessage { HandshakeAck = accepted });
+    }
+
+    /// <summary>拒一次登录（先回说明再断开 —— 老规矩，Ack 是"被拒"的唯一说明）。</summary>
+    /// <param name="session">会话。</param>
+    /// <param name="hello">握手内容。</param>
+    /// <param name="reason">人话原因。</param>
+    /// <returns>结果。</returns>
+    private DispatchResult RejectLogin(ClientSession session, Handshake hello, string reason)
+    {
+        var rejected = new HandshakeAck
+        {
+            Accepted = false,
+            ProtocolVersion = NetContract.Version,
+            ServerVersion = _serverVersion,
+            PlayerId = 0,
+            TickHz = NetContract.TickRate,
+            Reason = reason,
+        };
+
+        // ⚠️ 日志里是**账号名**（便于排查"是不是把用户名打错了"），
+        //    但**绝不含**摘要/密码/salt
+        return DispatchResult.ReplyThenKick(
+            new ServerMessage { HandshakeAck = rejected },
+            $"账号登录被拒（会话 {session.SessionId}，账号 \"{hello.Account}\"）：{reason}");
     }
 }

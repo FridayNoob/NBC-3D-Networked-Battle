@@ -41,6 +41,7 @@ using Google.Protobuf;
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Protocol;
+using NBC.Shared.Auth;
 using NBC.Shared.Net;
 
 namespace NBC.Game.Net
@@ -82,8 +83,22 @@ namespace NBC.Game.Net
         /// <summary>传输（接缝；测试里塞 `FakeTransport`）。</summary>
         private readonly ITransport m_transport;
 
-        /// <summary>玩家名（M3 还没有账号系统，只用于日志/席位显示）。</summary>
+        /// <summary>玩家名（**游客**用；登录成功时显示的是服务端给的档案昵称）。</summary>
         private readonly string m_playerName;
+
+        /// <summary>登录名（空串 = 游客）。</summary>
+        private readonly string m_account;
+
+        /// <summary>
+        /// 密码**摘要**（`SHA256(明文密码)` 的小写十六进制；空串 = 游客）。
+        ///
+        /// <para>
+        /// ⚠️ 这里存的是**摘要，不是明文** —— 明文只在构造函数那一瞬间存在，
+        /// 算完摘要就丢。理由：会话对象活得比登录久得多，
+        /// 它的字段会被日志/调试器/崩溃转储翻出来，**没有任何理由让它拿着明文密码**。
+        /// </para>
+        /// </summary>
+        private readonly string m_passwordDigest;
 
         /// <summary>客户端版本标识（只用于服务端排查）。</summary>
         private readonly string m_clientVersion;
@@ -156,18 +171,29 @@ namespace NBC.Game.Net
         /// 建一条会话（此时还没连）。
         /// </summary>
         /// <param name="transport">传输实现（Unity 里是 `TcpTransport`，测试里是 `FakeTransport`）。</param>
-        /// <param name="playerName">玩家名。</param>
+        /// <param name="playerName">玩家名（**游客**用）。</param>
         /// <param name="clientVersion">客户端版本标识。</param>
         /// <param name="heartbeatIntervalMs">心跳间隔。</param>
         /// <param name="heartbeatTimeoutMs">心跳超时。</param>
         /// <param name="handshakeTimeoutMs">握手超时。</param>
+        /// <param name="account">
+        /// 登录名（**留空 = 游客**，M4-S3 追加）。两端的取舍与风险见 `Docs\27` §十九。
+        /// <para>⚠️ 账号是**会话级**的：换账号要**新造一个 `NetSession`**（`Connect` 只负责连，
+        /// 不管"换个人"）—— 这样就不会出现"连到一半改了身份"这种鬼状态。</para>
+        /// </param>
+        /// <param name="password">
+        /// 明文密码（**只在构造函数里活一瞬间**，算完摘要就丢，见 `m_passwordDigest`）。
+        /// <para>⚠️ 它**永远不会**被写进日志：`NetSession` 只把摘要发出去。</para>
+        /// </param>
         public NetSession(
             ITransport transport,
             string playerName = "玩家",
             string clientVersion = "nbc-unity",
             int heartbeatIntervalMs = DefaultHeartbeatIntervalMs,
             int heartbeatTimeoutMs = DefaultHeartbeatTimeoutMs,
-            int handshakeTimeoutMs = DefaultHandshakeTimeoutMs)
+            int handshakeTimeoutMs = DefaultHandshakeTimeoutMs,
+            string account = "",
+            string password = "")
         {
             if (transport == null)
             {
@@ -187,6 +213,13 @@ namespace NBC.Game.Net
             m_heartbeatTimeoutMs = heartbeatTimeoutMs;
             m_handshakeTimeoutMs = handshakeTimeoutMs;
 
+            // ⚠️ 账号给了就要给密码：只给账号不给密码 = 一定会被服务端拒
+            //    （那边会说"密码摘要形状不对"）。**这里先说清楚**，别等一个往返。
+            m_account = (account ?? string.Empty).Trim();
+            m_passwordDigest = m_account.Length == 0
+                ? string.Empty
+                : PasswordDigest.FromPassword(password ?? string.Empty);
+
             m_transport.FrameReceived += OnFrameReceived;
             m_transport.Closed += OnTransportClosed;
         }
@@ -199,6 +232,18 @@ namespace NBC.Game.Net
         public ESessionState State
         {
             get { return m_state; }
+        }
+
+        /// <summary>登录名（空串 = 游客）。</summary>
+        public string Account
+        {
+            get { return m_account; }
+        }
+
+        /// <summary>是不是游客（没给登录名）。</summary>
+        public bool IsGuest
+        {
+            get { return m_account.Length == 0; }
         }
 
         /// <summary>失败原因（null = 没失败过）。</summary>
@@ -758,7 +803,9 @@ namespace NBC.Game.Net
             SetState(ESessionState.Online);
 
             Log("握手成功 → 玩家 " + ack.PlayerId +
-                "（服务端 " + ack.ServerVersion + "，协议 v" + ack.ProtocolVersion +
+                "（" + (IsGuest ? "游客" : "账号 " + m_account) +
+                "，昵称 " + (string.IsNullOrEmpty(ack.Nickname) ? m_playerName : ack.Nickname) +
+                "；服务端 " + ack.ServerVersion + "，协议 v" + ack.ProtocolVersion +
                 "，tick " + ack.TickHz + "Hz）");
 
             Action<HandshakeAck> handler = HandshakeCompleted;
@@ -1000,11 +1047,19 @@ namespace NBC.Game.Net
                     ProtocolVersion = NetContract.Version,
                     ClientVersion = m_clientVersion,
                     PlayerName = m_playerName,
+
+                    // 游客时这两个都是空串 ⇒ 服务端走老路（与 M3 一字不差）
+                    Account = m_account,
+                    PasswordDigest = m_passwordDigest,
                 },
             };
 
             m_transport.Send(hello.ToByteArray());
-            Log("已发握手（协议 v" + NetContract.Version + "）");
+
+            // ⚠️ 日志里只有账号名与"带没带密码"，**永远没有摘要/明文**
+            Log(IsGuest
+                ? "已发握手（协议 v" + NetContract.Version + "，游客）"
+                : "已发握手（协议 v" + NetContract.Version + "，账号 " + m_account + "）");
         }
 
         /// <summary>发心跳（`client_time_ms` 用本地时钟，回来时一减就是 RTT）。</summary>

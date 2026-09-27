@@ -26,8 +26,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
 using MySqlConnector;
+using NBC.Server.Core;          // M4-S3：`ELoginRejection` / `LoginResult`
 using NBC.Server.Data;
 using NBC.Server.Game;
+using NBC.Shared.Auth;          // M4-S3：密码摘要配方（**双端唯一实现**）
 using NBC.Shared.Reward;
 
 namespace NBC.DbProbe
@@ -100,6 +102,12 @@ namespace NBC.DbProbe
 
             SlotLogicSection();
             await SlotMySqlSection().ConfigureAwait(false);
+
+            Console.WriteLine();
+            Console.WriteLine("【八】M4-S3：账号登录（SRV-06 真正的登录 —— 身份属于账号，不属于连接）");
+
+            PasswordRecipeSection();
+            await LoginMySqlSection().ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
@@ -1152,6 +1160,359 @@ namespace NBC.DbProbe
 
             Check("真库：升序（第一个是最小的）", ids.Count >= 1 && ids[0] == 1, "第一个是 " + (ids.Count > 0 ? ids[0] : -1));
             Console.WriteLine("      · " + slots.Describe());
+        }
+
+        // ====================================================================
+        //  八、M4-S3：账号登录（**配方阳性对照** + 真库）
+        // ====================================================================
+
+        /// <summary>
+        /// 配方本身（纯逻辑，不碰数据库）。
+        ///
+        /// <para>
+        /// ⚠️ 这里是全项目**唯一**能独立验"摘要算法对不对"的地方：
+        /// `_net-probe` 的假账号表**两端都用同一个 `PasswordDigest`**，
+        /// 所以把配方改错它**照样全绿**（自己和自己对，永远对得上）。
+        /// 真正的判据是下面那条**与库里种子数据对账**的阳性对照。
+        /// </para>
+        /// </summary>
+        private static void PasswordRecipeSection()
+        {
+            string digest123456 = PasswordDigest.FromPassword("123456");
+
+            Check("配方：SHA256(\"123456\") == 众所周知的那个值（一次证明 UTF-8 编码 / SHA256 / 小写十六进制三步都对）",
+                digest123456 == "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+                "算出来是 " + digest123456);
+
+            Check("配方：长度就是 64 个字符（`account.password_hash` 是 CHAR(64)，多一个都存不进去）",
+                digest123456.Length == PasswordDigest.HexLength && PasswordDigest.HexLength == 64,
+                "长度 " + digest123456.Length);
+
+            Check("配方：`LooksLikeDigest` 认得它、也认得大写（`Look` 只管形状）",
+                PasswordDigest.LooksLikeDigest(digest123456)
+                && PasswordDigest.LooksLikeDigest(digest123456.ToUpperInvariant()),
+                "自检失败");
+
+            Check("配方：`LooksLikeDigest` 拒绝长度不对 / 非十六进制的输入",
+                !PasswordDigest.LooksLikeDigest(null)
+                && !PasswordDigest.LooksLikeDigest("")
+                && !PasswordDigest.LooksLikeDigest("abc")
+                && !PasswordDigest.LooksLikeDigest(new string('z', 64)),
+                "自检失败");
+
+            // ⚠️ 拼接顺序**是契约的一部分**：salt 在前还是摘要在前，结果完全不同
+            Check("配方：拼接顺序敏感（salt+摘要 ≠ 摘要+salt —— 顺序写反了这条会红）",
+                PasswordDigest.StoredHash("S", "D") != PasswordDigest.StoredHash("D", "S"),
+                "两个顺序算出了同一个值");
+
+            // 恒定时间比较：行为上必须与普通比较一致（否则上层判据全错）
+            string a = digest123456;
+            string b = string.Copy(a);
+            string last = a.Substring(0, 63) + (a[63] == '0' ? '1' : '0');
+
+            Check("恒定时间比较：完全一样 -> true",
+                PasswordDigest.FixedTimeEquals(a, b), "返回了 false");
+
+            Check("恒定时间比较：**只有最后一个字符不同** -> false（不是「看起来像就算过」）",
+                !PasswordDigest.FixedTimeEquals(a, last), "返回了 true");
+
+            Check("恒定时间比较：长度不同 -> false；null -> false",
+                !PasswordDigest.FixedTimeEquals(a, a.Substring(0, 63))
+                && !PasswordDigest.FixedTimeEquals(null, a)
+                && !PasswordDigest.FixedTimeEquals(a, null),
+                "自检失败");
+        }
+
+        /// <summary>真库：库里那 4 个种子账号 + 通过 `AccountDirectory` 登录。</summary>
+        /// <returns>任务。</returns>
+        private static async Task LoginMySqlSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                Console.WriteLine("         ⚠️ 这条跳过很贵：**配方与种子数据对账的阳性对照就在这一节里**。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            // ----------------------------------------------------------------
+            //  ① 阳性对照：库里的 `password_hash` **必须**等于我们算出来的
+            // ----------------------------------------------------------------
+            List<AccountRow> rows = await ReadAccountsAsync(factory).ConfigureAwait(false);
+
+            Check("真库：`account` 表里有种子账号（`Docs\\08` 种了 4 个 test01~test04）",
+                rows.Count >= 4, "读到 " + rows.Count + " 个");
+
+            int matched = 0;
+            string mismatch = string.Empty;
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                AccountRow row = rows[i];
+                string mine = PasswordDigest.StoredHash(row.salt, PasswordDigest.FromPassword("123456"));
+
+                if (mine == row.password_hash)
+                {
+                    matched++;
+                }
+                else
+                {
+                    mismatch = row.username + "：库里 " + row.password_hash + "，我算 " + mine;
+                }
+            }
+
+            Check("真库**阳性对照**：每个种子账号的 password_hash == SHA256(salt + SHA256(\"123456\"))（配方一改这条必红）",
+                rows.Count >= 4 && matched == rows.Count,
+                matched + "/" + rows.Count + " 对得上" + (mismatch.Length == 0 ? "" : "；第一个不对的：" + mismatch));
+
+            // ----------------------------------------------------------------
+            //  ② 登录：账号 → **它自己的** player_id
+            // ----------------------------------------------------------------
+            AccountDirectory directory = AccountDirectory.Load(factory);
+
+            Check("真库：`AccountDirectory` 一次 JOIN 把账号与档案都读进来了",
+                directory.Count >= 4, directory.Describe());
+
+            string digest = PasswordDigest.FromPassword("123456");
+            LoginResult ok = directory.Login("test01", digest);
+
+            Check("真库：test01 + 123456 登录成功，且拿到正数 player_id",
+                ok.Accepted && ok.PlayerId > 0, ok.ToString());
+
+            long? test01ProfileId = await ReadProfileIdAsync(factory, "test01").ConfigureAwait(false);
+
+            Check("真库：登录拿到的 player_id **就是 test01 自己档案的 id**（不是「第几个连上来的」）",
+                test01ProfileId != null && ok.PlayerId == test01ProfileId.Value,
+                $"登录给的是 {ok.PlayerId}，库里 test01 的档案是 {(test01ProfileId == null ? "没查到" : test01ProfileId.Value.ToString())}");
+
+            Check("真库：昵称来自**档案**（`player_profile.nickname`）",
+                ok.Nickname == "测试玩家一", "昵称是 \"" + ok.Nickname + "\"");
+
+            LoginResult again = directory.Login("test01", digest);
+
+            Check("真库：同一个账号连第二次还是同一个 player_id（重连不换人）",
+                again.Accepted && again.PlayerId == ok.PlayerId,
+                $"第一次 {ok.PlayerId}，第二次 {again.PlayerId}");
+
+            LoginResult upper = directory.Login("TEST01", digest);
+
+            Check("真库：登录名**大小写不敏感**（跟库 `utf8mb4_general_ci` 的 UNIQUE 键保持一致）",
+                upper.Accepted && upper.PlayerId == ok.PlayerId,
+                "TEST01 的结果：" + upper.ToString());
+
+            LoginResult wrong = directory.Login("test01", PasswordDigest.FromPassword("654321"));
+
+            Check("真库：密码不对 → WrongPassword（且理由说的是「密码不对」）",
+                !wrong.Accepted && wrong.Rejection == ELoginRejection.WrongPassword && wrong.Reason.Contains("密码"),
+                wrong.ToString());
+
+            LoginResult missing = directory.Login("查无此号", digest);
+
+            Check("真库：账号不存在 → UnknownAccount（和「密码不对」分得开 —— 本项目的取舍）",
+                !missing.Accepted && missing.Rejection == ELoginRejection.UnknownAccount,
+                missing.ToString());
+
+            LoginResult badShape = directory.Login("test01", "不是摘要");
+
+            Check("真库：摘要形状不对 → BadRequest（**先自检形状**，省得把畸形输入当成「密码错」）",
+                !badShape.Accepted && badShape.Rejection == ELoginRejection.BadRequest,
+                badShape.ToString());
+
+            Check("真库：登录结果与 Describe 里**都不含摘要/密码**（敏感信息没有出口）",
+                !ok.ToString().Contains(digest) && !directory.Describe().Contains(digest)
+                && !wrong.Reason.Contains(digest),
+                "摘要泄漏了");
+
+            // ----------------------------------------------------------------
+            //  ③ "账号在、但没有档案" ⇒ NoProfile（**临时插一行**，跑完删掉）
+            // ----------------------------------------------------------------
+            const string tempAccount = "nbc_temp_noprofile";
+
+            try
+            {
+                await InsertProfilelessAccountAsync(factory, tempAccount).ConfigureAwait(false);
+
+                // ⚠️ 必须**重新 Load**：账号表是启动时读一次的（刻意的取舍），
+                //    不重读就等于在验"服务端重启后才认得的东西"。
+                AccountDirectory reloaded = AccountDirectory.Load(factory);
+                LoginResult noProfile = reloaded.Login(tempAccount, PasswordDigest.FromPassword("temppw"));
+
+                Check("真库：账号在、密码对、**但没有档案** → NoProfile（绝不能给一个假 id 糊过去）",
+                    !noProfile.Accepted && noProfile.Rejection == ELoginRejection.NoProfile,
+                    noProfile.ToString());
+
+                Check("真库：没有档案的账号会被 `Describe` 报出来（否则只会被当成「密码错了」）",
+                    reloaded.WithoutProfileCount == 1 && reloaded.Describe().Contains("没有档案"),
+                    reloaded.Describe());
+
+                Check("真库：密码不对时**不会**先暴露「这个账号没有档案」（先验密码，再看档案）",
+                    reloaded.Login(tempAccount, PasswordDigest.FromPassword("错的")).Rejection
+                        == ELoginRejection.WrongPassword,
+                    "顺序反了：没验密码就说了档案的事");
+            }
+            finally
+            {
+                int removed = await DeleteAccountAsync(factory, tempAccount).ConfigureAwait(false);
+                Console.WriteLine("      · 收尾：删掉临时账号 " + removed + " 行");
+            }
+
+            // ----------------------------------------------------------------
+            //  ④ `last_login_at` 真的写进去了（AccountDao + LoginAuditWriter）
+            // ----------------------------------------------------------------
+            DateTime? beforeLoginAt = await ReadLastLoginAsync(factory, ok.AccountId).ConfigureAwait(false);
+
+            try
+            {
+                var auditDao = new AccountDao(factory);
+
+                using (var writer = new LoginAuditWriter(auditDao))
+                {
+                    writer.Submit(ok.AccountId);
+
+                    bool drained = await writer.FlushAsync(3000).ConfigureAwait(false);
+
+                    Check("真库：`LoginAuditWriter` 入队 1 次、写成功 1 次（没有失败）",
+                        drained && writer.Submitted == 1 && writer.Written == 1 && writer.Failed == 0,
+                        writer.DescribeStats() + "（drained=" + drained + "）");
+                }
+
+                DateTime? afterLoginAt = await ReadLastLoginAsync(factory, ok.AccountId).ConfigureAwait(false);
+
+                Check("真库：`account.last_login_at` **真的被写了**（登录在库里留下了证据）",
+                    afterLoginAt != null, "还是 null —— 审计没落库");
+            }
+            finally
+            {
+                // 收尾：把 last_login_at 还原成原样（**不要留下测试痕迹**）
+                await RestoreLastLoginAsync(factory, ok.AccountId, beforeLoginAt).ConfigureAwait(false);
+                DateTime? restored = await ReadLastLoginAsync(factory, ok.AccountId).ConfigureAwait(false);
+                Console.WriteLine("      · 收尾：last_login_at 还原为 " +
+                                  (restored == null ? "null" : restored.Value.ToString("yyyy-MM-dd HH:mm:ss")));
+            }
+        }
+
+        /// <summary>一行账号（Dapper 映射用；列名与 SELECT 别名一致）。</summary>
+        private sealed class AccountRow
+        {
+            /// <summary>`account_id`。</summary>
+            public long account_id { get; set; }
+
+            /// <summary>`username`。</summary>
+            public string username { get; set; } = string.Empty;
+
+            /// <summary>`password_hash`。</summary>
+            public string password_hash { get; set; } = string.Empty;
+
+            /// <summary>`salt`。</summary>
+            public string salt { get; set; } = string.Empty;
+        }
+
+        /// <summary>读全部账号（**只看与配方有关的三列**）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <returns>账号行。</returns>
+        private static async Task<List<AccountRow>> ReadAccountsAsync(DbConnectionFactory factory)
+        {
+            const string sql = "SELECT `account_id`, `username`, `password_hash`, `salt` " +
+                               "FROM `account` WHERE `username` LIKE 'test%' ORDER BY `account_id`";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return (await connection.QueryAsync<AccountRow>(new CommandDefinition(sql)).ConfigureAwait(false))
+                    .AsList();
+            }
+        }
+
+        /// <summary>查某个账号的档案 id（**用 SQL 直接问库**，不经过被测代码）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="username">登录名。</param>
+        /// <returns>档案 id；没有则是 null。</returns>
+        private static async Task<long?> ReadProfileIdAsync(DbConnectionFactory factory, string username)
+        {
+            const string sql = "SELECT p.`player_id` FROM `account` a " +
+                               "JOIN `player_profile` p ON p.`account_id` = a.`account_id` " +
+                               "WHERE a.`username` = @username";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<long?>(
+                    new CommandDefinition(sql, new { username })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>插一个**没有档案**的账号（临时数据，收尾会删）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="username">登录名。</param>
+        /// <returns>任务。</returns>
+        private static async Task InsertProfilelessAccountAsync(DbConnectionFactory factory, string username)
+        {
+            const string salt = "0f1e2d3c4b5a6978";
+            string hash = PasswordDigest.StoredHash(salt, PasswordDigest.FromPassword("temppw"));
+
+            const string sql = "INSERT INTO `account` (`username`, `password_hash`, `salt`) " +
+                               "VALUES (@username, @hash, @salt)";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { username, hash, salt })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>删一个账号（收尾）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="username">登录名。</param>
+        /// <returns>删了几行。</returns>
+        private static async Task<int> DeleteAccountAsync(DbConnectionFactory factory, string username)
+        {
+            const string sql = "DELETE FROM `account` WHERE `username` = @username";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { username })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>读 `last_login_at`。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="accountId">账号编号。</param>
+        /// <returns>时间；是 NULL 则为 null。</returns>
+        private static async Task<DateTime?> ReadLastLoginAsync(DbConnectionFactory factory, long accountId)
+        {
+            const string sql = "SELECT `last_login_at` FROM `account` WHERE `account_id` = @accountId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<DateTime?>(
+                    new CommandDefinition(sql, new { accountId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>把 `last_login_at` 还原（收尾，**不留测试痕迹**）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="accountId">账号编号。</param>
+        /// <param name="original">原来的值（null = 还原成 NULL）。</param>
+        /// <returns>任务。</returns>
+        private static async Task RestoreLastLoginAsync(DbConnectionFactory factory, long accountId, DateTime? original)
+        {
+            const string sql = "UPDATE `account` SET `last_login_at` = @original WHERE `account_id` = @accountId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { accountId, original })).ConfigureAwait(false);
+            }
         }
 
         // ====================================================================

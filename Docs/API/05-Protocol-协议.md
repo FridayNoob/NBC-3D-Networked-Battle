@@ -51,8 +51,20 @@ cd /d <仓库根>                       ← 工作目录走 Unicode API，中文
 
 | 消息 | 用途 |
 | --- | --- |
-| `Handshake` / `HandshakeAck` | 连接后的第一件事：**校验协议版本**（SRV-19）。不匹配就拒绝并提示 |
+| `Handshake` / `HandshakeAck` | 连接后的第一件事：**校验协议版本**（SRV-19）**+ 账号登录**（M4-S3）。不匹配/登不上就拒绝并提示 |
 | `Ping` / `Pong` | 心跳（`client_time_ms` / `server_time_ms`）⇒ 顺带能算 RTT |
+
+**M4-S3 新增的字段**（全是**纯新增** ⇒ `CONTRACT_VERSION` 仍 = 1）：
+
+| 字段 | 方向 | 说明 |
+| --- | --- | --- |
+| `Handshake.account` | C → S | 登录名；**留空 = 游客**（老客户端一字不改） |
+| `Handshake.password_digest` | C → S | `SHA256(明文密码)` 的小写十六进制（**明文不过网络**，配方见 `NBC.Shared.Auth.PasswordDigest`） |
+| `HandshakeAck.nickname` | S → C | 服务端认定的显示名（登录 = 档案昵称；游客 = 客户端发来的 `player_name`） |
+
+> ⚠️ proto3 里**未知字段会被忽略** ⇒ 老客户端连新服务端 = 游客，新客户端连老服务端 = 也是游客。
+> 这就是"只加字段不用 +1"的判据（见 §四）。
+> ⚠️ 摘要**不是**安全保证：没有 TLS ⇒ 抓到它就能重放。取舍写在 `Docs\27` §19.2。
 
 ⚠️ **握手也要有超时**（`Docs\教学\M3-A` 记的四处"顺序敏感"的坑之一）——
 不然一个连上就不说话的客户端会一直占着会话。

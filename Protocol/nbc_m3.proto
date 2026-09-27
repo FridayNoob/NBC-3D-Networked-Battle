@@ -54,11 +54,21 @@ option csharp_namespace = "NBC.Protocol";
 // ============================================================================
 
 /// 客户端连上之后发的第一条消息。
+///
+/// ⚠️ M4-S3（SRV-06 真正的登录）**新增 4、5 两个字段**，是**兼容改动**（只加字段）：
+///    · 老客户端不填 ⇒ `account` 为空 ⇒ 服务端按**游客**处理（老行为一字不变）
+///    · 老服务端收到新客户端 ⇒ 未识别字段被 proto3 忽略 ⇒ 退回游客
+///    ⇒ 所以 `CONTRACT_VERSION` **保持不变**（判据见本文件顶部）。
 message Handshake
 {
     int32  protocol_version = 1;   // = .proto 顶部的 CONTRACT_VERSION（不一致服务端直接拒绝）
     string client_version   = 2;   // 客户端构建标识，只用于日志排查
-    string player_name      = 3;   // 玩家名（M3 还没有账号系统）
+    string player_name      = 3;   // 玩家名（**游客**用；登录成功时服务端改用档案昵称）
+    string account          = 4;   // 登录名；**留空 = 游客**（M4-S3 追加）
+    string password_digest  = 5;   // = SHA256(明文密码) 的小写十六进制（M4-S3 追加）
+                                   // ⚠️ 线上**不放明文密码**，但**也不等于安全**：
+                                   //    没有 TLS ⇒ 这个摘要被抓到就能重放。取舍写在 `Docs\27` §十九。
+                                   //    配方实现在**双端共享层** `NBC.Shared.Auth.PasswordDigest`（一份代码）。
 }
 
 /// 握手结果。
@@ -70,6 +80,8 @@ message HandshakeAck
     int64  player_id        = 4;   // 服务端分配的玩家 id（> 0）
     string reason           = 5;   // accepted=false 时说清为什么（人话）
     int32  tick_hz          = 6;   // 服务端 tick 频率（M3 = 30）
+    string nickname         = 7;   // 服务端认定的显示名（登录 = 档案昵称；游客 = 发来的 player_name）
+                                   // （M4-S3 追加：客户端不用猜"我叫什么"）
 }
 
 /// 心跳（客户端主动发；服务端回 Pong 时不带内容）。

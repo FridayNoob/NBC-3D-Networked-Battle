@@ -24,6 +24,7 @@ using NBC.Game.Net;
 using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
+using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
 using NBC.Shared.Net;
 
 namespace NBC.NetProbe
@@ -54,7 +55,15 @@ namespace NBC.NetProbe
             {
                 // 用**客户端会话层**（`NBC.Game.Net.NetSession`）去连真服务端：
                 // 它在 FakeTransport 上有一堆用例，但"真 socket 上跑得动吗"只有这里能证。
-                return SessionSmoke(sessionPort);
+                //
+                // ⚠️ `--login=test01:123456` 时**额外**验一遍跨进程的账号登录
+                //    （要服务端接了数据库；不填就只验游客）。
+                string login = ReadStringArg(args, "--login", string.Empty);
+                int colon = login.IndexOf(':');
+
+                return colon > 0
+                    ? SessionSmoke(sessionPort, login.Substring(0, colon), login.Substring(colon + 1))
+                    : SessionSmoke(sessionPort, string.Empty, string.Empty);
             }
 
             Console.WriteLine("=== 端到端网络探针（服务端 Core + 客户端 Framework.Net + 真 protobuf）===");
@@ -166,6 +175,15 @@ namespace NBC.NetProbe
             Console.WriteLine("【十四】M4-S1b：快照带 owner_player_id（客户端能认出「哪个英雄是我」）");
             Snapshots_CarryOwnerPlayerId();
 
+            Console.WriteLine();
+            Console.WriteLine("【十五】M4-S3：账号登录（SRV-06 真正的登录 —— 身份来自账号，不来自「第几个连上来的」）");
+            Login_SameAccountGetsSamePlayerId();
+            Login_WrongPasswordIsRejectedWithHumanReason();
+            Login_UnknownAccountIsRejectedWithHumanReason();
+            Login_GuestStillWorksOldWay();
+            Login_NoAccountStoreSaysWhyInsteadOfSilentlyBecomingGuest();
+            Login_DigestNeverAppearsInServerNotes();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -268,7 +286,7 @@ namespace NBC.NetProbe
         /// </summary>
         /// <param name="port">服务端端口。</param>
         /// <returns>全绿返回 0。</returns>
-        private static int SessionSmoke(int port)
+        private static int SessionSmoke(int port, string account, string password)
         {
             Console.WriteLine($"=== 会话层模式：用 NetSession 连 127.0.0.1:{port} ===");
 
@@ -292,6 +310,58 @@ namespace NBC.NetProbe
             Check("会话层：拿到 player_id 与服务端版本",
                 session.PlayerId > 0 && session.Ack != null && !string.IsNullOrEmpty(session.Ack.ServerVersion),
                 "player_id=" + session.PlayerId + "，server=" + (session.Ack == null ? "无" : session.Ack.ServerVersion));
+
+            // ------------------------------------------------------------------
+            //  M4-S3：跨进程的**真账号登录**（要服务端接了数据库）
+            // ------------------------------------------------------------------
+            //  ⚠️ 这一段是全链路里唯一"客户端的 `NetSession` 真的把账号/摘要发出去、
+            //     真的服务端用真的 `AccountDirectory` 查了真的库"的地方。
+            //     进程内那 106 条验的是"路由器 + 假账号表"；这里验的是**接线**。
+            if (account.Length > 0)
+            {
+                var loginTransport = new TcpTransport();
+                var login = new NetSession(loginTransport, "不该用到这个名字", "net-probe/login", 1000, 5000, 5000,
+                                           account, password);
+
+                login.Note += line => Console.WriteLine("      · " + line);
+                login.Connect("127.0.0.1", port);
+
+                bool loginOk = PumpSessionUntil(login, () => login.IsOnline || login.FailureReason != null, 3000);
+
+                Check("跨进程登录：用 `NetSession` + 账号登录成功",
+                    loginOk && login.IsOnline && login.PlayerId > 0,
+                    "online=" + login.IsOnline + "，player_id=" + login.PlayerId +
+                    "，失败原因=" + (login.FailureReason ?? "无"));
+
+                Check("跨进程登录：拿到的是**账号档案里的昵称**（不是客户端发来的名字）",
+                    login.Ack != null && login.Ack.Nickname == "测试玩家一",
+                    "nickname=\"" + (login.Ack == null ? "无" : login.Ack.Nickname) + "\"");
+
+                Check("跨进程登录：客户端自己知道这是登录、不是游客",
+                    !login.IsGuest && login.Account == account,
+                    "IsGuest=" + login.IsGuest + "，Account=\"" + login.Account + "\"");
+
+                // ⚠️ 一次**反向**检查：错的密码必须被拒，而且原因要能看懂
+                var badTransport = new TcpTransport();
+                var bad = new NetSession(badTransport, "不该用到这个名字", "net-probe/login", 1000, 5000, 5000,
+                                         account, password + "-错的");
+
+                bad.Note += line => Console.WriteLine("      · " + line);
+                bad.Connect("127.0.0.1", port);
+
+                PumpSessionUntil(bad, () => bad.IsOnline || bad.FailureReason != null, 3000);
+
+                Check("跨进程登录：**错的密码跨进程也被拒**，且失败原因说人话",
+                    !bad.IsOnline && bad.FailureReason != null && bad.FailureReason.Contains("密码"),
+                    "online=" + bad.IsOnline + "，失败原因=" + (bad.FailureReason ?? "无"));
+
+                bad.Dispose();
+                login.Dispose();
+            }
+            else
+            {
+                Console.WriteLine("  ⏭️  没给 `--login=账号:密码`，跳过跨进程登录（要服务端接了数据库才验得了）。");
+            }
 
             // 等一次 Pong 回来（握手后会自动发一次心跳）
             PumpSessionUntil(session, () => session.RttMs >= 0, 2000);
@@ -460,6 +530,24 @@ namespace NBC.NetProbe
                     int.TryParse(args[i].Substring(key.Length + 1), out int value))
                 {
                     return value;
+                }
+            }
+
+            return fallback;
+        }
+
+        /// <summary>读 `--key=value` 形式的字符串参数。</summary>
+        /// <param name="args">命令行。</param>
+        /// <param name="key">键。</param>
+        /// <param name="fallback">缺省值。</param>
+        /// <returns>值。</returns>
+        private static string ReadStringArg(string[] args, string key, string fallback)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i].StartsWith(key + "=", StringComparison.Ordinal))
+                {
+                    return args[i].Substring(key.Length + 1);
                 }
             }
 
@@ -2445,6 +2533,245 @@ namespace NBC.NetProbe
             }
         }
 
+        // ====================================================================
+        //  【十五】M4-S3：账号登录
+        // ====================================================================
+
+        /// <summary>
+        /// 同一个账号连两次 ⇒ **同一个 `player_id`**。
+        ///
+        /// <para>
+        /// 这是整件事的**核心断言**：SRV-06 之前，`player_id` 是"第几个连上来的"
+        /// （断开再连就可能换人），战绩会记到别人头上。
+        /// </para>
+        /// </summary>
+        private static void Login_SameAccountGetsSamePlayerId()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                Client first = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck firstAck = AckOf(first, "alice 首次登录");
+                long idFirst = firstAck.PlayerId;
+
+                Check("M4-S3：登录成功（不是被拒）且拿到正数编号",
+                    firstAck.Accepted && idFirst > 0,
+                    $"accepted={firstAck.Accepted}、player_id={idFirst}、reason=\"{firstAck.Reason}\"");
+
+                Check("M4-S3：登录玩家的昵称来自**账号档案**（不是客户端发来的 player_name）",
+                    firstAck.Nickname == "爱丽丝",
+                    $"nickname=\"{firstAck.Nickname}\"（期望 爱丽丝；客户端发的是「不该用到这个名字」）");
+
+                // 断开再连（重连）：走**真 socket 的关闭**，让服务端把这个人当成"走了"
+                first.Transport.Close();
+                h.PumpFor(150);
+
+                Client again = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck againAck = AckOf(again, "alice 重连");
+
+                Check("M4-S3：**同一个账号重连还是同一个 player_id**（这才是账号的意义）",
+                    againAck.Accepted && againAck.PlayerId == idFirst,
+                    $"第一次 {idFirst}，第二次 {againAck.PlayerId}");
+
+                // 换一个账号必须是**另一个人**
+                Client bob = h.ConnectAndLogin("bob", "pw-bob");
+                HandshakeAck bobAck = AckOf(bob, "bob 登录");
+
+                Check("M4-S3：不同账号拿到**不同**的 player_id",
+                    bobAck.Accepted && bobAck.PlayerId != idFirst,
+                    $"alice={idFirst}、bob={bobAck.PlayerId}");
+
+                // 而且**同一账号可以同时在线**（身份属于账号，不属于连接）
+                Client aliceAgain = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck aliceAgainAck = AckOf(aliceAgain, "alice 第二条连接");
+
+                Check("M4-S3：同一账号可以同时开两条连接（身份属于账号，不属于连接）",
+                    aliceAgainAck.Accepted && aliceAgainAck.PlayerId == idFirst,
+                    $"第三条连接 player_id={aliceAgainAck.PlayerId}（alice={idFirst}）");
+            }
+        }
+
+        /// <summary>密码不对 ⇒ 被拒，而且是**说人话**的拒。</summary>
+        private static void Login_WrongPasswordIsRejectedWithHumanReason()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                Client c = h.ConnectAndLogin("alice", "不是这个密码");
+                HandshakeAck ack = AckOf(c, "密码不对");
+                string reason = ack.Reason;
+
+                Check("M4-S3：密码不对 ⇒ 被拒（且 `player_id` 是 0，不是「随便给一个」）",
+                    !ack.Accepted && ack.PlayerId == 0,
+                    $"accepted={ack.Accepted}、player_id={ack.PlayerId}");
+
+                Check("M4-S3：密码不对时说的是「密码不对」（不是「没有这个账号」）",
+                    reason.Contains("密码"),
+                    $"reason=\"{reason}\"");
+
+                Check("M4-S3：被拒的答复里**不含**摘要/密码（敏感信息不上错误消息）",
+                    !reason.Contains(PasswordDigest.FromPassword("不是这个密码")) &&
+                    !reason.Contains(PasswordDigest.FromPassword("pw-alice")),
+                    $"reason=\"{reason}\"");
+            }
+        }
+
+        /// <summary>没有这个账号 ⇒ 被拒，而且和「密码不对」**分得开**（本项目的取舍）。</summary>
+        private static void Login_UnknownAccountIsRejectedWithHumanReason()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                Client c = h.ConnectAndLogin("查无此人", "随便");
+                HandshakeAck ack = AckOf(c, "账号不存在");
+
+                Check("M4-S3：没有这个账号 ⇒ 被拒，且说清是「没有这个账号」",
+                    !ack.Accepted && ack.Reason.Contains("没有这个账号"),
+                    $"accepted={ack.Accepted}、reason=\"{ack.Reason}\"");
+            }
+        }
+
+        /// <summary>
+        /// 游客一个字都没变（**这条是 93 条老用例的守门人**）。
+        ///
+        /// <para>
+        /// 判据：不给账号时，`player_id` 仍然从 1 开始按「第几个连上来的」发。
+        /// </para>
+        /// </summary>
+        private static void Login_GuestStillWorksOldWay()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                Client a = h.ConnectAndHandshake("游客甲");
+                Client b = h.ConnectAndHandshake("游客乙");
+                HandshakeAck ackA = AckOf(a, "游客甲");
+                HandshakeAck ackB = AckOf(b, "游客乙");
+
+                Check("M4-S3：游客仍然是「第几个连上来的」（1、2），且昵称就是发来的 player_name",
+                    ackA.PlayerId == 1 && ackB.PlayerId == 2
+                    && ackA.Nickname == "游客甲" && ackB.Nickname == "游客乙",
+                    $"甲={ackA.PlayerId}({ackA.Nickname})、乙={ackB.PlayerId}({ackB.Nickname})");
+            }
+        }
+
+        /// <summary>
+        /// 服务端**没有账号表**时，带账号的握手必须**明确报错**，而不是悄悄当游客。
+        ///
+        /// <para>
+        /// ⚠️ 这条是「身份不许静默降级」的守门人：一旦有人为了「方便」把失败改成
+        /// 「那就当游客吧」，这条会红。
+        /// </para>
+        /// </summary>
+        private static void Login_NoAccountStoreSaysWhyInsteadOfSilentlyBecomingGuest()
+        {
+            using (var h = new Harness())     // ⚠️ 不传账号表 = 没接数据库
+            {
+                Client c = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck ack = AckOf(c, "没接数据库时登录");
+
+                Check("M4-S3：没接数据库时登录被**明确拒绝**（不是静默变游客）",
+                    !ack.Accepted && ack.PlayerId == 0 && ack.Reason.Contains("数据库"),
+                    $"accepted={ack.Accepted}、player_id={ack.PlayerId}、reason=\"{ack.Reason}\"");
+
+                Check("M4-S3：拒绝理由要给出**下一步怎么做**（留空用游客 / 设 NBC_DB_PASSWORD）",
+                    ack.Reason.Contains("游客") && ack.Reason.Contains("NBC_DB_PASSWORD"),
+                    $"reason=\"{ack.Reason}\"");
+            }
+        }
+
+        /// <summary>
+        /// 拿一条握手答复（**没收到也不炸**：给一张"全默认"的空答复，让断言自己红）。
+        /// </summary>
+        /// <param name="client">客户端。</param>
+        /// <param name="what">用例名（写失败详情用）。</param>
+        /// <returns>答复；没收到时是一张 Accepted=false / PlayerId=0 的空答复。</returns>
+        private static HandshakeAck AckOf(Client client, string what)
+        {
+            if (client.Ack != null)
+            {
+                return client.Ack;
+            }
+
+            Check(what + "：收到握手答复", false, "一条 HandshakeAck 都没收到（服务端没回？还是连接就断了？）");
+            return new HandshakeAck();
+        }
+
+        /// <summary>摘要**不许出现在服务端日志里**（结构性检查：翻一遍所有 Note）。</summary>
+        private static void Login_DigestNeverAppearsInServerNotes()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                string digest = PasswordDigest.FromPassword("pw-alice");
+                string wrongDigest = PasswordDigest.FromPassword("故意错的密码");
+
+                h.ConnectAndLogin("alice", "pw-alice");
+                h.ConnectAndLogin("alice", "故意错的密码");
+
+                bool leaked = false;
+                string hit = string.Empty;
+
+                for (int i = 0; i < h.Notes.Count; i++)
+                {
+                    string line = h.Notes[i] ?? string.Empty;
+
+                    if (line.Contains(digest) || line.Contains(wrongDigest))
+                    {
+                        leaked = true;
+                        hit = line;
+                    }
+                }
+
+                Check("M4-S3：服务端日志里**没有**密码摘要（失败与成功都不许泄漏）",
+                    !leaked,
+                    leaked ? ("泄漏在：" + hit) : ($"翻了 {h.Notes.Count} 条 Note，都没有摘要（摘要长度 {digest.Length}）"));
+            }
+        }
+
+        /// <summary>
+        /// 探针用的假账号表（**不碰数据库**）：两个账号 + 一个"没有档案"的账号。
+        ///
+        /// <para>
+        /// ⚠️ 它必须和真实现用**同一份配方**（`PasswordDigest`）——
+        /// 否则探针验的是"假实现能不能登进去"，与生产无关。
+        /// </para>
+        /// </summary>
+        private sealed class FakeAccounts : IAccountStore
+        {
+            /// <summary>账号名 → （账号编号, 玩家编号, 昵称, salt, 明文密码）。</summary>
+            private readonly Dictionary<string, (long AccountId, long PlayerId, string Nickname, string Salt, string Password)>
+                _accounts = new()
+                {
+                    { "alice", (1, 11, "爱丽丝", "salt-alice", "pw-alice") },
+                    { "bob", (2, 22, "鲍勃", "salt-bob", "pw-bob") },
+                    { "noprofile", (3, 0, "没档案的人", "salt-np", "pw-np") },   // player_id = 0 ⇒ 没有档案
+                };
+
+            /// <summary>被问过几次（用来证明"服务端真的查了账号表"）。</summary>
+            public int Calls { get; private set; }
+
+            /// <inheritdoc/>
+            public LoginResult Login(string account, string passwordDigest)
+            {
+                Calls++;
+
+                if (!_accounts.TryGetValue(account ?? string.Empty, out var row))
+                {
+                    return LoginResult.Fail(ELoginRejection.UnknownAccount, $"没有这个账号：\"{account}\"。");
+                }
+
+                string stored = PasswordDigest.StoredHash(row.Salt, PasswordDigest.FromPassword(row.Password));
+
+                if (!PasswordDigest.FixedTimeEquals(stored, PasswordDigest.StoredHash(row.Salt, passwordDigest)))
+                {
+                    return LoginResult.Fail(ELoginRejection.WrongPassword, $"账号 \"{row.Nickname}\" 的密码不对。");
+                }
+
+                if (row.PlayerId <= 0)
+                {
+                    return LoginResult.Fail(ELoginRejection.NoProfile, $"账号 \"{row.Nickname}\" 没有玩家档案。");
+                }
+
+                return LoginResult.Ok(row.AccountId, row.PlayerId, row.Nickname);
+            }
+        }
+
         /// <summary>快照里所有英雄单位的 `owner_player_id`（按快照顺序）。</summary>
         /// <param name="snapshot">快照。</param>
         /// <returns>主人列表。</returns>
@@ -2653,15 +2980,23 @@ namespace NBC.NetProbe
             /// <summary>房间服务记下的说明（进出房、拒绝原因）。</summary>
             public readonly List<string> RoomNotes = new();
 
+            /// <summary>消息泵记下的说明（握手被拒、踢人原因……）。</summary>
+            public readonly List<string> Notes = new();
+
             /// <summary>建夹具并开始监听。</summary>
             /// <param name="heartbeatTimeoutMs">心跳超时（毫秒）。</param>
             /// <param name="roomCapacity">每房容量。</param>
+            /// <param name="accounts">
+            /// 账号表（M4-S3）。**默认 null = 没接数据库** ⇒ 带账号的握手会被拒并说清原因。
+            /// </param>
             public Harness(int heartbeatTimeoutMs = TcpServerTransport.DefaultHeartbeatTimeoutMs,
-                           int roomCapacity = NetContract.MaxRoomMembers)
+                           int roomCapacity = NetContract.MaxRoomMembers,
+                           IAccountStore? accounts = null)
             {
                 Server = new TcpServerTransport(0, IPAddress.Loopback, heartbeatTimeoutMs);
-                Router = new ServerMessageRouter("probe");
+                Router = new ServerMessageRouter("probe", null, accounts);
                 Pump = new ServerMessagePump(Server, Router);
+                Pump.Note += line => Notes.Add(line);
 
                 Router.Register(ClientMessage.PayloadOneofCase.Ping, HandlePing);
 
@@ -2717,6 +3052,36 @@ namespace NBC.NetProbe
                     },
                 });
                 WaitUntil(() => c.Ack != null, "握手完成");
+                return c;
+            }
+
+            /// <summary>
+            /// 连一个客户端并**用账号登录**（M4-S3）。
+            /// <para>
+            /// ⚠️ 这里刻意走**和客户端同一条路**：摘要用共享层的
+            /// <see cref="PasswordDigest.FromPassword"/> 算 ——
+            /// 探针要是自己拼一个字符串，验的就不是"客户端能不能登进去"了。
+            /// </para>
+            /// </summary>
+            /// <param name="account">登录名。</param>
+            /// <param name="password">明文密码（探针里传，好读）。</param>
+            /// <returns>客户端（`Ack` 里就是服务端的答复，**可能是拒绝**）。</returns>
+            public Client ConnectAndLogin(string account, string password)
+            {
+                Client c = Connect();
+                WaitUntil(() => c.Transport.IsConnected, "客户端连上");
+                c.Send(new ClientMessage
+                {
+                    Handshake = new Handshake
+                    {
+                        ProtocolVersion = NetContract.Version,
+                        ClientVersion = "probe",
+                        PlayerName = "不该用到这个名字",
+                        Account = account,
+                        PasswordDigest = PasswordDigest.FromPassword(password),
+                    },
+                });
+                WaitUntil(() => c.Ack != null, "登录答复");
                 return c;
             }
 

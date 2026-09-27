@@ -65,8 +65,25 @@ namespace NBC.EditorTools
         /// </summary>
         [SerializeField] private int m_port = 9000;
 
-        /// <summary>玩家名（M3 没有账号系统，只用于日志/席位）。</summary>
+        /// <summary>玩家名（**游客**用；登录成功时显示服务端给的档案昵称）。</summary>
         [SerializeField] private string m_playerName = "剑士";
+
+        /// <summary>
+        /// 登录名（**留空 = 游客**，M4-S3 追加）。
+        /// <para>⚠️ 字段上的值会被 Unity **序列化到窗口状态里**：填了 test01 之后
+        /// 下次开窗口还是 test01 —— 想回游客就把这一格清空。</para>
+        /// </summary>
+        [SerializeField] private string m_account = "";
+
+        /// <summary>
+        /// 明文密码（**只在点"连接"的那一瞬间用一下**，算成摘要就丢）。
+        /// <para>
+        /// ⚠️ 它会被 Unity 序列化进编辑器窗口状态（`Library/` 里）——
+        /// 这是**演示级的取舍**：测试账号的密码本来就写在 `Docs\08` 里，不是什么秘密。
+        /// 真实项目**不该**把密码放进序列化字段，而是每次输入、只留内存。
+        /// </para>
+        /// </summary>
+        [SerializeField] private string m_password = "";
 
         /// <summary>想进哪个副本（`Dungeon` 表主键；S6 才会真用它建副本）。</summary>
         [SerializeField] private int m_dungeonId = 1001;
@@ -487,6 +504,28 @@ namespace NBC.EditorTools
             m_host = EditorGUILayout.TextField("地址", m_host);
             m_port = EditorGUILayout.IntField("端口", m_port);
             m_playerName = EditorGUILayout.TextField("玩家名", m_playerName);
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("账号（M4-S3：留空 = 游客）", EditorStyles.boldLabel);
+
+            m_account = EditorGUILayout.TextField("登录名", m_account);
+            m_password = EditorGUILayout.PasswordField("密码", m_password);
+
+            if (!string.IsNullOrEmpty(m_account))
+            {
+                EditorGUILayout.HelpBox(
+                    "登录成功后 player_id 来自**账号自己的档案** —— 断开再连还是同一个编号，" +
+                    "战绩会累计到同一个人身上。\n" +
+                    "测试账号：test01~test04，密码 123456（见 Docs\\08 的种子数据）。\n" +
+                    "⚠️ 登录**只查内存**：服务端启动后又新建的账号要重启服务端才认。",
+                    MessageType.Info);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(
+                    "游客：player_id 由服务端**按连接**分配（旧行为）。要验证登录就填上面两格。",
+                    MessageType.None);
+            }
 
             EditorGUILayout.Space();
 
@@ -1203,16 +1242,32 @@ namespace NBC.EditorTools
             CloseSession("重连前先断开");
 
             m_transport = new TcpTransport();
-            m_session = new NetSession(m_transport, m_playerName, "unity-editor/" + Application.unityVersion);
+
+            // ⚠️ 第 7、8 个参数就是 M4-S3 的账号 / 密码（留空 = 游客，行为与 M3 一字不差）。
+            //    密码在这里交给 `NetSession`，它算完摘要就把明文丢掉 —— 见那个字段的说明。
+            m_session = new NetSession(
+                m_transport,
+                m_playerName,
+                "unity-editor/" + Application.unityVersion,
+                NetSession.DefaultHeartbeatIntervalMs,
+                NetSession.DefaultHeartbeatTimeoutMs,
+                NetSession.DefaultHandshakeTimeoutMs,
+                m_account,
+                m_password);
 
             m_session.Note += line => AddLog(line);
             m_session.StateChanged += state => AddLog("状态 → " + state);
             m_session.HandshakeCompleted += ack =>
-                AddLog("握手完成：玩家 " + ack.PlayerId + "，服务端 " + ack.ServerVersion);
+                AddLog("握手完成：玩家 " + ack.PlayerId +
+                       "，昵称 " + ack.Nickname +
+                       "，服务端 " + ack.ServerVersion);
             m_session.RttUpdated += rtt => AddLog("RTT " + rtt + "ms");
 
             m_lastUpdateTime = EditorApplication.timeSinceStartup;
-            AddLog("=== 连接 " + m_host + ":" + m_port + "（玩家名 " + m_playerName + "）===");
+            AddLog("=== 连接 " + m_host + ":" + m_port +
+                   (string.IsNullOrEmpty(m_account)
+                       ? "（游客，玩家名 " + m_playerName + "）"
+                       : "（账号 " + m_account + "）") + " ===");
 
             m_session.Connect(m_host, m_port);
 

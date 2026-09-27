@@ -201,10 +201,12 @@ internal static class Program
         DbConnectionFactory? dbFactory = null;
         BattleRecordDao? recordDao = null;
         PlayerProfileSlots? slots = null;
+        AccountDirectory? accounts = null;
+        AccountDao? accountDao = null;
 
         if (string.IsNullOrEmpty(dbOptions.Password))
         {
-            Say("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器）。");
+            Say("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器；**账号登录用不了**，只能游客进）。");
         }
         else
         {
@@ -223,12 +225,26 @@ internal static class Program
                     IReadOnlyList<long> profileIds = profileDao.LoadIdsAsync().GetAwaiter().GetResult();
                     slots = new PlayerProfileSlots(profileIds);
 
+                    // ⚠️ 账号表同样在**启动时读一次**（M4-S3）：登录跑在网络泵的握手里，
+                    //    在那里等一次 MySQL 往返会把整个服务端卡住。
+                    //    代价：**新注册的账号要重启服务端才认**（同上，见 `AccountDirectory` 文件头）。
+                    accounts = AccountDirectory.Load(dbFactory);
+                    accountDao = new AccountDao(dbFactory);
+
                     Say($"[数据库] 已接：{dbOptions.Describe()}");
                     Say($"[数据库] {slots.Describe()}");
+                    Say($"[数据库] {accounts.Describe()}");
+
+                    if (accounts.WithoutProfileCount > 0)
+                    {
+                        // ⚠️ **要显眼**：这些账号永远登不进来，而粗看只会以为"密码错了"
+                        Say($"[数据库] ⚠️ 有 {accounts.WithoutProfileCount} 个账号**没有玩家档案** —— " +
+                            "它们登不进来（不是密码问题）。请检查 Docs\\08 的种子数据。");
+                    }
                 }
                 else
                 {
-                    Say("[数据库] 连不上，**战绩不落库、玩家编号退回计数器**（服务端照常跑）：");
+                    Say("[数据库] 连不上，**战绩不落库、玩家编号退回计数器、账号登录用不了**（服务端照常跑）：");
                     Say("         " + (ping.Reason ?? string.Empty).Replace("\n", "\n         "));
                 }
             }
@@ -237,10 +253,12 @@ internal static class Program
                 Say("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
                 recordDao = null;
                 slots = null;
+                accounts = null;
+                accountDao = null;
             }
         }
 
-        var router = new ServerMessageRouter($"nbc-server/{version}", slots);
+        var router = new ServerMessageRouter($"nbc-server/{version}", slots, accounts);
         var pump = new ServerMessagePump(transport, router);
 
         // 心跳：显式注册（这就是 NET-02 要的"注册表"长什么样）
@@ -267,6 +285,23 @@ internal static class Program
         var recordWriter = new BattleRecordWriter(recordDao);
         recordWriter.Note += line => Log(quiet, "[战绩] " + line);
         battles.BattleFinished += recordWriter.Submit;   // ⚠️ 这一行才是 SRV-13 真正"生效"的地方
+
+        // ------------------------------------------------------------------
+        //  M4-S3：登录审计（SRV-06）
+        // ------------------------------------------------------------------
+        //  登录本身只查内存（`AccountDirectory`）；这里记的是
+        //  `account.last_login_at` —— 让"登录确实发生过"在**库里**留下证据。
+        //  ⚠️ 与战绩同一个形状：**只入队**，写库在别的线程，失败不让服务端倒。
+        var loginAudit = new LoginAuditWriter(accountDao);
+        loginAudit.Note += line => Log(quiet, "[登录] " + line);
+
+        // ⚠️ 这一行才是登录审计"生效"的地方；顺便让**日志里留一条登录记录**
+        //    （库里那条 `last_login_at` 是"证据"，日志这条是"现场"）。
+        router.AccountLoggedIn += result =>
+        {
+            loginAudit.Submit(result.AccountId);
+            Log(quiet, $"[登录] 账号 {result.AccountId} 登录成功 → 玩家 {result.PlayerId}（{result.Nickname}）");
+        };
 
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
 
@@ -352,6 +387,13 @@ internal static class Program
             Say("[收尾] 战绩落库" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
         }
 
+        // 登录审计同理：别把"谁登录过"丢在队列里
+        if (loginAudit.PendingCount > 0 || loginAudit.Submitted > 0)
+        {
+            bool drained = loginAudit.FlushAsync(2000).GetAwaiter().GetResult();
+            Say("[收尾] 登录审计" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
+        }
+
         Say($"[统计] 接受连接 {transport.TotalAccepted}，断开 {transport.TotalClosed}，" +
                           $"握手成功 {pump.HandshakesAccepted}，被拒 {pump.HandshakesRejected}，" +
                           $"踢出 {pump.Kicks}，解不出 {pump.Undecodable}");
@@ -366,6 +408,11 @@ internal static class Program
         {
             Say($"[统计] {slots.Describe()}");
         }
+        if (accounts != null)
+        {
+            Say($"[统计] {accounts.Describe()}");
+        }
+        Say($"[统计] {loginAudit.DescribeStats()}");
         Say($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

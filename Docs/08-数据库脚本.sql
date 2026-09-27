@@ -47,7 +47,7 @@ USE `nbc_db`;
 CREATE TABLE `account` (
   `account_id`    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `username`      VARCHAR(32)     NOT NULL COMMENT '登录名',
-  `password_hash` CHAR(64)        NOT NULL COMMENT 'SHA256(salt+password) 的十六进制小写',
+  `password_hash` CHAR(64)        NOT NULL COMMENT 'SHA256(salt + SHA256(密码)) 的十六进制小写（配方见本文件末尾的种子数据说明）',
   `salt`          CHAR(16)        NOT NULL COMMENT '每账号独立盐值',
   `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_login_at` DATETIME        NULL,
@@ -176,19 +176,31 @@ CREATE TABLE `reward_granted` (
 -- ============================================================================
 --  初始数据：测试账号
 --
---  密码统一为 123456。这里直接写入预先算好的 SHA256(salt + password)，
---  避免依赖 MySQL 是否支持 SHA2 函数。
+--  密码统一为 123456。这里直接写入预先算好的摘要，避免依赖 MySQL 是否支持 SHA2 函数。
 --
---  ⚠️ 服务端实现登录时，必须使用完全相同的拼接方式：
---         hash = SHA256( salt + 明文密码 )  → 转小写十六进制字符串（64 字符）
---     否则测试账号会登录失败。
+--  ⚠️⚠️ **配方在 M4-S3（2026-09-27）改过一次**，别照抄旧文档：
+--        旧（已作废）：hash = SHA256( salt + 明文密码 )
+--        新（当前）  ：hash = SHA256( salt + SHA256(明文密码) )
+--                      其中 SHA256(明文密码) 就是**客户端发上来的那个摘要**
+--                      （`NBC.Shared.Auth.PasswordDigest.FromPassword`）。
+--
+--  为什么改：**明文密码不再上线**（客户端先做一次摘要）。服务端再把
+--  这个摘要叠上 salt 入库 ⇒ 库里存的依然不是"能直接拿去登录的东西"。
+--  ⚠️ 代价（如实记录）：线上那个摘要是**未加盐**的，弱密码仍可能被彩虹表反查，
+--     而且没有 TLS ⇒ 抓到摘要就能重放。真正的做法是 TLS + 挑战应答 + 慢哈希，
+--     **本项目没做到那一步**，理由见 `Docs\27` §19.2。
+--
+--  ⚠️ 服务端实现登录时，必须使用与上表完全相同的配方（**唯一实现在共享层**：
+--     `Client\Assets\_Project\Shared\Auth\PasswordDigest.cs`，两端编同一份源码）。
+--     `Server\_db-probe` 的【八】里有一条**阳性对照**专门与下面这 4 行对账 ——
+--     配方一旦改错，它会红，而不是让测试账号"莫名其妙登不上"。
 -- ============================================================================
 
 INSERT INTO `account` (`username`, `password_hash`, `salt`) VALUES
-  ('test01', '6a94b5966341a30b882b2970228b03a0d3113f4abb4d2ca169979680d908292c', '6f1a2b3c4d5e6f70'),
-  ('test02', 'cedc18947cb793276b418f94c6a205b7455925651de0850292f5cbce632f3f40', '7a2b3c4d5e6f7081'),
-  ('test03', '0733ea2d549319104036f01cc2204dd7d083cacbb890790e47dc7454a93b91a6', '8b3c4d5e6f708192'),
-  ('test04', '2560cab1006a2eeec482e728065549b06cf8ef6fe167e9042eeb5524fa2ed44b', '9c4d5e6f708192a3');
+  ('test01', 'c4824c4da76bcaf8c29971c8750bced3f13ea8fbd2eedd3d79c9830aaa56abc8', '6f1a2b3c4d5e6f70'),
+  ('test02', '7b4a038dd8f330b253812717d9924ffbacbda23cb83b1749b1f6e1966e3115c4', '7a2b3c4d5e6f7081'),
+  ('test03', 'cc8f69f2861d3ac681fc8bcab8450e0ff606476f2e724f9920fc029f1f223dd1', '8b3c4d5e6f708192'),
+  ('test04', '3d5bdce083bcd09ac0c58c44f41103d7471b90cd11bae8346987e6b162ed5a8e', '9c4d5e6f708192a3');
 
 INSERT INTO `player_profile`
   (`account_id`, `nickname`, `level`, `exp`, `gold`, `total_kill`, `total_death`, `total_win`, `total_lose`, `selected_hero`)
