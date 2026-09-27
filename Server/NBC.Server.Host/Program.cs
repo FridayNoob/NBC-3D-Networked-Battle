@@ -126,7 +126,63 @@ internal static class Program
         //    真要怀疑掉落没生效，看上面这几行就够：**服务端念的就是它真正读到的值**。
 
         var transport = new TcpServerTransport(port);
-        var router = new ServerMessageRouter($"nbc-server/{version}");
+
+        // ------------------------------------------------------------------
+        //  玩家档案槽位（SRV-06 的最小可用版，见 `IPlayerSlotProvider` 文件头）
+        // ------------------------------------------------------------------
+        //  解决的是这个会咬人的欠账：原来 `PlayerId = 第几个连上来的`（只增不减），
+        //  而 `battle_player_detail.player_id` 有外键指向 `player_profile`（只种了 1~4）
+        //  ⇒ **累计连过 4 次之后**，后面每一局的战绩明细都会被外键拒绝、**静默跳过**
+        //     （表现是"打完一局 total_kill 不涨了"）。调试时反复开关窗口很容易撞上。
+        //
+        //  ⚠️ 顺手把数据库也在这里初始化 —— `recordDao` 与槽位用的是同一份连接配置，
+        //     分成两处读配置迟早会不一致（"为什么战绩能写、槽位读不到"）。
+        var dbOptions = new DatabaseOptions();
+        dbOptions.ApplyPasswordFromEnvironment();
+
+        DbConnectionFactory? dbFactory = null;
+        BattleRecordDao? recordDao = null;
+        PlayerProfileSlots? slots = null;
+
+        if (string.IsNullOrEmpty(dbOptions.Password))
+        {
+            Console.WriteLine("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器）。");
+        }
+        else
+        {
+            try
+            {
+                dbFactory = new DbConnectionFactory(dbOptions);
+                PingResult ping = dbFactory.PingAsync().GetAwaiter().GetResult();
+
+                if (ping.Ok)
+                {
+                    recordDao = new BattleRecordDao(dbFactory);
+
+                    // ⚠️ 槽位在**启动时读一次**（之后握手只查内存，不等 IO）。
+                    //    新建/删除档案要重启服务端 —— 刻意的取舍，见 `PlayerProfileDao` 文件头。
+                    var profileDao = new PlayerProfileDao(dbFactory);
+                    IReadOnlyList<long> profileIds = profileDao.LoadIdsAsync().GetAwaiter().GetResult();
+                    slots = new PlayerProfileSlots(profileIds);
+
+                    Console.WriteLine($"[数据库] 已接：{dbOptions.Describe()}");
+                    Console.WriteLine($"[数据库] {slots.Describe()}");
+                }
+                else
+                {
+                    Console.WriteLine("[数据库] 连不上，**战绩不落库、玩家编号退回计数器**（服务端照常跑）：");
+                    Console.WriteLine("         " + (ping.Reason ?? string.Empty).Replace("\n", "\n         "));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
+                recordDao = null;
+                slots = null;
+            }
+        }
+
+        var router = new ServerMessageRouter($"nbc-server/{version}", slots);
         var pump = new ServerMessagePump(transport, router);
 
         // 心跳：显式注册（这就是 NET-02 要的"注册表"长什么样）
@@ -145,52 +201,11 @@ internal static class Program
         battles.RegisterHandlers(router);
 
         // ------------------------------------------------------------------
-        //  SRV-13：战绩落库（**可选** —— 没配好数据库就降级，见需求 DB-10）
+        //  SRV-13：把战绩接到数据层上
         // ------------------------------------------------------------------
-        //  ⚠️ 这里**故意不让服务端起不来**：需求 DB-10 原文是
-        //     "数据库不可用时服务端仍能启动，只让存档功能报错"。
-        //     所以连接失败只是"不落库 + 报一句"，其余功能照常。
-        //
-        //  ⚠️ 配置来源：`appsettings.json` **本文件还没读**（SRV-01 的欠账，
-        //     现在只认命令行 `--port/--ticks/--quiet`）。所以这里用的是
-        //     `DatabaseOptions` 的默认值（127.0.0.1:3306/nbc_db/root，与 appsettings 一致）
-        //     + 环境变量 `NBC_DB_PASSWORD`。等 SRV-01 做了再改成读配置。
-        //
-        //  ⚠️ 启动时**同步探一次活**（`.GetAwaiter().GetResult()`）：这发生在**主循环之前**，
-        //     阻塞几百毫秒换来"启动横幅明说数据库通不通"，是划算的。
-        //     主循环里**绝不能**这么写 —— 那正是 `BattleRecordWriter` 存在的理由。
-        BattleRecordDao? recordDao = null;
-        var dbOptions = new NBC.Server.Data.DatabaseOptions();
-        dbOptions.ApplyPasswordFromEnvironment();
-
-        if (string.IsNullOrEmpty(dbOptions.Password))
-        {
-            Console.WriteLine("[战绩] 未接数据库：没设 NBC_DB_PASSWORD（战绩不落库，其余照常）。");
-        }
-        else
-        {
-            try
-            {
-                var dbFactory = new NBC.Server.Data.DbConnectionFactory(dbOptions);
-                NBC.Server.Data.PingResult ping = dbFactory.PingAsync().GetAwaiter().GetResult();
-
-                if (ping.Ok)
-                {
-                    recordDao = new BattleRecordDao(dbFactory);
-                    Console.WriteLine($"[战绩] 已接数据库：{dbOptions.Describe()} → 一局打完写入 battle_record");
-                }
-                else
-                {
-                    Console.WriteLine("[战绩] 数据库连不上，战绩**不落库**（服务端照常跑）：");
-                    Console.WriteLine("       " + (ping.Reason ?? string.Empty).Replace("\n", "\n       "));
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("[战绩] 初始化数据库失败，战绩**不落库**（服务端照常跑）：" + ex.Message);
-            }
-        }
-
+        //  ⚠️ 数据库的初始化已经**挪到上面**（和玩家档案槽位一起）——
+        //     两处各读一次配置迟早不一致（"为什么战绩能写、槽位读不到"）。
+        //     这里只做**接线**：一局打完 → 入队 → 后台写。
         var recordWriter = new BattleRecordWriter(recordDao);
         recordWriter.Note += line => Log(quiet, "[战绩] " + line);
         battles.BattleFinished += recordWriter.Submit;   // ⚠️ 这一行才是 SRV-13 真正"生效"的地方
@@ -201,9 +216,18 @@ internal static class Program
             Log(quiet, $"[接入] 会话 {session.SessionId} 来自 {session.RemoteEndPoint}");
 
         transport.SessionClosed += (session, reason) =>
+        {
+            // ⚠️ **把档案槽位还回去**（SRV-06 最小版的关键一步）：
+            //    不还的话，反复连接会把 4 个槽位占满 ⇒ 后面的握手只能退回计数器
+            //    ⇒ 又撞上"战绩明细被外键拒绝"的老问题。
+            //    `Release` 对"不是它发出去的 id"是**无害**的（内部判断过），
+            //    所以这里不用先判断"握过手没有"。
+            slots?.Release(session.PlayerId);
+
             Log(quiet, $"[断开] 会话 {session.SessionId}" +
                        (session.PlayerId > 0 ? $"（玩家 {session.PlayerId}）" : "（还没握手）") +
                        $"：{reason}");
+        };
 
         pump.Note += line => Log(quiet, "[提示] " + line);
 
@@ -280,6 +304,10 @@ internal static class Program
                           $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
         Console.WriteLine($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
         Console.WriteLine($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
+        if (slots != null)
+        {
+            Console.WriteLine($"[统计] {slots.Describe()}");
+        }
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

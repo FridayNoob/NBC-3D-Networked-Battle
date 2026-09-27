@@ -93,11 +93,24 @@ public sealed class ServerMessageRouter
     private readonly string _serverVersion;
     private long _nextPlayerId = 1;
 
+    /// <summary>
+    /// 玩家档案槽位（**可空**：没接数据库时为 null ⇒ 退回"第几个连上来的"）。
+    /// <para>⚠️ 它是 `IPlayerSlotProvider`（Core 里的接缝），实现住在 `NBC.Server.Data` ——
+    /// 网络层**不许**认识 MySQL。见那个接口的文件头。</para>
+    /// </summary>
+    private readonly IPlayerSlotProvider? _slots;
+
     /// <summary>建一个路由。</summary>
     /// <param name="serverVersion">服务端版本标识（只进日志与 `HandshakeAck`，用于排查）。</param>
-    public ServerMessageRouter(string? serverVersion = null)
+    /// <param name="slots">
+    /// 玩家档案槽位；**传 null = 没有数据库**，玩家编号退回"第几个连上来的"计数器。
+    /// <para>⚠️ 这个降级路径是**必须保留**的：`_net-probe` 在没有数据库的环境里跑，
+    /// 而它的用例断言 `PlayerId == 1`、`== 2`。退回老行为，那 93 条才不会红。</para>
+    /// </param>
+    public ServerMessageRouter(string? serverVersion = null, IPlayerSlotProvider? slots = null)
     {
         _serverVersion = string.IsNullOrEmpty(serverVersion) ? "nbc-server/unknown" : serverVersion!;
+        _slots = slots;
 
         // 握手是**内建**的：既不能被替换，也不可能忘记注册
         _handlers[ClientMessage.PayloadOneofCase.Handshake] = HandleHandshake;
@@ -239,9 +252,26 @@ public sealed class ServerMessageRouter
                 $"协议版本不一致（客户端 v{hello.ProtocolVersion} ≠ 服务端 v{NetContract.Version}）");
         }
 
-        // M3 还没有账号系统：player_id 就是"第几个连上来的"。
-        // （S4 接数据库/账号时换成真实玩家 id —— 那时这个计数器就该删掉）
-        session.PlayerId = _nextPlayerId++;
+        // 玩家编号从哪来（见 `IPlayerSlotProvider` 文件头）：
+        //   ① 接了数据库 ⇒ **领一个真实存在的档案槽位**（断开时还回去 ⇒ 反复连接会复用 1~4）
+        //   ② 没接数据库 / 槽位用完了 ⇒ 退回"第几个连上来的"计数器（老行为）
+        //
+        // ⚠️ ②**必须保留**：`_net-probe` 没有数据库，而它断言 `PlayerId == 1`、`== 2`。
+        // ⚠️ 退回计数器时**可能撞上真实档案 id**（比如槽位发完了，计数器的 5 又发出去）
+        //    —— 那正是"战绩明细会被外键拒绝"的老问题。所以 Host 那边会把
+        //    `ExhaustedCount > 0` 报出来（见 `PlayerProfileSlots.Describe`）。
+        long claimedPlayerId;
+
+        if (_slots != null && _slots.TryClaim(out claimedPlayerId))
+        {
+            session.PlayerId = claimedPlayerId;
+        }
+        else
+        {
+            // M3 的老语义：player_id 就是"第几个连上来的"
+            session.PlayerId = _nextPlayerId++;
+        }
+
         session.PlayerName = string.IsNullOrEmpty(hello.PlayerName) ? "玩家" + session.PlayerId : hello.PlayerName;
         session.Phase = SessionPhase.InLobby;
 

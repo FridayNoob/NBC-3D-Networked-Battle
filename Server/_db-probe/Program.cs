@@ -96,6 +96,12 @@ namespace NBC.DbProbe
             await BattleRecordSection().ConfigureAwait(false);
 
             Console.WriteLine();
+            Console.WriteLine("【七】玩家档案槽位（SRV-06 最小版 —— 解掉「第 5 次连接就丢战绩」那个欠账）");
+
+            SlotLogicSection();
+            await SlotMySqlSection().ConfigureAwait(false);
+
+            Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有失败");
             return s_failed == 0 ? 0 : 1;
@@ -1068,6 +1074,84 @@ namespace NBC.DbProbe
                 return await connection.ExecuteAsync(
                     new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
             }
+        }
+
+        // ====================================================================
+        //  七、玩家档案槽位（SRV-06 最小版）
+        // ====================================================================
+
+        /// <summary>
+        /// 槽位逻辑（**不需要数据库**）：领最小的空闲 / 断开复用 / 领完要报 false /
+        /// 还一个不是自己发出去的 id 要**无害**。
+        /// </summary>
+        private static void SlotLogicSection()
+        {
+            var slots = new PlayerProfileSlots(new long[] { 3, 1, 2 });
+
+            Check("槽位：构造时按升序（确定性优先）", slots.SlotCount == 3 && slots.FreeCount == 3,
+                "槽位 " + slots.SlotCount + " 空闲 " + slots.FreeCount);
+
+            long a, b, c, d;
+
+            Check("槽位：第一次领到 **最小的** 1", slots.TryClaim(out a) && a == 1, "领到 " + a);
+            Check("槽位：第二次领到 2", slots.TryClaim(out b) && b == 2, "领到 " + b);
+            Check("槽位：第三次领到 3", slots.TryClaim(out c) && c == 3, "领到 " + c);
+            Check("槽位：领完了要返回 false（不是给一个假的 id）",
+                !slots.TryClaim(out d) && d == 0, "居然领到 " + d);
+            Check("槽位：领完时占用 3、空闲 0", slots.BusyCount == 3 && slots.FreeCount == 0,
+                "占用 " + slots.BusyCount + " 空闲 " + slots.FreeCount);
+
+            slots.Release(2);
+            Check("槽位：还回去之后空闲 +1（这就是「反复连接会复用」的关键）",
+                slots.FreeCount == 1 && slots.TryClaim(out d) && d == 2, "领到 " + d);
+
+            // ⚠️ 还一个"不是这里发出去的 id"必须无害：否则它会被后面的握手领走
+            //    ⇒ 又变成一个不存在的 player_id ⇒ 战绩明细被外键拒绝。
+            int freeBefore = slots.FreeCount;
+            slots.Release(999);
+            slots.Release(0);
+            Check("槽位：还一个不是自己发出去的 id -> **无害**（不污染空闲表）",
+                slots.FreeCount == freeBefore, "空闲从 " + freeBefore + " 变成了 " + slots.FreeCount);
+
+            var empty = new PlayerProfileSlots(null);
+            long none;
+            Check("槽位：没有档案（没接数据库）-> 一律返回 false（调用方降级）",
+                empty.SlotCount == 0 && !empty.TryClaim(out none) &&
+                empty.Describe().Contains("没有"),
+                empty.Describe());
+        }
+
+        /// <summary>真库：把 `player_profile.player_id` 读出来，看槽位是不是真的 1~4。</summary>
+        /// <returns>任务。</returns>
+        private static async Task SlotMySqlSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            var dao = new PlayerProfileDao(factory);
+            IReadOnlyList<long> ids = await dao.LoadIdsAsync().ConfigureAwait(false);
+            var slots = new PlayerProfileSlots(ids);
+
+            Check("真库：读到了玩家档案 id（`Docs\\08` 种了 4 个）",
+                slots.SlotCount >= 4, "读到 " + slots.SlotCount + " 个");
+
+            Check("真库：升序（第一个是最小的）", ids.Count >= 1 && ids[0] == 1, "第一个是 " + (ids.Count > 0 ? ids[0] : -1));
+            Console.WriteLine("      · " + slots.Describe());
         }
 
         // ====================================================================
