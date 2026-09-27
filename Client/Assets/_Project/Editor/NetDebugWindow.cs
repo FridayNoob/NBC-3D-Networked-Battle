@@ -52,8 +52,18 @@ namespace NBC.EditorTools
         /// <summary>服务端地址（M3 的默认验收就是本机）。</summary>
         [SerializeField] private string m_host = "127.0.0.1";
 
-        /// <summary>端口（与服务端 `TcpServerTransport.DefaultPort` 一致）。</summary>
-        [SerializeField] private int m_port = 7777;
+        /// <summary>
+        /// 端口。
+        /// <para>⚠️ 这里是 **9000**，与服务端 `appsettings.json` 的 `Server.ListenPort` 一致
+        /// （`Docs\11` 也记的 9000）。</para>
+        /// <para>⚠️ **2026-09-27 修正一处"巧合"**：这个字段原来是 **7777**
+        /// （= `TcpServerTransport.DefaultPort`，那是代码里的兜底值）。
+        /// 在 SRV-01 之前，服务端**忽略** `appsettings.json`、用的正是那个兜底值 7777 ——
+        /// 于是"客户端 7777 / 服务端 7777"**碰巧**能连上。
+        /// SRV-01 之后服务端**真的读配置**了 ⇒ 它监听 **9000**，而客户端还在 7777 ⇒ **连不上**。
+        /// ⇒ 对齐到配置里那个值（9000），并且**不要再让两边各写一个默认值**。</para>
+        /// </summary>
+        [SerializeField] private int m_port = 9000;
 
         /// <summary>玩家名（M3 没有账号系统，只用于日志/席位）。</summary>
         [SerializeField] private string m_playerName = "剑士";

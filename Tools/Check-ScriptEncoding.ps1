@@ -34,10 +34,22 @@
 [CmdletBinding()]
 param(
     # Directory to sweep recursively. Defaults to the repo root (parent of Tools).
-    [string] $Root = (Split-Path -Parent $PSScriptRoot)
+    #
+    # NOTE (measured 2026-09-27; recorded in Docs\00 section 5, env cheatsheet):
+    # do NOT write `[string] $Root = (Split-Path -Parent $PSScriptRoot)` here.
+    # Inside a param() DEFAULT, $PSScriptRoot is EMPTY under Windows PowerShell
+    # 5.1 (this machine's shell; PowerShell 7 sets it, so the bug hides on 7),
+    # and the binding then dies with
+    #   Split-Path : Cannot bind argument to parameter 'Path' because it is an
+    #   empty string.
+    # In other words the script could not be started the very way its own
+    # header documents. Resolve it lazily in the body instead.
+    [string] $Root = $null
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptRoot }
 
 # Directories that never contain source scripts we care about.
 $skipParts = @('\bin\', '\obj\', '\node_modules\', '\Library\', '\Temp\', '\.git\', '\.vs\', '\Builds\')

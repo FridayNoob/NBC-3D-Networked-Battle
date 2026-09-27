@@ -57,8 +57,21 @@ namespace NBC.Server.Core;
 /// </summary>
 public sealed class TcpServerTransport : INetTransport
 {
-    /// <summary>默认监听端口（客户端 Demo 也用它）。</summary>
-    public const int DefaultPort = 7777;
+    /// <summary>
+    /// 兜底监听端口。
+    /// <para>⚠️ **2026-09-27 从 7777 改成 9000** —— 这是 SRV-01 暴露出来的一个"**三个地方各写一个端口**"的坑：</para>
+    /// <list type="bullet">
+    ///   <item>这里（代码兜底）原来是 **7777**</item>
+    ///   <item>`appsettings.json` 的 `Server.ListenPort` 是 **9000**（`Docs\11` 也记的 9000）</item>
+    ///   <item>客户端调试窗口的默认也是 **7777**</item>
+    /// </list>
+    /// <para>SRV-01 之前 Host **忽略** `appsettings.json`、用的正是这里的 7777，
+    /// 而客户端也是 7777 ⇒ **碰巧能连上**。SRV-01 之后 Host 真的读配置 ⇒ 监听 9000
+    /// ⇒ 客户端 7777 **连不上**。</para>
+    /// <para>⇒ 三处对齐到 **9000**，并且**唯一真源是 `appsettings.json`** ——
+    /// 这里的常量只是"配置文件丢了"时的兜底，**不该再当第二个真源用**。</para>
+    /// </summary>
+    public const int DefaultPort = 9000;
 
     /// <summary>默认心跳超时（毫秒）：超过这么久没收到**任何**消息就断开。</summary>
     public const int DefaultHeartbeatTimeoutMs = 10_000;
