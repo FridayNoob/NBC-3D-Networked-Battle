@@ -1,0 +1,95 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.NetProbe —— 端到端网络探针（M3-S3）
+       项目：3D联网战斗Demo
+
+       【它是干什么的】
+       在没有 Unity 的情况下，把**真东西**跑一遍：
+         · 服务端：`NBC.Server.Core` 的 `TcpServerTransport` + `ServerMessagePump`（生产代码本身）
+         · 客户端：`Client\Assets\_Project\Framework.Net\TcpTransport`（Unity 侧那份源码，直接编进来）
+         · 协议：真 protobuf（`NBC.Protocol`，与两端同一份生成代码）
+         · 网络：真 socket（127.0.0.1，端口用 0 让系统分配）
+
+       所以它验的不是"抄本"：**服务端那段逻辑就是服务端进程里跑的那一段**
+       （`ServerMessagePump` 的唯一实现在 Core 里，Host 与探针共用）。
+
+       ⚠️ 它【不进 Git】（和 `_condition-probe` 一样，见 Server\.gitignore）：
+          Unity 侧 NUnit 用例才是权威；这个探针是"我改完当天就能拿到证据"的手段。
+
+       ⚠️ 全部在**一个线程**上跑（两端都是 `Pump` 拉模式）：服务端 Pump 一下、
+          所有客户端各 Pump 一下。这本身就是"不需要网络线程"的实证。
+
+       【跑法】见 Docs\25-M3开工清单.md §八（本文件里不写命令行，理由见 W1 记录）
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NBC.NetProbe</AssemblyName>
+    <RootNamespace>NBC.NetProbe</RootNamespace>
+
+    <!-- 与 Unity 2022.3 齐平：框架侧的源码要过同一套语言版本 -->
+    <LangVersion>9.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <!-- 只编本目录的 Program.cs（Framework.Net 的源码下面显式 include） -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CS8019</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+
+    <!--
+      ★ 客户端网络层（M3-S2b）：**直接编源码**，不走 ProjectReference。
+      它是 `noEngineReferences: true` 的那一层，所以不需要任何 Unity 引用
+      （这正是当初把它从 `NBC.Framework` 里挪出来的理由）。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Framework.Net\**\*.cs" />
+
+    <!--
+      ★ 客户端**会话层**（M3-S3 客户端半边）：`NBC.Game.Net.NetSession`。
+      它同样不依赖 UnityEngine（只用 ITransport + protobuf + NetContract），
+      所以能被编进来，对着**真服务端进程**跑一遍握手/心跳/RTT。
+      ⚠️ 这条把"会话层能不能跟真服务端说话"也纳入了我自己能跑的范围 ——
+         否则它就只在 FakeTransport 上验过，真 socket 一条都没碰过。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Game\Net\**\*.cs" />
+
+    <!--
+      ★ 输入的**量化约定**（A7）：`InputCommand` / `InputActionId`。
+      `NetSession.SendInput(InputCommand)` 用到它，所以探针得能看见这个类型。
+
+      ⚠️ 只编 **`InputTypes.cs` 这一个文件**：它只 `using System;`（实测过）。
+         `InputManager.cs` / `IInputSource.cs` / `InputMapping.cs` / `LegacyInputSource.cs`
+         全都碰 UnityEngine（`Input.GetKey` / `KeyCode`），编进来就得拖一堆引擎引用 ——
+         而"这个探针不需要 Unity"正是它存在的意义。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Input\InputTypes.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 服务端 Core（含 Protocol 生成代码 + Google.Protobuf 引用） -->
+    <ProjectReference Include="..\NBC.Server.Core\NBC.Server.Core.csproj" />
+    <!-- 服务端 Game（S5：权威世界 `DungeonBattle` + `RoomBattleService`） -->
+    <ProjectReference Include="..\NBC.Server.Game\NBC.Server.Game.csproj" />
+    <!-- 共享层（分帧 FrameCodec / NetContract）——显式引，别指望传递 -->
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+  </ItemGroup>
+
+  <!--
+    ★ Google.Protobuf 也必须**直接引**（今天第三次撞同一条规律）：
+    `NBC.Server.Core` 引了它，但 `<Reference>`（裸程序集引用）**不传递** ——
+    探针里 `using Google.Protobuf;`（`ToByteArray()` 扩展方法）会报 CS0246。
+    `Private=true`：探针是要**运行**的进程，DLL 得复制到输出目录。
+  -->
+  <ItemGroup>
+    <Reference Include="Google.Protobuf">
+      <HintPath>..\..\Client\Assets\ThirdParty\GoogleProtobuf\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

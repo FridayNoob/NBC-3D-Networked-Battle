@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC 数据库探针（DB Probe）
+       项目：3D联网战斗Demo   对应：M4-S3
+
+       目的：把"进度持久化"这件事**真的跑一遍**，而不是"代码看起来写了"。
+
+       两块：
+         一、**纯逻辑**（假 DAO，永远能跑）
+             —— 脏集合并、单飞、Remove 写 0、Load 合并、失败后重新标脏
+         二、**真 MySQL**（需要凭据）
+             —— 建表检查 → 写 → 读回 → **新开一个 store 模拟重启** → 值还在
+                （需求 §13.1 第 2 条点名要求"真实的增删改查，不是假数据"）
+
+       ⚠️ 第二块**没有密码时会明确说"为什么跳过 + 怎么给密码"**，而不是安静地少跑一半
+          —— 这正是本项目一直在防的那种"假绿"（自测少跑了几条却报全绿）。
+
+       ⚠️ 沙箱注意：本机并行 MSBuild 会静默失败，必须加 -m:1：
+            dotnet build Server\_db-probe\DbProbe.csproj -m:1
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>NBC.DbProbe</AssemblyName>
+    <RootNamespace>NBC.DbProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NBC.Server.Data\NBC.Server.Data.csproj" />
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       NBC.ConditionProbe —— 在 .NET 8 上真跑一遍共享层条件系统的探针
+       项目：3D联网战斗Demo   对应：M2-A1
+
+       【它是干什么的（以及它不是什么）】
+       Shared\Condition\ 的卖点是"一份源码，双端都编"（M1-D1）。
+       Unity 侧跑的是 Mono/IL2CPP，服务端跑的是 .NET 8，两边运行时不同。
+       所以"能在 .NET 上真跑通"这件事，只有跑一遍才算数，不能靠"它应该行"。
+
+       权威测试仍然在 Unity 侧（Tests\EditMode\Game\ConditionTrackerTests.cs，NUnit）；
+       本探针是一次性脚手架（已加进 Server\.gitignore），用来：
+         · 在我（AI）无法开 Unity 的前提下，先自己验一遍逻辑
+         · 顺手证明共享层在 .NET 8 上确实能跑（双端声明的实证）
+
+       注意与 Unity 那套的关系：语义以同一份源码为准，两边不是"两份实现对照"。
+       探针红了 = 源码错了（Unity 那边也会红）；探针绿不等于 Unity 绿
+       （Unity 那边还多测了配置资产、事件中心、编辑器行为）。
+
+       跑法见 Docs\22-M2开工清单.md（本文件里不写具体命令，原因见下面的 W1 记录）。
+
+       【W1 记录】本文件连踩两次 MSB4025，两次都是 Docs\00 的 W1 条款：
+         · 第一版在 XML 注释里画了横线分隔符（连续减号）
+         · 第二版写了 dotnet 命令，而命令的长开关本身就是连续减号
+       XML 注释里【不能有任何连续两个减号，也无法转义】。
+       所以规矩收紧为：csproj 注释里【一律不写命令行】，改去 md 里写。
+       ======================================================================== -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NBC.ConditionProbe</AssemblyName>
+    <RootNamespace>NBC.ConditionProbe</RootNamespace>
+
+    <!-- 与 Unity 2022.3 对齐（共享层要过同一套语言版本） -->
+    <LangVersion>9.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 共享层的唯一源码在 Unity 侧，本工程引用同一份（不是拷贝） -->
+    <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+    <!--
+      ★ 网络层（M3-S2b）：`NBC.Framework.Net` 的源码也在这里**直接编进来**。
+      它 asmdef 上是 `noEngineReferences: true` + 只依赖 `NBC.Shared`，所以不需要任何
+      Unity 引用就能编（这是"整个网络层不碰引擎"这个决定的兑现方式）。
+      于是回环收发 / 粘包 / 对端关闭 / 超限帧这些**只有真跑才看得见**的行为，
+      能在没有 Unity 的情况下拿到证据（Unity 侧 NUnit 用例才是权威版）。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Framework.Net\**\*.cs" />
+  </ItemGroup>
+
+</Project>
