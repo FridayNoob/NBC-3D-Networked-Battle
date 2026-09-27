@@ -52,7 +52,10 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptRoot }
 
 # Directories that never contain source scripts we care about.
-$skipParts = @('\bin\', '\obj\', '\node_modules\', '\Library\', '\Temp\', '\.git\', '\.vs\', '\Builds\')
+# '.dsh-tmp' is an AI scratch dir (gitignored): a throwaway script there must not make this
+# repo-wide gate permanently red - a gate that always reports something is noise (2026-09-27).
+$skipParts = @('\bin\', '\obj\', '\node_modules\', '\Library\', '\Temp\', '\.git\', '\.vs\', '\Builds\',
+               '\.dsh-tmp\')
 
 $files = Get-ChildItem -Path $Root -Filter *.ps1 -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object {

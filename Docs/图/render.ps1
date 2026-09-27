@@ -126,6 +126,81 @@ function Invoke-Mmdc {
 #   · 仅校验目录（Docs\教学、Docs\排查手册）：渲到临时目录，只回答"语法对不对"，
 #     **不产出、不提交** —— 那些文档里的图在 GitHub 上是原生渲染的，
 #     我们只需要保证"它不会画出个错误框"，不需要再存 20 多份 SVG（那是几 MB）
+# ---------------------------------------------------------------- 名字核对
+# ⚠️ 为什么"mmdc 退出码 0"不够（2026-09-27 补这条检查的直接原因）：
+#    mermaid **遇到不认识的东西不会报错**：关系里引用一个没声明的类，它会**当场新建一个节点**画出来；
+#    而一段它解析不了的成员行，它**直接丢掉**。
+#    ⇒ 退出码 0 + 不是错误图**只证明"没画成错误框"**，**不证明"声明的东西都画出来了"**。
+#    所以这里再加一道：把 SVG 剥成纯文本，逐个核对**每个类名 / 每个节点标签**是否真出现在产物里。
+#
+# ⚠️ 它是个**启发式**检查（如实记三条边界）：
+#    ① 长标签会被 mermaid 折成多个 `<tspan>`，剥标签时会插进空格 ⇒ 只拿**前 16 个字符**去比；
+#    ② 标签里**允许有排版标记**（本项目大量用 `<br/>` 换行）：`<br/>` 被剥成空格，
+#       所以核对前两边都要**把空白归一化** —— 否则会把"明明画出来了"报成缺失。
+#       2026-09-27 实测踩到：第一版把 3 块图报红，而那 3 块一行不缺，缺的是我对 `<br/>` 的假设。
+#    ③ 因此它**可能误报**（报"找不到"但其实只是折行/排版不同）—— 误报时**人看一眼**即可。
+#       要记住方向：**"报绿"是真的绿（名字确实在产物里），"报红"值得看一眼**。
+function Get-MissingDiagramName {
+    param(
+        [Parameter(Mandatory = $true)][string] $Body,
+        [Parameter(Mandatory = $true)][string] $SvgPath
+    )
+
+    $svg = [System.IO.File]::ReadAllText($SvgPath, [System.Text.Encoding]::UTF8)
+    $svg = [regex]::Replace($svg, '(?s)<style.*?</style>', ' ')
+    $svg = [regex]::Replace($svg, '(?s)<script.*?</script>', ' ')
+    $svg = [regex]::Replace($svg, '<[^>]+>', ' ')
+    $svg = $svg.Replace('&lt;', '<').Replace('&gt;', '>').Replace('&amp;', '&')
+    $svg = $svg.Replace('&quot;', '"').Replace('&#39;', "'")
+    $svg = [regex]::Replace($svg, '\s+', ' ')       # 归一化空白（见边界 ②）
+
+    $expected = @()
+
+    if ($Body -match '(?m)^\s*classDiagram') {
+        # 类声明：`class Foo {` / `class Foo`
+        foreach ($m in [regex]::Matches($Body, '(?m)^\s*class\s+([^\s{]+)')) {
+            $expected += $m.Groups[1].Value
+        }
+
+        # 关系两端：`A --> B`（两端都该被画出来）
+        $rel = '(?m)^\s*([A-Za-z_]\w*(?:~[^~]+~)?)\s*' +
+               '(?:\*--|<\|\.\.|<\|--|o--|-->|\.\.>|--\*|--\|>|\.\.\|>)\s*([A-Za-z_]\w*)'
+
+        foreach ($m in [regex]::Matches($Body, $rel)) {
+            $expected += $m.Groups[1].Value
+            $expected += $m.Groups[2].Value
+        }
+    }
+    else {
+        # flowchart / sequenceDiagram：引号里的节点标签 + participant 的别名
+        foreach ($m in [regex]::Matches($Body, '"([^"]+)"')) {
+            $expected += $m.Groups[1].Value
+        }
+
+        foreach ($m in [regex]::Matches($Body, '(?m)^\s*participant\s+\w+\s+as\s+(.+)$')) {
+            $expected += $m.Groups[1].Value.Trim()
+        }
+    }
+
+    $expected = $expected |
+        ForEach-Object { ($_ -replace '~.*$', '').Trim() } |
+        Where-Object { $_ -ne '' } |
+        Sort-Object -Unique
+
+    $missing = @()
+
+    foreach ($e in $expected) {
+        # 归一化：`<br/>` → 空格、连续空白压成一个（与上面 SVG 的处理对称）
+        $probe = ($e -replace '<br\s*/?>', ' ') -replace '\s+', ' '
+        $probe = $probe.Trim()
+
+        if ($probe.Length -gt 16) { $probe = $probe.Substring(0, 16).Trim() }
+        if (-not $svg.Contains($probe)) { $missing += $e }
+    }
+
+    return $missing
+}
+
 $repoRoot = Split-Path (Split-Path $root -Parent) -Parent
 $artifactDocs = Get-ChildItem $root -Filter *.md | Where-Object { $_.Name -ne "README.md" } | Sort-Object Name
 $checkDocs = @()
@@ -237,7 +312,15 @@ foreach ($target in $targets) {
                 $why = "产物里是 mermaid 的错误图形"
             }
             else {
-                $ok = $true
+                # 名称核对：产物里必须真的出现**每个类名 / 每个节点标签**（理由见 `Get-MissingDiagramName`）
+                $missing = Get-MissingDiagramName -Body $block.Groups[1].Value -SvgPath $svg
+
+                if ($missing.Count -gt 0) {
+                    $why = "产物里找不到 " + $missing.Count + " 个名字：" + ($missing -join "、")
+                }
+                else {
+                    $ok = $true
+                }
             }
         }
 

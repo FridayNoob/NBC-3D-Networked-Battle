@@ -414,38 +414,38 @@ classDiagram
 
 | # | 容易画错 | 事实 | 证据 |
 | --- | --- | --- | --- |
-| 1 | 把 `Room` 画成持有 `DungeonBattle` | 对应关系在 `_battles`（键 `RoomId`），`Room` 只认 `DungeonId` | `RoomBattleService.cs:85`、`:203`~`:218`、`RoomRegistry.cs:80` |
+| 1 | 把 `Room` 画成持有 `DungeonBattle` | 对应关系在 `_battles`（键 `RoomId`），`Room` 只认 `DungeonId` | `RoomBattleService.cs:85`、`:235`~`:254`、`RoomRegistry.cs:80` |
 | 2 | 把 `RoomService` 画成装规则的 | 规则全在 `RoomRegistry`；它只注册处理器、整份广播、断线退房 | `RoomService.cs:80`~`:89`、`:96`~`:112`、`:66` |
-| 3 | 把英雄与怪画成两个类 | 只有一个 `BattleEntity`，`Kind`（0 英雄 / 1 怪）+ `PlayerId`（0 = 无主）区分 | `DungeonBattle.cs:50`、`:58`~`:65` |
-| 4 | 把「补/删英雄」画在 `Room.Add` / `Remove` 上 | 它在**每帧幂等**的 `ReconcileHeroes` 里：缺的补、走的删 | `RoomBattleService.cs:236`、`:239`~`:274` |
-| 5 | 把快照画成「每人算一份」 | `ToSnapshot().ToByteArray()` **只做一次**，同一份 `byte[]` 发每个席位 | `RoomBattleService.cs:437`、`:416`~`:429` |
+| 3 | 把英雄与怪画成两个类 | 只有一个 `BattleEntity`，`Kind`（0 英雄 / 1 怪）+ `PlayerId` 区分；⚠️ `PlayerId` 有**两个哨兵**：`0` = 还没握手/无主、**负数 = 游客**（有身份没档案），写成 `<= 0` 会让游客一个英雄都建不出来 | `DungeonBattle.cs:51`、`:60`、`:66`；哨兵判据 `RoomBattleService.cs:279`~`:284` |
+| 4 | 把「补/删英雄」画在 `Room.Add` / `Remove` 上 | 它在**每帧幂等**的 `ReconcileHeroes` 里：缺的补、走的删 | `RoomBattleService.cs:272`、`:274`~`:321` |
+| 5 | 把快照画成「每人算一份」 | `ToSnapshot().ToByteArray()` **只做一次**，同一份 `byte[]` 发每个席位 | `RoomBattleService.cs:485`、`:464`~`:476` |
 | 6 | 漏掉 `SnapshotView.Apply` 的「旧快照直接丢」 | `ServerTick <= ServerTick` 时 `StaleIgnored++` 并 `return false`，**不覆盖** | `SnapshotView.cs:110`~`:115` |
 
-**一个 30Hz 逻辑帧里服务端做的 6 件事**，以及客户端收到快照后的**覆盖式更新**：
+**一个 30Hz 逻辑帧里服务端做的事**（M3 的六件是 ②~⑦；⚠️ `Tick()` 后来还长了 ⑧⑨ 两步），以及客户端收到快照后的**覆盖式更新**：
 
 ```mermaid
 flowchart TD
     A["Tick 每逻辑帧一次"] --> C["EnsureBattle(room) 第一次按 DungeonId 建世界"]
-    C --> D["ReconcileHeroes 缺的补 走的删 幂等"]
-    D --> E["ApplyInputs 只留最新一条 超过 InputFreshTicks 当没按"]
-    E --> F["DungeonBattle.Step 实体推进 再 BossBrain.Think"]
-    F --> G["BroadcastCombatEvents 先 DamageEvent 再 DeathEvent"]
-    G --> H["BroadcastDrops CopyPendingDrops 后清空"]
-    H --> I["BroadcastSnapshot ToSnapshot 与 ToByteArray 只做一次"]
-    I --> J["SendToRoom 同一份 byte 数组发房里每个席位"]
+    C --> D["② ReconcileHeroes 缺的补 走的删 幂等"]
+    D --> E["③ ApplyInputs 只留最新一条 超过 InputFreshTicks 当没按"]
+    E --> F["④ DungeonBattle.Step 实体推进 再 BossBrain.Think"]
+    F --> G["⑤ BroadcastCombatEvents 先 DamageEvent 再 DeathEvent"]
+    G --> H["⑥ BroadcastDrops CopyPendingDrops 后清空"]
+    H --> I["⑦ BroadcastSnapshot ToSnapshot 与 ToByteArray 只做一次"]
+    I --> I2["⑧ RecordIfFinished 交一次战绩草稿 ⑨ ApplyProgressFacts 喂服务端成就判定"]
+    I2 --> J["SendToRoom 同一份 byte 数组发房里每个席位"]
     J --> K["NetSession 解出 Snapshot 后 HandleSnapshot"]
     K --> L["SnapshotView.Apply 先判 ServerTick 是不是旧的"]
     L -->|"旧快照"| M["StaleIgnored 加一 直接丢弃 画面不倒退"]
     L -->|"新快照"| N["m_entities.Clear() 后整份复制 覆盖式"]
-    J --> P["同一帧的伤害 死亡 掉落事件"]
-    P --> R["ServerEventBridge 转成 EventCenter 的 DamageDealt 与 MonsterDied 与 ItemDropped"]
+    J --> R["同一帧的伤害 死亡 掉落事件交给 ServerEventBridge 与 EventCenter"]
     R --> S["ConditionEventBridge 再喂给 ConditionTracker 联机打死怪任务进度会涨"]
 ```
 
 **面试版怎么讲（4 句）**
 
 - 「服务端三层：`RoomRegistry`（纯逻辑，判据是**里面出现 `Send` 就是放错了地方**）、`RoomService`（注册进房/离房、整份广播席位表、`SessionClosed` 自动退房）、`RoomBattleService` + `DungeonBattle`（权威世界）。」
-- 「每逻辑帧六件事，**顺序是契约**：`ReconcileHeroes` → `ApplyInputs` → `Step` → `BroadcastCombatEvents` → `BroadcastDrops` → `BroadcastSnapshot`；对齐必须在吃输入之前，否则**刚进房那一帧的输入会静默丢掉**（`RoomBattleService.cs:15`、`:184`~`:189`）。」
-- 「三路广播共用 `SendToRoom`：`ToByteArray()` **只做一次**、同一份 `byte[]` 发给全房 ——『每 tick 全量』说的是内容完整，**不是每人算一遍**（`RoomBattleService.cs:408`~`:416`）。」
+- 「每逻辑帧六件事，**顺序是契约**：② `ReconcileHeroes` → ③ `ApplyInputs` → ④ `Step` → ⑤ `BroadcastCombatEvents` → ⑥ `BroadcastDrops` → ⑦ `BroadcastSnapshot`；对齐必须在吃输入之前，否则**刚进房那一帧的输入会静默丢掉**（`RoomBattleService.cs:15`、`:218`~`:223`）。」
+- 「三路广播共用 `SendToRoom`：`ToByteArray()` **只做一次**、同一份 `byte[]` 发给全房 ——『每 tick 全量』说的是内容完整，**不是每人算一遍**（`RoomBattleService.cs:456`~`:464`）。」
 - 「客户端只有 `SnapshotView`：`Apply` 是**覆盖式**（先 `Clear` 再整份复制），`ServerTick` 不比当前新的**旧快照直接丢弃**；M4-S1 之后 `ServerEventBridge` 把 `NetSession` 的伤害/死亡/掉落事件接进了 `EventCenter`，于是**联机打死怪任务进度会涨**，而任务模块依旧不认识网络（`ServerEventBridge.cs:19`~`:21`、`:87`~`:89`）。」
 

@@ -179,10 +179,15 @@ Unity 侧：`Tests_EditMode` 应为 **655 全绿**；窗口 `Tools/NBC/网络/�
 
 ## 附 · 类图与数据流（2026-09-26 补）
 
+> 📌 **本节引用的行号已按 2026-09-27 的代码复核过**（被引用的源文件在写完本节后又改过多次）。
+> ⚠️ 本文**下面还有一节**（`## ⚠️ 2026-09-26 更新 · BOSS 的决策表从三态变四条`），
+> 那节里的"行号已整体偏移"说的是**正文**（本节之前的部分）；**两节的基准不同，别混着对**。
+
 **这张图解决什么问题**：M3-C 的四个决定（表驱动 / 纯 C# AI / 确定性 PRNG / 序列化一次发全房）落在**三个不同层**里，
 很容易画成「一个类干完」。真去看源码：读表是 `ServerTables`（带一批 `readonly struct` 行类型），建副本是
 `DungeonBattle.FromDungeon` 这个静态工厂，AI 是 `BossBrain` 持有 `StateMachine<EBossState>`，而伤害结算
-**不在服务端** —— 它调共享层的 `DamageMath.Resolve`（`DungeonBattle.cs:745`、`DamageMath.cs:125`）。
+**不在服务端** —— 它调共享层的 `DamageMath.Resolve`（`DungeonBattle.cs:825`、`DamageMath.cs:125`）。
+⚠️ **本节所有行号已按 2026-09-27 的代码复核过**（后面那节说的「行号整体偏移」指的是**原文**，不含本节）。
 
 ```mermaid
 classDiagram
@@ -256,21 +261,20 @@ classDiagram
 | # | 容易画错 | 事实 | 证据 |
 | --- | --- | --- | --- |
 | 1 | 把行类型画成 `class` | `DungeonRow` / `MonsterRow` / `HeroRow` / `SkillRow` / `DropRow` **全是 `readonly struct`** | `ServerTables.cs:50`、`:79`、`:113`、`:152`、`:191` |
-| 2 | 把服务端读表画成读生成的 `Config_<表>.cs` | 服务端读的是**源 CSV**（`CsvSheet.LoadMany`，表名 `Dungeon`/`Monster`/`Hero`/`Skill`/`DropTable`） | `ServerTables.cs:15`、`:368`、`:523`、`:529` |
-| 3 | 把「建副本」画成构造函数 | 它是**静态工厂** `FromDungeon(...)`，失败返回 null + 人话 `error` | `DungeonBattle.cs:915`、`:919`~`:925` |
-| 4 | 把 BOSS 单独画一个类 | BOSS 也是 `BattleEntity`（`IsBoss = true`），驱动它的是另一个类 `BossBrain` | `DungeonBattle.cs:995`、`:1001`、`BossBrain.cs:65` |
-| 5 | 把三个状态画成 `BossBrain` 的字段 | `IdleState` / `ChaseState` / `AttackState` 是它的 **private 嵌套类** | `BossBrain.cs:82`~`:85`、`:128`、`:155` |
-| 6 | 把掷骰画成 `System.Random`，或把伤害画进服务端 | 自己写 **xorshift32**、概率是**万分比**；伤害结算在共享层 | `BattleRandom.cs:34`、`:71`、`DungeonBattle.cs:745` |
+| 2 | 把服务端读表画成读生成的 `Config_<表>.cs` | 服务端读的是**源 CSV**（`CsvSheet.LoadMany`，表名 `Dungeon`/`Monster`/`Hero`/`Skill`/`DropTable`） | `ServerTables.cs:15`、`:423`、`:578`、`:584` |
+| 3 | 把「建副本」画成构造函数 | 它是**静态工厂** `FromDungeon(...)`，失败返回 null + 人话 `error` | `DungeonBattle.cs:1149`、`:1153`~`:1167` |
+| 4 | 把 BOSS 单独画一个类 | BOSS 也是 `BattleEntity`（`IsBoss = true`），驱动它的是另一个类 `BossBrain` | `DungeonBattle.cs:1230`、`:1235`、`BossBrain.cs:71` |
+| 5 | 把三个状态画成 `BossBrain` 的字段，或以为决策表只有三条 | `IdleState` / `ChaseState` / `AttackState` 是 **private 嵌套类**；⚠️ 决策表 2026-09-26 起是**四条**（新增「仇恨范围外视为没目标」→ 回 `Idle` 并走回出生点＝leash） | `BossBrain.cs:92`~`:95`、`:176`、`:206`、`:245`；四条在 `:40`~`:43`，仇恨范围 `DungeonBattle.cs:368`、leash 松弛量 `:371` |
+| 6 | 把掷骰画成 `System.Random`，或把伤害画进服务端 | 自己写 **xorshift32**、概率是**万分比**；伤害结算在共享层 | `BattleRandom.cs:34`、`:71`、`DungeonBattle.cs:825` |
 
 **`Dungeon.csv` 到客户端 `DropReceived` 的完整链路**（掉落是**服务端掷、序列化一次、全房同一份字节**）：
 
 ```mermaid
 flowchart TD
-    A["Configs 下的 Dungeon.csv 与 Monster.csv 与 DropTable.csv"] --> B["ServerTables.TryLoad 里 CsvSheet.LoadMany 读源 CSV"]
-    B --> D["RoomBattleService.EnsureBattle 第一次按 DungeonId 建"]
+    A["Configs 下的 Dungeon.csv 与 Monster.csv 与 DropTable.csv"] --> D["ServerTables.TryLoad 读取源 CSV 后 EnsureBattle 第一次按 DungeonId 建"]
     D --> E["DungeonBattle.FromDungeon 查不到就返回 null 并说明原因"]
     E --> F["AddEntity 摆普通怪与 BOSS 数量与血量全来自表"]
-    F --> G["BOSS 再 new BossBrain(bossEntity) 三态 Idle 与 Chase 与 Attack"]
+    F --> G["BOSS 再 new BossBrain 三态 Idle 与 Chase 与 Attack 决策表四条 仇恨范围外视为没目标回 Idle 并回家"]
     G --> H["每帧 Step 后 TryBasicAttack 命中才 ApplyDamage"]
     H --> I["DamageMath.Resolve(target.Hp, damage) 共享层那一份规则"]
     I --> K["_pendingHits.Add 记的是 Applied 不是传进来的 damage"]
@@ -291,8 +295,8 @@ M4-S1 之后新增的 `ServerEventBridge`（`Game\Battle\ServerEventBridge.cs`�
 **面试版怎么讲（4 句）**
 
 - 「关卡阵容与数值全来自**源 CSV**（`Dungeon` / `Monster` / `Hero` / `Skill` / `DropTable`），`ServerTables` 读成一批 `readonly struct` 行；**加表不改一行工具代码**。代价如实记：这是第二份读表实现，靠探针读真表防漂移（`ServerTables.cs:15`~`:19`、`:36`~`:37`）。」
-- 「建副本是静态工厂 `DungeonBattle.FromDungeon`：副本人不在表里、怪编号查不到、英雄普攻算出来是 0 —— 三种都**返回 null + 人话原因**，绝不静默开一个空世界（`DungeonBattle.cs:919`~`:957`）。」
-- 「BOSS 用 `StateMachine<EBossState>` 三态 Idle/Chase/Attack，时间用**逻辑帧号**不是真实时间；状态里只做判定与调用，改世界一律回 `DungeonBattle`（`BossBrain.cs:109`~`:112`）。」
+- 「建副本是静态工厂 `DungeonBattle.FromDungeon`：副本人不在表里、怪编号查不到、英雄普攻算出来是 0 —— 三种都**返回 null + 人话原因**，绝不静默开一个空世界（`DungeonBattle.cs:1153`~`:1176`）。」
+- 「BOSS 用 `StateMachine<EBossState>` 三态 Idle/Chase/Attack，时间用**逻辑帧号**不是真实时间；状态里只做判定与调用，改世界一律回 `DungeonBattle`。⚠️ 决策表 2026-09-26 起是**四条**：多了「仇恨范围（2200mm）外视为没目标」→ 回 Idle 并走回出生点（leash），否则 BOSS 会全图追人、副本没法玩（`BossBrain.cs:137`~`:140`、`:40`~`:43`、`DungeonBattle.cs:368`）。」
 - 「掉落是**服务端权威 + 确定性 PRNG**：自己写 xorshift32（`System.Random` 的算法在 .NET 版本之间变过），概率用万分比，只有**从活着打到死**那一下才掷；掷完**序列化一次、同一份字节发全房**，客户端只显示 —— 『两边一致』靠同一份字节，不是『两边各掷一次碰巧一样』。」
 
 ---

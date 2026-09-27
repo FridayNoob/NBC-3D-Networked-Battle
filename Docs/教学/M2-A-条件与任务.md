@@ -516,9 +516,8 @@ tracker.Notify(KillMonster, 6001, 1);   // ← 喂的是**另一个条件**的�
 
 **这张图解决什么问题**：这一课的关键是**分层与方向** —— 事件从 `EventCenter` 流向条件系统、再从条件系统流向任务系统，
 中间**没有任何一个模块知道它的下游**。最容易画错的三处：把 `ConditionDef` / `ConditionProgress` / `QuestActionResult`
-画成 `class`（都是 `readonly struct`）；把「达成」画成 `ConditionTracker` 里的一个 `bool`（它靠**钳位**让
-`!before.IsMet && after.IsMet` 就够了，**没有标志位**）；以及把 `ConditionTracker` 画成认识 `EventCenter`
-（它在共享层，只暴露 C# 事件，翻译全在客户端那座 `ConditionEventBridge` 上）。
+画成 `class`（都是 `readonly struct`）；把「达成」画成 `ConditionTracker` 里的一个 `bool`（它靠**钳位**让 `!before.IsMet && after.IsMet` 就够了，**没有标志位**）；
+以及把 `ConditionTracker` 画成认识 `EventCenter`（它在共享层，只暴露 C# 事件，翻译全在客户端那座 `ConditionEventBridge` 上）。
 
 ```mermaid
 classDiagram
@@ -538,6 +537,8 @@ classDiagram
         KillMonster
         CollectItem
         ReachArea
+        UseSkill
+        TalkToNpc
     }
     class IConditionProgressStore {
         <<interface>>
@@ -545,7 +546,6 @@ classDiagram
     }
     class InMemoryConditionProgressStore {
         -Dictionary~int, int~ m_progress
-        +GetProgress(int conditionKey) int
     }
     class ConditionTracker {
         -IConditionProgressStore m_store
@@ -596,7 +596,7 @@ classDiagram
 | 5 | 把 `Notify` 画成「边遍历边回调」 | 它是**两段式**：先读+写进度并收集 `changed` / `completed`，**再**派发 | `ConditionTracker.cs:301`~`:307`、`:354`~`:375` |
 | 6 | 把 `QuestRuntime` 画成「条件一满就自动发奖」 | `OnConditionMet` 只把状态改成 `Completed` 并广播，**发奖要玩家 `Submit`** | `QuestRuntime.cs:452`~`:456`、`:261`、`:299` |
 
-⚠️ 一处**未读到**：`EConditionEvent` 的 `ConditionEvents.Count = 5`（`EConditionEvent.cs:90`），但只在 `KeyOf` / `Describe` 里读到 `KillMonster` / `CollectItem` / `ReachArea` 三个成员（`:123`~`:125`、`:139`~`:141`），图上只画了这三个。
+⚠️ 补记（2026-09-27 复核）：`EConditionEvent` 现在是 **5 个成员**（`KillMonster=0` / `CollectItem=1` / `ReachArea=2` / `UseSkill=3` / `TalkToNpc=4`，`EConditionEvent.cs:71`~`:83`，与 `ConditionEvents.Count = 5` 在 `:90` 对得上），图上已经画全。
 
 **从 `EventCenter` 到「奖励真的发下去」的数据流**：
 

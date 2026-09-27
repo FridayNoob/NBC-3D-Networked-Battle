@@ -506,7 +506,7 @@ classDiagram
     SkillCaster ..> InputCommand : 只读本帧新按下的位
 ```
 
-⚠️ 一处**未读到**：`InputCommand`（`MoveX` / `ActionBits` 等）与 `InputActionId` 是 A7 的产物，本篇只读到**用法**（`NetSession.cs:521`~`:523`、`SkillCaster.cs:216`），没读到定义文件，所以图上没有它们的成员。
+⚠️ 一处**未读到**：`InputCommand`（`MoveX` / `ActionBits` 等）与 `InputActionId` 是 A7 的产物，本篇只读到**用法**（`NetSession.cs:566`、`:579`、`:588`、`:590`；`SkillCaster.cs:216`），没读到定义文件，所以图上没有它们的成员。
 
 **看图时最容易画错的 6 处**
 

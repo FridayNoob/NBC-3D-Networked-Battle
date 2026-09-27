@@ -345,10 +345,10 @@ classDiagram
 | --- | --- | --- | --- |
 | 1 | 把两端画成共用一个传输接口 | 客户端 `ITransport` 与服务端 `INetTransport` 是**两个接口** | `ITransport.cs:60`、`INetTransport.cs:43` |
 | 2 | 把拆帧画成 `FrameCodec` 的静态方法 | 有状态的是 **`FrameDecoder`**（缓冲、起点、终点、fatal 原因） | `FrameCodec.cs:166`、`:172`~`:181` |
-| 3 | 把 `DispatchResult` 画成 class | 它是 **`readonly struct`**，三种结果靠静态工厂产出 | `ServerMessageRouter.cs:43`、`:64`~`:83` |
-| 4 | 把 `ServerMessageRouter` 画成直接碰 socket | `Dispatch` **不碰 socket**：回包/断开由调用方按结果执行 | `ServerMessageRouter.cs:151`~`:158` |
+| 3 | 把 `DispatchResult` 画成 class | 它是 **`readonly struct`**，三种结果靠静态工厂产出 | `ServerMessageRouter.cs:44`、`:65`~`:84` |
+| 4 | 把 `ServerMessageRouter` 画成直接碰 socket | `Dispatch` **不碰 socket**：回包/断开由调用方按结果执行 | `ServerMessageRouter.cs:191`~`:197`（握手门 `:223`~`:225`） |
 | 5 | 漏掉消息泵里的「先入队」 | 收包回调**只 `_inbox.Enqueue`**，处理在 `Pump` 返回之后 | `ServerMessagePump.cs:74`、`:79`、`:91` |
-| 6 | 把服务端每会话的拆帧器画在传输上 | 拆帧器在**私有嵌套类 `Connection`** 上，每连接一个 | `TcpServerTransport.cs:296`、`:618` |
+| 6 | 把服务端每会话的拆帧器画在传输上 | 拆帧器在**私有嵌套类 `Connection`** 上，每连接一个 | `TcpServerTransport.cs:309`、`:631`（`Pump` 在 `:215`） |
 
 **一条消息从客户端字节到服务端回包的完整路径**（`[4 字节小端][载荷]` 的分帧与粘包/拆包都在 `FrameDecoder` 里被吃掉）：
 
@@ -380,6 +380,6 @@ sequenceDiagram
 **面试版怎么讲（4 句）**
 
 - 「两端**分帧同一份、形状各自一份**：客户端 `ITransport`（一条连接）、服务端 `INetTransport`（N 条连接 + `sessionId` + 踢人），分帧都是共享层的 `FrameCodec` / `FrameDecoder`。」
-- 「分帧是 `[4 字节小端长度][载荷]`：长度**手写字节**不用 `BitConverter`（它依赖宿主字节序），0 长度帧合法（protobuf 空消息就是 0 字节），超 `MaxFrameBytes` 直接判协议违规断开、**不照着谎言攒内存**（`FrameCodec.cs:53`、`:56`、`:142`、`:280`）。」
+- 「分帧是 `[4 字节小端长度][载荷]`：长度**手写字节**不用 `BitConverter`（它依赖宿主字节序），0 长度帧合法（protobuf 空消息就是 0 字节），超 `MaxFrameBytes` 直接判协议违规断开、**不照着谎言攒内存**（三条约定 `FrameCodec.cs:29`~`:41`；手写小端 `:142`、0 长度帧 `:296`、超限 `:280`）。」
 - 「服务端是**拉模式**：`Pump()` 收字节 → `FrameDecoder` 拆帧 → `MessageReceived` **只入队** → `DrainInbox()` 解包 → `Dispatch` 返回 `DispatchResult` → **先回包、再断开**。」
 - 「`ServerMessagePump` 的存在理由是**一处规则两个调用点**：服务端进程与端到端探针都用它，否则探针验的是抄本（`ServerMessagePump.cs:8`~`:13`）。」
