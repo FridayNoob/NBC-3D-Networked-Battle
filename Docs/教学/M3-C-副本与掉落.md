@@ -181,13 +181,12 @@ Unity 侧：`Tests_EditMode` 应为 **655 全绿**；窗口 `Tools/NBC/网络/�
 
 > 📌 **本节引用的行号已按 2026-09-27 的代码复核过**（被引用的源文件在写完本节后又改过多次）。
 > ⚠️ 本文**下面还有一节**（`## ⚠️ 2026-09-26 更新 · BOSS 的决策表从三态变四条`），
-> 那节里的"行号已整体偏移"说的是**正文**（本节之前的部分）；**两节的基准不同，别混着对**。
+> 那节里的「行号已整体偏移」说的是**正文**（本节之前的部分）；**两节的基准不同，别混着对**。
 
 **这张图解决什么问题**：M3-C 的四个决定（表驱动 / 纯 C# AI / 确定性 PRNG / 序列化一次发全房）落在**三个不同层**里，
 很容易画成「一个类干完」。真去看源码：读表是 `ServerTables`（带一批 `readonly struct` 行类型），建副本是
 `DungeonBattle.FromDungeon` 这个静态工厂，AI 是 `BossBrain` 持有 `StateMachine<EBossState>`，而伤害结算
 **不在服务端** —— 它调共享层的 `DamageMath.Resolve`（`DungeonBattle.cs:825`、`DamageMath.cs:125`）。
-⚠️ **本节所有行号已按 2026-09-27 的代码复核过**（后面那节说的「行号整体偏移」指的是**原文**，不含本节）。
 
 ```mermaid
 classDiagram
@@ -272,19 +271,16 @@ classDiagram
 ```mermaid
 flowchart TD
     A["Configs 下的 Dungeon.csv 与 Monster.csv 与 DropTable.csv"] --> D["ServerTables.TryLoad 读取源 CSV 后 EnsureBattle 第一次按 DungeonId 建"]
-    D --> E["DungeonBattle.FromDungeon 查不到就返回 null 并说明原因"]
-    E --> F["AddEntity 摆普通怪与 BOSS 数量与血量全来自表"]
+    D --> F["DungeonBattle.FromDungeon 查不到就返回 null 并说明原因 然后 AddEntity 摆普通怪与 BOSS"]
     F --> G["BOSS 再 new BossBrain 三态 Idle 与 Chase 与 Attack 决策表四条 仇恨范围外视为没目标回 Idle 并回家"]
-    G --> H["每帧 Step 后 TryBasicAttack 命中才 ApplyDamage"]
-    H --> I["DamageMath.Resolve(target.Hp, damage) 共享层那一份规则"]
+    G --> I["每帧 Step 后 TryBasicAttack 命中才 ApplyDamage 并调 DamageMath.Resolve 共享层那一份规则"]
     I --> K["_pendingHits.Add 记的是 Applied 不是传进来的 damage"]
     K --> L{"wasAlive 且 现在 Alive 为 false"}
     L -->|"否 只是掉血"| M["结束 没有死亡也没有掉落"]
     L -->|"是 从活着打到死"| N["_pendingDeaths.Add 后 kind 为 1 时 RollDrops"]
     N --> O["BattleRandom.NextPerTenThousand 与 ChancePerTenThousand 比大小"]
     O --> P["_pendingDrops.Add 后 BroadcastDrops 取走并清空"]
-    P --> Q["ServerEvent Drop 的 ToByteArray 只做一次 再 SendToRoom"]
-    Q --> R["NetSession 解出 Drop 后 HandleDrop 发 DropReceived"]
+    P --> R["ServerEvent Drop 的 ToByteArray 只做一次 再 SendToRoom；NetSession 解出后 HandleDrop 发 DropReceived"]
     R --> S["ServerEventBridge.OnDrop 只在归我时转发 ItemDropped"]
 ```
 
