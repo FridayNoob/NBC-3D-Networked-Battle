@@ -411,8 +411,42 @@ namespace NBC.Tests.EditMode
             StringAssert.Contains(authoritativeCurrent + "/" + required, detail);
             StringAssert.DoesNotContain("2/" + required, detail);
 
-            // 权威值**不标**预测
-            StringAssert.DoesNotContain(QuestProgressOverlay.LocalMark, detail);
+            // ⚠️ 判据必须**逐行**，不许对整段文字断言（2026-09-27 实测踩到）：
+            //    `DemoQuest` 有**多条**条件，而假权威只"说了"其中一条 ⇒
+            //    对整段断言"不含（本地预测）"**必然红** —— 沉默那条本来就该带标记。
+            //    那是我把"逐条判断"读成了"整批一刀切"，**产品是对的**。
+            // ⇒ 这里改成：说到的**不标**、没说到的一律标，并且**两边都要有样本**（自带阳性对照，
+            //    否则将来这个任务只剩一条条件时，这条用例会**静默测不到"逐条"**）。
+            string[] conditionLines = detail.Split('\n');
+            int spoken = 0;
+            int silent = 0;
+
+            for (int i = 0; i < conditionLines.Length; i++)
+            {
+                string text = conditionLines[i].Trim();
+
+                if (text.Length == 0 || text.IndexOf('/') < 0)
+                {
+                    continue;       // 不是条件行（抬头之类）
+                }
+
+                if (text.Contains(authoritativeCurrent + "/" + required))
+                {
+                    spoken++;
+                    Assert.IsFalse(text.Contains(QuestProgressOverlay.LocalMark),
+                        "权威**说过**的这一条不该标成预测：" + text);
+                }
+                else
+                {
+                    silent++;
+                    Assert.IsTrue(text.Contains(QuestProgressOverlay.LocalMark),
+                        "权威**没说过**的这一条必须标成预测（逐条判断，不许整批一刀切）：" + text);
+                }
+            }
+
+            Assert.AreEqual(1, spoken, "恰好一条条件行拿到权威值（判据的阳性对照）");
+            Assert.Greater(silent, 0,
+                "这个任务应当还有**没被权威说到**的条件行 —— 否则这条用例测不到「逐条」这件事");
         }
 
         /// <summary>没接权威（`Authority == null`）⇒ 与"权威没说话"**同一条路**：一律标成预测。</summary>
