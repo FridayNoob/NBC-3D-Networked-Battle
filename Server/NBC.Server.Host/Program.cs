@@ -30,6 +30,7 @@
 
 using System.Reflection;
 using NBC.Protocol;
+using NBC.Framework.Log;        // SRV-14：日志（**与客户端编同一份源码**，见 NBC.Server.Core.csproj）
 using NBC.Server.Core;
 using NBC.Server.Data;          // SRV-13：战绩落库（`BattleRecordDao` / `BattleRecordWriter`）
 using NBC.Server.Game;          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
@@ -54,6 +55,15 @@ internal static class Program
     /// <summary>
     /// 服务端进程入口。
     /// </summary>
+    /// <summary>
+    /// 服务端日志（**唯一写日志的出口**）。
+    /// <para>⚠️ 它让"控制台"与"日志文件"内容一致 —— 不会出现"控制台有、文件里没有"
+    /// 这种排查时最气人的事。`Log()` 与启动横幅都走它。</para>
+    /// <para>⚠️ 静态字段：`Main` 里的一堆 lambda 要能拿到它。控制台程序的入口，
+    /// 生命周期与进程相同，可以接受。</para>
+    /// </summary>
+    private static ServerLog s_log = new ServerLog(LogLevel.Info, "Logs", false, true);
+
     private static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -61,33 +71,53 @@ internal static class Program
         // SRV-01：配置来源 = `命令行 > appsettings.json > 内置默认值`（见 `HostConfig` 文件头）
         HostConfig config = HostConfig.Load(args);
 
+        // SRV-14：日志出口 —— 级别/落盘/按天分文件全部来自配置。
+        // ⚠️ 命令行 `--quiet` 与配置里的 `Level=Warning` 是**同一个旋钮**（都抬到 Warning）。
+        LogLevel effectiveLevel = HasFlag(args, "--quiet") || config.QuietByConfig
+            ? LogLevel.Warning
+            : config.ParsedLogLevel;
+
+        s_log = new ServerLog(effectiveLevel, config.LogDirectory, config.WriteLogToFile, config.SplitLogByDay);
+        s_log.Write(LogLevel.Info, LogChannel.General,
+            "===== 服务端启动 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " =====");
+        s_log.Write(LogLevel.Info, LogChannel.General, "日志目标：" + s_log.Describe());
+
+        // ⚠️ 兜底：无论从哪条 return 出去（含 `[致命]` 的早退），都刷一次日志缓冲。
+        //    `Main` 里有好几个 return 点，逐个补 Flush 迟早漏一个。
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => s_log.Flush();
         int port = config.ListenPort;
         int tickLimit = ReadIntArg(args, "--ticks", 0);          // 0 = 一直跑
         bool quiet = HasFlag(args, "--quiet") || config.QuietByConfig;
 
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
 
-        Console.WriteLine("==============================================");
-        Console.WriteLine("  NBC Server (Networked Battle Combat)");
-        Console.WriteLine($"  Version : {version}");
-        Console.WriteLine($"  Runtime : {Environment.Version}");
-        Console.WriteLine($"  Built   : {BuildTime()}");
-        Console.WriteLine($"  Machine : {MachineName()}");
-        Console.WriteLine("==============================================");
-        Console.WriteLine();
-        Console.WriteLine($"[Check] NBC.Shared 可引用，共享层版本标识：{SharedInfo.Describe()}");
-        Console.WriteLine($"[Check] 协议：{NetContract.Describe()}");
+        // ⚠️ 横幅**先拼成一段文本**，再同时写控制台与日志文件 ——
+        //    这样"文件里有没有这次启动的横幅"不再靠人记得去补一句。
+        var banner = new System.Text.StringBuilder();
+        banner.AppendLine("==============================================");
+        banner.AppendLine("  NBC Server (Networked Battle Combat)");
+        banner.AppendLine($"  Version : {version}");
+        banner.AppendLine($"  Runtime : {Environment.Version}");
+        banner.AppendLine($"  Built   : {BuildTime()}");
+        banner.AppendLine($"  Machine : {MachineName()}");
+        banner.AppendLine("==============================================");
+        banner.AppendLine($"[Check] NBC.Shared 可引用，共享层版本标识：{SharedInfo.Describe()}");
+        banner.Append($"[Check] 协议：{NetContract.Describe()}");
+
+        Say(banner.ToString());
+        Say(string.Empty);
+        s_log.Write(LogLevel.Info, LogChannel.General, banner.ToString());
 
         // ⚠️ **配置的来源要印出来** —— 否则"我改了 appsettings 到底生效没有"又要靠猜，
         //    而那正是 `HostConfig` 存在的理由（改了没生效是本项目踩过的坑）。
-        Console.WriteLine($"[配置] 文件：{config.ConfigFilePath ?? "**没找到**（全部用内置默认值）"}");
-        Console.WriteLine($"[配置] 监听端口 {port}（来源：{config.ListenPortSource}）");
-        Console.WriteLine($"[配置] 数据库参数来源：{config.DescribeDatabaseSource()}；日志级别：{config.LogLevel}" +
+        Say($"[配置] 文件：{config.ConfigFilePath ?? "**没找到**（全部用内置默认值）"}");
+        Say($"[配置] 监听端口 {port}（来源：{config.ListenPortSource}）");
+        Say($"[配置] 数据库参数来源：{config.DescribeDatabaseSource()}；日志级别：{config.LogLevelText}" +
                           (config.QuietByConfig ? "（⇒ 安静模式）" : string.Empty));
 
         foreach (string note in config.Notes)
         {
-            Console.WriteLine("       " + note.Replace("\n", "\n       "));
+            Say("       " + note.Replace("\n", "\n       "));
         }
 
         // ⚠️ 这个检查在"两边都是 const"的年代**永远执行不到**（编译器 CS0162 直接判死），
@@ -96,7 +126,7 @@ internal static class Program
 
         if (tickMismatch != null)
         {
-            Console.WriteLine("       " + tickMismatch.Replace("\n", "\n       "));
+            Say("       " + tickMismatch.Replace("\n", "\n       "));
         }
 
         // ⚠️ 负责人是**双击 bin 里的 exe** 启动的 —— 双击**永远不会编译**。
@@ -113,24 +143,24 @@ internal static class Program
         // 配置表（S6）：副本阵容与数值都从表里来 —— 读不到就**不启动**（见下面 try/catch）
         if (!ServerTables.TryResolveConfigDir(out string configDir))
         {
-            Console.WriteLine("[致命] 找不到配置表目录 `Configs\\Design`（从程序集所在目录往上找了 8 层）。");
+            Say("[致命] 找不到配置表目录 `Configs\\Design`（从程序集所在目录往上找了 8 层）。");
             return 3;
         }
 
         if (!ServerTables.TryLoad(configDir, out ServerTables tables, out string tablesError))
         {
-            Console.WriteLine("[致命] " + tablesError);
+            Say("[致命] " + tablesError);
             return 3;
         }
 
-        Console.WriteLine($"[Check] {tables.Describe()}");
+        Say($"[Check] {tables.Describe()}");
 
         // ⚠️ 把"服务端**真正读到**的掉落配置"印出来（2026-09-23 负责人踩过这个坑）：
         //    服务端读的是 `Configs\Design\*.csv`（真源），而 Unity 侧读的是生成的 SO ——
         //    只改 SO 的话服务端**看不到**，表现是"打死了什么都不掉"，且不报任何错。
         foreach (int monsterId in tables.MonsterIdsWithDrops)
         {
-            Console.WriteLine($"        掉落：{tables.DescribeDropsOf(monsterId)}");
+            Say($"        掉落：{tables.DescribeDropsOf(monsterId)}");
         }
 
         // ⚠️ 同上，**阵容数值也自述**（2026-09-26 同一个坑的第二次：负责人在 SO 里把狼王血量
@@ -138,10 +168,10 @@ internal static class Program
         //    ⇒ 横幅上直接念出"服务端读到的血量/攻击/移速"，改错地方一眼就能看出来。
         foreach (int monsterId in tables.MonsterIds)
         {
-            Console.WriteLine($"        阵容：{tables.DescribeMonster(monsterId)}");
+            Say($"        阵容：{tables.DescribeMonster(monsterId)}");
         }
 
-        Console.WriteLine($"        阵容：{tables.DescribeHero(NBC.Server.Game.DungeonBattle.HeroConfigId)}");
+        Say($"        阵容：{tables.DescribeHero(NBC.Server.Game.DungeonBattle.HeroConfigId)}");
 
         // ⚠️ 这里曾经想加一句"掉落 0 行就警告"，**实测发现走不到**，已删：
         //    `CsvSheet.LoadMany` 对"表头 4 行 + 至少 1 行数据"是硬校验，
@@ -174,7 +204,7 @@ internal static class Program
 
         if (string.IsNullOrEmpty(dbOptions.Password))
         {
-            Console.WriteLine("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器）。");
+            Say("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器）。");
         }
         else
         {
@@ -193,18 +223,18 @@ internal static class Program
                     IReadOnlyList<long> profileIds = profileDao.LoadIdsAsync().GetAwaiter().GetResult();
                     slots = new PlayerProfileSlots(profileIds);
 
-                    Console.WriteLine($"[数据库] 已接：{dbOptions.Describe()}");
-                    Console.WriteLine($"[数据库] {slots.Describe()}");
+                    Say($"[数据库] 已接：{dbOptions.Describe()}");
+                    Say($"[数据库] {slots.Describe()}");
                 }
                 else
                 {
-                    Console.WriteLine("[数据库] 连不上，**战绩不落库、玩家编号退回计数器**（服务端照常跑）：");
-                    Console.WriteLine("         " + (ping.Reason ?? string.Empty).Replace("\n", "\n         "));
+                    Say("[数据库] 连不上，**战绩不落库、玩家编号退回计数器**（服务端照常跑）：");
+                    Say("         " + (ping.Reason ?? string.Empty).Replace("\n", "\n         "));
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
+                Say("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
                 recordDao = null;
                 slots = null;
             }
@@ -265,17 +295,17 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[致命] 监听 {port} 失败：{ex.GetType().Name}：{ex.Message}");
-            Console.WriteLine("       端口被占用？换一个：--port=7778");
+            Say($"[致命] 监听 {port} 失败：{ex.GetType().Name}：{ex.Message}");
+            Say("       端口被占用？换一个：--port=7778");
             return 2;
         }
 
-        Console.WriteLine();
-        Console.WriteLine($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
-        Console.WriteLine($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input");
-        Console.WriteLine($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
-        Console.WriteLine("       按 Ctrl+C 退出。");
-        Console.WriteLine();
+        Say(string.Empty);
+        Say($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
+        Say($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input");
+        Say($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
+        Say("       按 Ctrl+C 退出。");
+        Say(string.Empty);
 
         bool running = true;
         Console.CancelKeyPress += (_, e) =>
@@ -310,8 +340,8 @@ internal static class Program
             Thread.Sleep(1);
         }
 
-        Console.WriteLine();
-        Console.WriteLine("[收尾] 正在关闭监听……");
+        Say(string.Empty);
+        Say("[收尾] 正在关闭监听……");
         transport.Stop();
 
         // SRV-17：优雅关闭要**把战绩写完**再退。⚠️ 带超时 ——
@@ -319,27 +349,29 @@ internal static class Program
         if (recordWriter.PendingCount > 0 || recordWriter.Submitted > 0)
         {
             bool drained = recordWriter.FlushAsync(3000).GetAwaiter().GetResult();
-            Console.WriteLine("[收尾] 战绩落库" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
+            Say("[收尾] 战绩落库" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
         }
 
-        Console.WriteLine($"[统计] 接受连接 {transport.TotalAccepted}，断开 {transport.TotalClosed}，" +
+        Say($"[统计] 接受连接 {transport.TotalAccepted}，断开 {transport.TotalClosed}，" +
                           $"握手成功 {pump.HandshakesAccepted}，被拒 {pump.HandshakesRejected}，" +
                           $"踢出 {pump.Kicks}，解不出 {pump.Undecodable}");
-        Console.WriteLine($"[统计] 房间 {rooms.Registry.RoomCount} 个，席位表广播 {rooms.StateBroadcasts} 份");
-        Console.WriteLine($"[统计] 战斗世界 {battles.BattleCount} 个，推进 {battles.TicksRun} 帧，" +
+        Say($"[统计] 房间 {rooms.Registry.RoomCount} 个，席位表广播 {rooms.StateBroadcasts} 份");
+        Say($"[统计] 战斗世界 {battles.BattleCount} 个，推进 {battles.TicksRun} 帧，" +
                           $"快照送出 {battles.SnapshotsSent} 份，回收世界 {battles.BattlesDropped} 个");
-        Console.WriteLine($"[统计] 收到输入 {battles.InputsReceived} 条（拒绝 {battles.InputsRejected}），" +
+        Say($"[统计] 收到输入 {battles.InputsReceived} 条（拒绝 {battles.InputsRejected}），" +
                           $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
-        Console.WriteLine($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
-        Console.WriteLine($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
+        Say($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
+        Say($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
         if (slots != null)
         {
-            Console.WriteLine($"[统计] {slots.Describe()}");
+            Say($"[统计] {slots.Describe()}");
         }
-        Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
+        Say($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");
-        Console.WriteLine("[退出] 正常结束。");
+        Say($"[统计] 日志：{s_log.Describe()}；共 {s_log.Count} 条（按级别丢弃 {s_log.DroppedByLevel} 条）");
+        s_log.Flush();
+        Say("[退出] 正常结束。");
 
         return 0;
     }
@@ -370,12 +402,38 @@ internal static class Program
     /// <summary>日志（`--quiet` 时什么都不打）。</summary>
     /// <param name="quiet">是否安静模式。</param>
     /// <param name="line">内容。</param>
+    /// <summary>
+    /// 写一行**给人看的**输出：控制台 + 日志文件**都要有**。
+    /// <para>⚠️ 这就是"文件包含控制台的每一行"那条不变式的落点：
+    /// 横幅 / 配置来源 / 统计 / `[致命]` 这些行**以前只进控制台**，
+    /// 结果事后翻日志会缺"什么时候起的、最终统计是多少"这些最要紧的上下文。</para>
+    /// <para>控制台这一次**不带** `[时间][级别]` 前缀（排版更好看），文件里带。</para>
+    /// </summary>
+    /// <param name="text">正文（空串 = 空行）。</param>
+    private static void Say(string text)
+    {
+        Console.WriteLine(text);
+        s_log.WriteToFile(LogLevel.Info, LogChannel.General, text);
+    }
+
+    /// <summary>
+    /// 写一条"值得记一句"的运行信息。
+    /// <para>⚠️ `quiet` 参数**保留了**（13 处调用点），但它现在只是"命令行强制安静"的意思；
+    /// 真正的级别过滤在 `ServerLog` 里（`Logging.Level` 也能达到同样效果）。</para>
+    /// </summary>
+    /// <param name="quiet">命令行 `--quiet`（强制安静）。</param>
+    /// <param name="line">正文。</param>
     private static void Log(bool quiet, string line)
     {
-        if (!quiet)
+        if (quiet)
         {
-            Console.WriteLine(line);
+            // ⚠️ 安静模式下**仍然进日志文件**（只是不刷控制台）——
+            //    否则"我开了安静模式，结果什么日志都没有"。
+            s_log.Write(LogLevel.Debug, LogChannel.General, line);
+            return;
         }
+
+        s_log.Info(line);
     }
 
     /// <summary>读 `--key=value` 形式的整数参数。</summary>
@@ -477,15 +535,15 @@ internal static class Program
                 return;
             }
 
-            Console.WriteLine();
-            Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-            Console.WriteLine("[警告] 你双击的是**旧的 exe**：源码比产物新，改的代码没有生效！");
-            Console.WriteLine($"        最新源码：{newestFile}");
-            Console.WriteLine($"                  {newestSource:yyyy-MM-dd HH:mm:ss}");
-            Console.WriteLine($"        产物时间：{newestBinary:yyyy-MM-dd HH:mm:ss}");
-            Console.WriteLine(@"        先编译再启动：dotnet build Server\NBC.Server.Host\NBC.Server.Host.csproj -m:1");
-            Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-            Console.WriteLine();
+            Say(string.Empty);
+            Say("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            Say("[警告] 你双击的是**旧的 exe**：源码比产物新，改的代码没有生效！");
+            Say($"        最新源码：{newestFile}");
+            Say($"                  {newestSource:yyyy-MM-dd HH:mm:ss}");
+            Say($"        产物时间：{newestBinary:yyyy-MM-dd HH:mm:ss}");
+            Say(@"        先编译再启动：dotnet build Server\NBC.Server.Host\NBC.Server.Host.csproj -m:1");
+            Say("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            Say(string.Empty);
         }
         catch (IOException)
         {

@@ -36,6 +36,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
+using NBC.Framework.Log;        // `LogLevel`（**与客户端编同一份源码**，见 NBC.Server.Core.csproj）
+using NBC.Server.Core;          // `ServerLog.ParseLevel` / `ServerLog` 的级别解析
 using NBC.Server.Data;
 using NBC.Shared.Net;
 
@@ -53,8 +55,26 @@ internal sealed class HostConfig
     /// <summary>配置文件里写的 tick 率（0 = 文件里没写）。</summary>
     public int ConfiguredTickRate { get; private set; }
 
-    /// <summary>日志级别（原样读出，只用于印出来 + 推 quiet）。</summary>
-    public string LogLevel { get; private set; } = "(未配置)";
+    /// <summary>
+    /// 日志级别**原文**（只用于印出来 + 推 quiet）。
+    /// <para>⚠️ 它**故意不叫** `LogLevel` —— 那会**遮蔽枚举类型** `NBC.Framework.Log.LogLevel`，
+    /// 于是同一个类里 `LogLevel.Info` 会被解析成"这个属性"，
+    /// 报错形状是 `CS0236 字段初始值设定项无法引用非静态字段`（跟名字冲突八竿子打不着）。
+    /// ⇒ **属性名不要和类型名同名。**</para>
+    /// </summary>
+    public string LogLevelText { get; private set; } = "(未配置)";
+
+    /// <summary>解析出来的日志级别（认不出来时按 Info，并往 `Notes` 写一条）。</summary>
+    public LogLevel ParsedLogLevel { get; private set; } = LogLevel.Info;
+
+    /// <summary>要不要落盘（`Logging.WriteToFile`）。</summary>
+    public bool WriteLogToFile { get; private set; }
+
+    /// <summary>落盘目录（`Logging.Directory`）。</summary>
+    public string LogDirectory { get; private set; } = "Logs";
+
+    /// <summary>文件名要不要带日期（`Logging.SplitByDay`，SRV-14 的"按天分文件"）。</summary>
+    public bool SplitLogByDay { get; private set; } = true;
 
     /// <summary>配置里要求安静模式（`Logging.Level` 是 Warning/Error 时）。</summary>
     public bool QuietByConfig { get; private set; }
@@ -103,10 +123,34 @@ internal sealed class HostConfig
                 config.ConfiguredTickRate = fileTick;
             }
 
-            config.LogLevel = file["Logging:Level"] ?? "(未配置)";
+            config.LogLevelText = file["Logging:Level"] ?? "(未配置)";
+
+            string? levelNote;
+            config.ParsedLogLevel = ServerLog.ParseLevel(config.LogLevelText, out levelNote);
+
+            if (levelNote != null)
+            {
+                config.Notes.Add(levelNote);
+            }
+
+            config.WriteLogToFile = config.ReadBool(file, "Logging:WriteToFile", config.WriteLogToFile);
+            config.LogDirectory = ReadString(file, "Logging:Directory", config.LogDirectory);
+            config.SplitLogByDay = config.ReadBool(file, "Logging:SplitByDay", config.SplitLogByDay);
+
+            // ⚠️ 相对路径**相对 exe**，不相对"当前工作目录"：
+            //    双击启动时两者相同；但从仓库根 `dotnet run` 时 CWD = 仓库根
+            //    ⇒ 日志会落在仓库根，把源码目录搞脏（`git status` 里突然多一个 Logs/）。
+            //    服务端的日志属于**服务端自己**，所以放在它旁边。
+            if (!string.IsNullOrWhiteSpace(config.LogDirectory) &&
+                !Path.IsPathRooted(config.LogDirectory))
+            {
+                config.LogDirectory = Path.Combine(AppContext.BaseDirectory, config.LogDirectory);
+            }
+
             config.QuietByConfig =
-                string.Equals(config.LogLevel, "Warning", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(config.LogLevel, "Error", StringComparison.OrdinalIgnoreCase);
+                string.Equals(config.LogLevelText, "Warning", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(config.LogLevelText, "Error", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(config.LogLevelText, "Critical", StringComparison.OrdinalIgnoreCase);
 
             // ---- 数据库（**这才是"改 appsettings 没生效"最容易踩的那一块**）----
             config.ReadDatabase(file);
@@ -237,6 +281,29 @@ internal sealed class HostConfig
     {
         string? value = file[key];
         return string.IsNullOrWhiteSpace(value) ? fallback : value!;
+    }
+
+    /// <summary>读一个布尔项（认不出来时用兜底值并记一条提示）。</summary>
+    /// <param name="file">配置根。</param>
+    /// <param name="key">键。</param>
+    /// <param name="fallback">兜底值。</param>
+    /// <returns>值。</returns>
+    private bool ReadBool(IConfigurationRoot file, string key, bool fallback)
+    {
+        string? text = file[key];
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return fallback;
+        }
+
+        if (bool.TryParse(text, out bool value))
+        {
+            return value;
+        }
+
+        Notes.Add($"⚠️ `appsettings.json` 的 `{key}` = 「{text}」不是 true/false，**已忽略**（用 {fallback}）。");
+        return fallback;
     }
 
     /// <summary>读一个整数项（解析不出来时用兜底值，并记一条提示）。</summary>

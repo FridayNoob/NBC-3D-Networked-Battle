@@ -47,5 +47,30 @@
       <Private>true</Private>
     </Reference>
   </ItemGroup>
+  <!-- ========================================================================
+       ★ 日志：**一份源码，两边都编**（M1-D1 那条规矩；SRV-14）
+       ========================================================================
+       客户端那套日志里，有三个文件是**纯 BCL**（只用 `System` / `System.IO` / `System.Text`）：
+         · `LogTypes.cs`     —— `LogLevel` / `LogChannel` / `LogEntry`
+         · `ILogSink.cs`     —— 落盘接缝
+         · `FileLogSink.cs`  —— **带滚动的文件落盘**（263 行，含三处真坑，见那个文件头）
+       另外两个（`LogSystem` / `UnityConsoleLogSink`）**用了 UnityEngine**，所以不引。
+
+       ⚠️ 为什么用 `<Compile Include>` 引**同一个文件**，而不是把它们拷进 Server\：
+          拷贝两份**一定会漂移**，而漂移**不报错** —— 与 D1「一份源码两边都编」同一条理由。
+          `FileLogSink` 尤其不能抄：它的滚动有三处"看起来能工作、其实靠运气"的细节
+          （写之前滚动 / 自己记字节数 / 滚动后计数归零），抄错一处就是**日志把磁盘写满**。
+
+       ⚠️ 代价（如实记）：服务端程序集里会出现 `NBC.Framework.Log` 这个命名空间 ——
+          名字里的 `Framework` 在服务端读起来有点怪。但**同一个文件、同一个命名空间**
+          正是"不漂移"的保证；改名要动客户端（Unity 要重导 `.meta`），收益只是好看。
+          真正的修法是把它抽成**独立的双端程序集**（像 `NBC.Framework.Net` 那样），
+          那属于独立一片，记在 `Docs\27` §十七。
+       ======================================================================== -->
+  <ItemGroup>
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Log\LogTypes.cs" />
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Log\ILogSink.cs" />
+    <Compile Include="..\..\Client\Assets\_Project\Framework\Log\FileLogSink.cs" />
+  </ItemGroup>
 
 </Project>
