@@ -65,8 +65,11 @@ $files = Get-ChildItem -Path $Root -Filter *.ps1 -Recurse -File -ErrorAction Sil
     Sort-Object FullName
 
 if (-not $files) {
-    Write-Output "[info] no .ps1 found under $Root"
-    exit 0
+    # A gate that scans nothing must never report success: an empty result is
+    # almost always a wrong -Root, NOT a clean repo (2026-09-27).
+    Write-Output "ERROR: no .ps1 found under $Root -- wrong -Root, NOT a clean repo."
+    Write-Output "       A gate that scans nothing must never report success."
+    exit 1
 }
 
 $rows = @()
@@ -125,6 +128,7 @@ foreach ($f in $files) {
 Write-Output ($rows | Format-Table -AutoSize | Out-String).TrimEnd()
 
 Write-Output ("scanned {0} script(s): encoding problems = {1}, parse errors = {2}" -f $files.Count, $badEncoding, $badSyntax)
+
 
 if ($badEncoding -gt 0 -or $badSyntax -gt 0) { exit 1 }
 exit 0

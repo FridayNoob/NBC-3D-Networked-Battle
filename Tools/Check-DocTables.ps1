@@ -114,6 +114,11 @@ Write-Host "table separators found : $tables"
 Write-Host "problems               : $($problems.Count)"
 Write-Host ''
 
+if ($scanned -eq 0) {
+    Write-Host "ERROR: scanned 0 markdown file -- that is almost always a wrong -Path, NOT a clean repo."
+    Write-Host "       A gate that scans nothing must never report success."
+    exit 1
+}
 if ($problems.Count -eq 0) {
     Write-Host 'No broken tables. Every header is followed by a separator.'
     exit 0

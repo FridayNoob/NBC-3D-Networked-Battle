@@ -199,4 +199,9 @@ Write-Host ''
 Write-Host '  Read-only report complete. Nothing was modified.' -ForegroundColor DarkGray
 Write-Host ''
 
+if ($mdFiles.Count -eq 0) {
+    Write-Host "ERROR: scanned 0 markdown file -- that is almost always a wrong -Root, NOT a clean repo."
+    Write-Host "       A gate that scans nothing must never report success."
+    exit 1
+}
 if ($brokenCount -gt 0) { exit 1 } else { exit 0 }

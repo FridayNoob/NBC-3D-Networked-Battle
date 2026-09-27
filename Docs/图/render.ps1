@@ -205,12 +205,26 @@ $repoRoot = Split-Path (Split-Path $root -Parent) -Parent
 $artifactDocs = Get-ChildItem $root -Filter *.md | Where-Object { $_.Name -ne "README.md" } | Sort-Object Name
 $checkDocs = @()
 
+$missingDirs = @()
+
 foreach ($dir in $ExtraDirs) {
     $full = if ([System.IO.Path]::IsPathRooted($dir)) { $dir } else { Join-Path $repoRoot $dir }
 
     if (Test-Path $full) {
         $checkDocs += Get-ChildItem $full -Filter *.md -Recurse | Sort-Object FullName
     }
+    else {
+        # ⚠️ 一个**扫不到的目录**必须报错，不能静默少扫（2026-09-27）：
+        #    原来的写法 `if (Test-Path ...)` 会把"目录改名/路径写错"变成"这次少校验一批"，
+        #    而**汇总行照样报成功** —— 正是本项目最忌讳的假绿。
+        $missingDirs += $full
+    }
+}
+
+if ($missingDirs.Count -gt 0) {
+    Write-Output ("ERROR: these -ExtraDirs do not exist: " + ($missingDirs -join "、"))
+    Write-Output "       A gate that silently scans less must never report success."
+    exit 1
 }
 
 $total = 0
@@ -358,4 +372,9 @@ if ($stale.Count -gt 0) {
     Write-Output ("清掉 {0} 个不再对应的旧产物：{1}" -f $stale.Count, (($stale | ForEach-Object { $_.Name }) -join "、"))
 }
 
+if ($total -eq 0) {
+    Write-Output "ERROR: 0 mermaid block was found -- that is almost always a wrong path, NOT a clean repo."
+    Write-Output "       A gate that scans nothing must never report success."
+    exit 1
+}
 if ($failed -gt 0) { exit 1 }
