@@ -168,6 +168,14 @@ namespace NBC.Game.Quest
 
         /// <summary>达成了没有。</summary>
         public bool IsMet;
+
+        /// <summary>
+        /// 上面这三个数**是谁说的**（M4-S3 收口：`Docs\27` §二十四）。
+        /// <para>⚠️ 默认是 `LocalPrediction`（**保守**）：没有被权威盖过就一律算预测 ——
+        /// 反过来默认成权威，就会出现"忘了盖也显示得像事实"。</para>
+        /// <para>界面显示时必须用 `QuestProgressOverlay.Mark(Source)` 标出来。</para>
+        /// </summary>
+        public EProgressSource Source = EProgressSource.LocalPrediction;
     }
 
     /// <summary>一个**可接任务**（配置里有、玩家还没接）的展示信息。</summary>

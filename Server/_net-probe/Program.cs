@@ -22,6 +22,7 @@ using Google.Protobuf;
 using NBC.Framework.Net.Adapter;
 using NBC.Framework.Net.Sim;   // S8：网络模拟器（SimulatedTransport / NetSimProfile）
 using NBC.Game.Net;
+using NBC.Game.Quest;           // M4-S3 收口（§二十四）：进度「是谁说的」那一层（纯 C#，可在探针里真跑）
 using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
@@ -2870,6 +2871,46 @@ namespace NBC.NetProbe
                         Check("推送：发出去的份数如实（`Sent` 与收到的一致）",
                             push.Sent >= 1, "Sent=" + push.Sent + "；" + push.Describe());
                     }
+
+                    // ================================================================
+                    //  M4-S3 收口（`Docs\27` §二十四）：进度**是谁说的**
+                    //  ⚠️ 这一组盯的是本片**最容易回归**的地方：`TryGetCondition` 返回 false
+                    //     意思是「**服务端没说**」，**不是**「进度是 0」。
+                    //     把它当成 0 ⇒ 界面会画出「0/3」，玩家以为进度被清零了。
+                    // ================================================================
+                    var line = new QuestConditionLine { ConditionId = 4001, Current = 2, Required = 3 };
+
+                    int applied = QuestProgressOverlay.Apply(
+                        new List<QuestConditionLine> { line }, new SilentAuthority());
+
+                    Check("来源⭐：服务端**没说**这条 ⇒ 保留本地那个数（**不是 0**）",
+                        line.Current == 2 && line.Required == 3,
+                        "被改成了 " + line.Current + "/" + line.Required + "（2/3 才是对的）");
+
+                    Check("来源⭐：而且标成**本地预测**（界面要一眼看得出）",
+                        line.Source == EProgressSource.LocalPrediction &&
+                        QuestProgressOverlay.Mark(line.Source) == QuestProgressOverlay.LocalMark,
+                        "Source=" + line.Source + "；标注=" + QuestProgressOverlay.Mark(line.Source));
+
+                    Check("来源：一条都没拿到权威值 ⇒ 返回 0（调用方据此知道这批全是预测）",
+                        applied == 0, "applied=" + applied);
+
+                    QuestProgressOverlay.Apply(
+                        new List<QuestConditionLine> { line }, new SpeakingAuthority(4001, 3, 3, true));
+
+                    Check("来源：服务端**说了** ⇒ 以它为准，而且**不标**预测",
+                        line.Current == 3 && line.IsMet &&
+                        line.Source == EProgressSource.ServerAuthoritative &&
+                        QuestProgressOverlay.Mark(line.Source).Length == 0,
+                        "current=" + line.Current + "；met=" + line.IsMet + "；Source=" + line.Source);
+
+                    var untouched = new QuestConditionLine { ConditionId = 4002, Current = 5, Required = 9 };
+
+                    QuestProgressOverlay.Apply(new List<QuestConditionLine> { untouched }, null);
+
+                    Check("来源：没接权威（null）⇒ 与「权威没说话」同一条路：保持预测且不改数",
+                        untouched.Current == 5 && untouched.Source == EProgressSource.LocalPrediction,
+                        "current=" + untouched.Current + "；Source=" + untouched.Source);
                 }
             }
         }
@@ -3758,6 +3799,49 @@ namespace NBC.NetProbe
         }
 
         /// <summary>一个客户端（真 `TcpTransport`，Unity 侧那份源码）。</summary>
+        /// <summary>假权威：**什么都不认识**（= 服务端一条都没提过）。</summary>
+        private sealed class SilentAuthority : NBC.Game.Quest.IQuestProgressAuthority
+        {
+            /// <summary>被问过几次（证明"真的去问了"，而不是压根没接）。</summary>
+            public int Asked { get; private set; }
+
+            /// <inheritdoc/>
+            public bool TryGetCondition(int conditionId, out NBC.Game.Quest.AuthoritativeProgress progress)
+            {
+                Asked++;
+                progress = default(NBC.Game.Quest.AuthoritativeProgress);
+                return false;
+            }
+        }
+
+        /// <summary>假权威：**只回答一条**，其余沉默 —— 用来验"逐条判断"而不是"整批一刀切"。</summary>
+        private sealed class SpeakingAuthority : NBC.Game.Quest.IQuestProgressAuthority
+        {
+            /// <summary>我"说过"的那一条。</summary>
+            private readonly int m_conditionId;
+
+            /// <summary>我说的值。</summary>
+            private readonly NBC.Game.Quest.AuthoritativeProgress m_progress;
+
+            /// <summary>造一个。</summary>
+            /// <param name="conditionId">我认识的条件编号。</param>
+            /// <param name="current">已累计。</param>
+            /// <param name="required">需求值。</param>
+            /// <param name="met">达成了没有。</param>
+            public SpeakingAuthority(int conditionId, int current, int required, bool met)
+            {
+                m_conditionId = conditionId;
+                m_progress = new NBC.Game.Quest.AuthoritativeProgress(current, required, met);
+            }
+
+            /// <inheritdoc/>
+            public bool TryGetCondition(int conditionId, out NBC.Game.Quest.AuthoritativeProgress progress)
+            {
+                progress = m_progress;
+                return conditionId == m_conditionId;
+            }
+        }
+
         private sealed class Client
         {
             /// <summary>收到的服务端消息（已解出 protobuf）。</summary>

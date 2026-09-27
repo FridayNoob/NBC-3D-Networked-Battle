@@ -286,5 +286,177 @@ namespace NBC.Tests.EditMode
         {
             Assert.Throws<System.ArgumentNullException>(() => new QuestPanelModel(null));
         }
+
+        // ====================================================================
+        //  M4-S3 收口（`Docs\27` §二十四）：进度**是谁说的**
+        // ====================================================================
+        //  ⚠️ 这一组盯的是本片**最容易回归**的地方：`FindProgress` 返回 **null**
+        //     意思是"**服务端没说**"，而**不是**"进度是 0"。把前者画成「0/N」
+        //     会让玩家以为进度被清零了（而其实只是还没同步）。
+
+        /// <summary>测试用的假权威：只回答"我认识的那一条"，别的**一律沉默**（= 服务端没说）。</summary>
+        private sealed class FakeAuthority : IQuestProgressAuthority
+        {
+            /// <summary>我"说过"的那些条件。</summary>
+            private readonly Dictionary<int, AuthoritativeProgress> m_known =
+                new Dictionary<int, AuthoritativeProgress>();
+
+            /// <summary>被问过几次（证明"真的走了权威这条路"，而不是压根没接）。</summary>
+            public int Asked { get; private set; }
+
+            /// <summary>让某条条件有权威值。</summary>
+            /// <param name="conditionId">条件编号。</param>
+            /// <param name="current">已累计。</param>
+            /// <param name="required">需求值。</param>
+            /// <param name="met">达成了没有。</param>
+            public void Set(int conditionId, int current, int required, bool met)
+            {
+                m_known[conditionId] = new AuthoritativeProgress(current, required, met);
+            }
+
+            /// <inheritdoc/>
+            public bool TryGetCondition(int conditionId, out AuthoritativeProgress progress)
+            {
+                Asked++;
+                return m_known.TryGetValue(conditionId, out progress);
+            }
+        }
+
+        /// <summary>
+        /// 接一个任务，并把它的第一条条件在**本地**推到 `localCount`（= 界面上"客户端自己算"的那个数）。
+        /// <para>⚠️ 用 `TryGetDef` 反查事件与目标来推进度：这样用例**不依赖具体配置的编号**，
+        /// 表改了一个数字它也不会红。</para>
+        /// </summary>
+        /// <param name="localCount">要推到的数量。</param>
+        /// <returns>被推进的那条条件行（来自**这一次**构建的追踪视图）。</returns>
+        private QuestConditionLine PrimeLocalProgress(int localCount)
+        {
+            m_model.Accept(GameTestTables.DemoQuest);
+
+            List<QuestTracking> trackings = new List<QuestTracking>();
+            m_runtime.CopyActiveTrackings(trackings);
+
+            Assert.Greater(trackings.Count, 0, "接了任务之后应当有一行追踪");
+            Assert.Greater(trackings[0].Conditions.Count, 0, "这个任务应当至少有 1 条条件");
+
+            QuestConditionLine line = trackings[0].Conditions[0];
+
+            ConditionDef def;
+            Assert.IsTrue(m_tracker.TryGetDef(line.ConditionId, out def),
+                "条件应当已在接取时登记（编号 " + line.ConditionId + "）");
+
+            m_tracker.Notify(def.EventType, def.TargetId, localCount);
+
+            return line;
+        }
+
+        /// <summary>新造的条件行默认算**预测**（保守默认：忘了盖也不会显示得像事实）。</summary>
+        [Test]
+        public void ConditionLine_DefaultSource_IsLocalPrediction()
+        {
+            Assert.AreEqual(EProgressSource.LocalPrediction, new QuestConditionLine().Source);
+        }
+
+        /// <summary>
+        /// ⚠️ **本片最容易回归的一条**：服务端**没说**这条条件 ⇒
+        /// 必须保留**本地**那个数（绝不能变成 0/N），并且**标出来它是本地预测**。
+        /// </summary>
+        [Test]
+        public void Authority_SilentCondition_KeepsLocalValue_AndMarksItAsPrediction()
+        {
+            const int localCount = 2;
+
+            QuestConditionLine line = PrimeLocalProgress(localCount);
+            int required = line.Required;
+
+            var authority = new FakeAuthority();     // 什么都不认识 = 服务端没提过这条
+            m_model.Authority = authority;
+
+            List<QuestRow> rows = new List<QuestRow>();
+            m_model.CopyTrackingRows(rows);
+
+            string detail = rows[0].Detail;
+
+            Assert.Greater(authority.Asked, 0, "应当真的去问过权威（而不是压根没接上）");
+
+            // 本地那个数还在
+            StringAssert.Contains(localCount + "/" + required, detail);
+
+            // ⚠️ 关键：**绝不能**画成 0/N（把"服务端没说"当成"进度是 0"）
+            StringAssert.DoesNotContain("0/" + required, detail);
+
+            // 而且要一眼看得出它是预测
+            StringAssert.Contains(QuestProgressOverlay.LocalMark, detail);
+        }
+
+        /// <summary>服务端**说了** ⇒ 以它为准，而且**不标**成预测（标了就分不清真假）。</summary>
+        [Test]
+        public void Authority_Speaks_OverridesLocalValue_AndIsNotMarkedAsPrediction()
+        {
+            QuestConditionLine line = PrimeLocalProgress(2);
+
+            const int authoritativeCurrent = 1;
+            int required = line.Required;
+
+            var authority = new FakeAuthority();
+            authority.Set(line.ConditionId, authoritativeCurrent, required, false);
+            m_model.Authority = authority;
+
+            List<QuestRow> rows = new List<QuestRow>();
+            m_model.CopyTrackingRows(rows);
+
+            string detail = rows[0].Detail;
+
+            // 显示的是**服务端**那个数（1），不是本地那个（2）
+            StringAssert.Contains(authoritativeCurrent + "/" + required, detail);
+            StringAssert.DoesNotContain("2/" + required, detail);
+
+            // 权威值**不标**预测
+            StringAssert.DoesNotContain(QuestProgressOverlay.LocalMark, detail);
+        }
+
+        /// <summary>没接权威（`Authority == null`）⇒ 与"权威没说话"**同一条路**：一律标成预测。</summary>
+        [Test]
+        public void Authority_Null_EverythingIsMarkedAsPrediction()
+        {
+            PrimeLocalProgress(1);
+
+            m_model.Authority = null;
+
+            List<QuestRow> rows = new List<QuestRow>();
+            m_model.CopyTrackingRows(rows);
+
+            StringAssert.Contains(QuestProgressOverlay.LocalMark, rows[0].Detail);
+        }
+
+        /// <summary>权威值会**原地改写**条件行（供其它显示点复用同一份数据）。</summary>
+        [Test]
+        public void Overlay_OverwritesLinesInPlace_AndReportsHowMany()
+        {
+            var lines = new List<QuestConditionLine>();
+            QuestConditionLine a = new QuestConditionLine();
+            a.ConditionId = 4001;
+            a.Current = 0;
+            a.Required = 3;
+            QuestConditionLine b = new QuestConditionLine();
+            b.ConditionId = 4002;
+            b.Current = 5;
+            b.Required = 9;
+            lines.Add(a);
+            lines.Add(b);
+
+            var authority = new FakeAuthority();
+            authority.Set(4001, 3, 3, true);
+
+            int applied = QuestProgressOverlay.Apply(lines, authority);
+
+            Assert.AreEqual(1, applied, "只有 4001 拿到了权威值");
+            Assert.AreEqual(EProgressSource.ServerAuthoritative, a.Source);
+            Assert.AreEqual(3, a.Current);
+            Assert.IsTrue(a.IsMet);
+
+            Assert.AreEqual(EProgressSource.LocalPrediction, b.Source, "4002 服务端没说 ⇒ 保持预测");
+            Assert.AreEqual(5, b.Current, "而且**不许**被改成 0");
+        }
     }
 }

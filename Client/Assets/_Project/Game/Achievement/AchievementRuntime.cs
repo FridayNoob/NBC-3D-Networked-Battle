@@ -79,6 +79,15 @@ namespace NBC.Game.Achievement
         /// <summary>奖励表。</summary>
         private readonly RewardConfig m_rewards;
 
+        /// <summary>
+        /// **权威进度**的来源（`Docs\27` §二十四）。**可以事后设置**（`null` = 还没接）。
+        /// <para>⚠️ 用可写属性而不是构造参数：调用点都是"先建运行时、连上会话后再接权威"，
+        /// 塞进构造函数会逼着所有既有调用点（含用例）改签名。</para>
+        /// <para>它只影响 `BuildTracking` 造出来的**显示值**，不参与任何判定 ——
+        /// 判定永远在服务端（D3）。</para>
+        /// </summary>
+        public IQuestProgressAuthority Authority { get; set; }
+
         /// <summary>条件系统（**与任务共用同一个实例**）。</summary>
         private readonly ConditionTracker m_tracker;
 
@@ -655,6 +664,12 @@ namespace NBC.Game.Achievement
                 line.IsMet = progress.IsMet;
                 tracking.Conditions.Add(line);
             }
+
+            // ⚠️ **在返回之前**把权威值盖上去（`Docs\27` §二十四）：
+            //    成就是"服务端权威进度**真的管到**"的那一批（服务端目前只登记成就条件），
+            //    所以这里是"以服务端为准"最看得见的地方。
+            //    服务端没提过的条件 ⇒ 保留本地那份，只是被标成 `LocalPrediction`。
+            QuestProgressOverlay.Apply(tracking.Conditions, Authority);
 
             return tracking;
         }

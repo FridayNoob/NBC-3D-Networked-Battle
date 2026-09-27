@@ -68,6 +68,18 @@
          而"这个探针不需要 Unity"正是它存在的意义。
     -->
     <Compile Include="..\..\Client\Assets\_Project\Framework\Input\InputTypes.cs" />
+
+    <!--
+      ★ M4-S3 收口（`Docs\27` §二十四）：进度"**是谁说的**"那一层是**纯 C#**，
+        所以它能在探针里**真跑** —— 而"服务端没说 ≠ 进度是 0"这条正好是
+        本片最容易回归的地方，值得有一条能当场变红的检查。
+
+      ⚠️ **只列这三个文件**，别写 `Game\Quest\**`：那个目录通配会把
+         `QuestRuntime.cs`（引 EventCenter / UnityEngine）拖进来，探针就编不过了。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Game\Quest\IQuestProgressAuthority.cs" />
+    <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestProgressOverlay.cs" />
+    <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestTypes.cs" />
   </ItemGroup>
 
   <ItemGroup>

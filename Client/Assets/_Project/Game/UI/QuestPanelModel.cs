@@ -76,6 +76,13 @@ namespace NBC.Game.UI
         /// <summary>任务运行时（数据来源 + 动作执行者）。</summary>
         private readonly QuestRuntime m_quests;
 
+        /// <summary>
+        /// **权威进度**的来源（`Docs\27` §二十四）。**可以事后设置**（`null` = 还没接）。
+        /// <para>⚠️ 用可写属性而不是构造参数：调用点（面板 / 演示壳 / 用例）大都是
+        /// "先建模型、连上会话后再接权威"，塞进构造函数会逼着所有既有调用点改签名。</para>
+        /// </summary>
+        public IQuestProgressAuthority Authority { get; set; }
+
         /// <summary>复用的临时列表（避免每次刷新都分配）。</summary>
         private readonly List<QuestOffer> m_offers = new List<QuestOffer>();
 
@@ -157,6 +164,12 @@ namespace NBC.Game.UI
                 row.ActionName = SubmitPrefix + tracking.QuestId;
                 row.ActionLabel = "交付";
                 row.Title = "[" + tracking.QuestId + "] " + tracking.Name + "（" + StateText(tracking.State) + "）";
+
+                // ⚠️ **在拼文字之前**把权威值盖上去（`Docs\27` §二十四）：
+                //    这一句之后，每一行都带上了"这个数字是谁说的"（`Source`）。
+                //    没接权威 / 权威没提过这条 ⇒ 保留本地那份，只是被标成预测。
+                QuestProgressOverlay.Apply(tracking.Conditions, Authority);
+
                 row.Detail = BuildDetail(tracking);
 
                 // 只有"条件全满"才让按：让按钮点不动，比让玩家点了被拒绝更友好
@@ -282,7 +295,10 @@ namespace NBC.Game.UI
 
                 builder.Append(line.Description).Append("  ")
                        .Append(line.Current).Append('/').Append(line.Required)
-                       .Append(line.IsMet ? "  ✅" : string.Empty);
+                       .Append(line.IsMet ? "  ✅" : string.Empty)
+                       // ⚠️ 来源标注（**权威不标、预测才标**）：见 `QuestProgressOverlay.Mark`。
+                       //    没有它，玩家就分不清"这一格是事实"还是"客户端猜的"。
+                       .Append(QuestProgressOverlay.Mark(line.Source));
             }
 
             return builder.ToString();
