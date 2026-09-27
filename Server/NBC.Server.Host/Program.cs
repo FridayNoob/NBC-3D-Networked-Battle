@@ -31,6 +31,7 @@
 using System.Reflection;
 using NBC.Protocol;
 using NBC.Server.Core;
+using NBC.Server.Data;          // SRV-13：战绩落库（`BattleRecordDao` / `BattleRecordWriter`）
 using NBC.Server.Game;          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
 using NBC.Shared;
 using NBC.Shared.Net;
@@ -143,6 +144,57 @@ internal static class Program
         // 输入上行（S5b）：客户端只发**意图**，服务端说了算（动多远、打不打得到）
         battles.RegisterHandlers(router);
 
+        // ------------------------------------------------------------------
+        //  SRV-13：战绩落库（**可选** —— 没配好数据库就降级，见需求 DB-10）
+        // ------------------------------------------------------------------
+        //  ⚠️ 这里**故意不让服务端起不来**：需求 DB-10 原文是
+        //     "数据库不可用时服务端仍能启动，只让存档功能报错"。
+        //     所以连接失败只是"不落库 + 报一句"，其余功能照常。
+        //
+        //  ⚠️ 配置来源：`appsettings.json` **本文件还没读**（SRV-01 的欠账，
+        //     现在只认命令行 `--port/--ticks/--quiet`）。所以这里用的是
+        //     `DatabaseOptions` 的默认值（127.0.0.1:3306/nbc_db/root，与 appsettings 一致）
+        //     + 环境变量 `NBC_DB_PASSWORD`。等 SRV-01 做了再改成读配置。
+        //
+        //  ⚠️ 启动时**同步探一次活**（`.GetAwaiter().GetResult()`）：这发生在**主循环之前**，
+        //     阻塞几百毫秒换来"启动横幅明说数据库通不通"，是划算的。
+        //     主循环里**绝不能**这么写 —— 那正是 `BattleRecordWriter` 存在的理由。
+        BattleRecordDao? recordDao = null;
+        var dbOptions = new NBC.Server.Data.DatabaseOptions();
+        dbOptions.ApplyPasswordFromEnvironment();
+
+        if (string.IsNullOrEmpty(dbOptions.Password))
+        {
+            Console.WriteLine("[战绩] 未接数据库：没设 NBC_DB_PASSWORD（战绩不落库，其余照常）。");
+        }
+        else
+        {
+            try
+            {
+                var dbFactory = new NBC.Server.Data.DbConnectionFactory(dbOptions);
+                NBC.Server.Data.PingResult ping = dbFactory.PingAsync().GetAwaiter().GetResult();
+
+                if (ping.Ok)
+                {
+                    recordDao = new BattleRecordDao(dbFactory);
+                    Console.WriteLine($"[战绩] 已接数据库：{dbOptions.Describe()} → 一局打完写入 battle_record");
+                }
+                else
+                {
+                    Console.WriteLine("[战绩] 数据库连不上，战绩**不落库**（服务端照常跑）：");
+                    Console.WriteLine("       " + (ping.Reason ?? string.Empty).Replace("\n", "\n       "));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[战绩] 初始化数据库失败，战绩**不落库**（服务端照常跑）：" + ex.Message);
+            }
+        }
+
+        var recordWriter = new BattleRecordWriter(recordDao);
+        recordWriter.Note += line => Log(quiet, "[战绩] " + line);
+        battles.BattleFinished += recordWriter.Submit;   // ⚠️ 这一行才是 SRV-13 真正"生效"的地方
+
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
 
         transport.SessionOpened += session =>
@@ -210,6 +262,14 @@ internal static class Program
         Console.WriteLine("[收尾] 正在关闭监听……");
         transport.Stop();
 
+        // SRV-17：优雅关闭要**把战绩写完**再退。⚠️ 带超时 ——
+        // 关服务端不该因为"库连不上"而卡住不退出。
+        if (recordWriter.PendingCount > 0 || recordWriter.Submitted > 0)
+        {
+            bool drained = recordWriter.FlushAsync(3000).GetAwaiter().GetResult();
+            Console.WriteLine("[收尾] 战绩落库" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
+        }
+
         Console.WriteLine($"[统计] 接受连接 {transport.TotalAccepted}，断开 {transport.TotalClosed}，" +
                           $"握手成功 {pump.HandshakesAccepted}，被拒 {pump.HandshakesRejected}，" +
                           $"踢出 {pump.Kicks}，解不出 {pump.Undecodable}");
@@ -219,6 +279,7 @@ internal static class Program
         Console.WriteLine($"[统计] 收到输入 {battles.InputsReceived} 条（拒绝 {battles.InputsRejected}），" +
                           $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
         Console.WriteLine($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
+        Console.WriteLine($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
         Console.WriteLine($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

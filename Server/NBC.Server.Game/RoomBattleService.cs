@@ -143,6 +143,30 @@ public sealed class RoomBattleService
     /// <summary>累计广播出去多少条死亡事件（M4-S1）。</summary>
     public long DeathsSent { get; private set; }
 
+    /// <summary>累计打完了几局（`DungeonBattle.IsFinished` 第一次为真时记一次）。`SRV-13`</summary>
+    public long BattlesFinished { get; private set; }
+
+    /// <summary>
+    /// 一局打完了（**战绩草稿**）。`SRV-13`
+    /// <para>⚠️ 为什么是"事件"而不是让本类直接写库：
+    /// 本类在 `NBC.Server.Game`（**纯逻辑**），引 `NBC.Server.Data` 会把 MySQL
+    /// 拖进逻辑层 —— 那就变成"想验一个伤害公式，得先起数据库"。
+    /// ⇒ 由 **组合根**（`NBC.Server.Host`）把这个事件接到数据层上，与 M2 的
+    /// `IQuestRewardSink`（"该不该发"与"怎么发"分开）是同一个套路。</para>
+    /// <para>⚠️ 订阅方**不许在这里阻塞**（它跑在 Tick 线程上）。写库必须异步 + 脱离主循环。</para>
+    /// </summary>
+    public event Action<BattleRecordDraft>? BattleFinished;
+
+    /// <summary>
+    /// 已经交过战绩的房间（**打完只交一次**）。
+    /// <para>⚠️ 少了它会怎样：`IsFinished` 一旦为真就**永远为真**，
+    /// 于是**每一帧都会再交一次**战绩 —— 数据库里瞬间多出几百条重复记录。</para>
+    /// </summary>
+    private readonly HashSet<string> _recorded = new(StringComparer.Ordinal);
+
+    /// <summary>战绩草稿的复用缓冲（避免每局都新建两个 List）。</summary>
+    private readonly List<BattlePlayerStat> _statBuffer = new();
+
     /// <summary>把输入处理器注册进路由（**显式注册**，见 `ServerMessageRouter`）。</summary>
     /// <param name="router">路由。</param>
     public void RegisterHandlers(ServerMessageRouter router)
@@ -187,6 +211,7 @@ public sealed class RoomBattleService
             BroadcastCombatEvents(battle, room); // ⑤ 伤害 + 死亡事件（M4-S1）：顺序就是客户端的因果顺序
             BroadcastDrops(battle, room);       // ⑥ 掉落事件（S7）：**同一份字节发给全房**
             BroadcastSnapshot(battle, room);    // ⑦
+            RecordIfFinished(room, battle);     // ⑧ SRV-13：打完了就交一份战绩草稿（**只交一次**）
             TicksRun++;
         }
     }
@@ -535,6 +560,79 @@ public sealed class RoomBattleService
     }
 
     /// <summary>房间没了就把它的世界删掉（见文件头第四节）。</summary>
+    /// <summary>
+    /// 这一局打完了吗？打完就交一份**战绩草稿**（每局只交一次）。`SRV-13`
+    /// <para>⚠️ 三处刻意的决定：</para>
+    /// <list type="number">
+    ///   <item><b>用 `_recorded` 去重</b>：`IsFinished` 一旦为真就永远为真，
+    ///     不去重就是"每帧写一条战绩"。</item>
+    ///   <item><b>不在这里写库</b>：本类是纯逻辑，写库交给订阅方（组合根接线）。</item>
+    ///   <item><b>"房间没人了"不算一局</b>（那在 `DropBattlesOfDeadRooms` 里直接回收）：
+    ///     那种局没有"结果"，记下来只会污染统计。⚠️ 但**已经把草稿交出去的局，
+    ///     房间散了不影响它**（草稿已经离开本类了）。</item>
+    /// </list>
+    /// </summary>
+    /// <param name="room">房间。</param>
+    /// <param name="battle">这一局的世界。</param>
+    private void RecordIfFinished(Room room, DungeonBattle battle)
+    {
+        if (!battle.IsFinished)
+        {
+            return;
+        }
+
+        if (!_recorded.Add(room.RoomId))
+        {
+            return;     // 这一局已经交过了（见上面第 1 条）
+        }
+
+        Action<BattleRecordDraft>? handler = BattleFinished;
+
+        if (handler == null)
+        {
+            // 没人订阅（例如 `_net-probe` 里）⇒ 什么都不做。
+            // ⚠️ 但**仍然要记进 `_recorded`**，否则每帧都会走到这里白算一遍。
+            BattlesFinished++;
+            return;
+        }
+
+        BattleRecordDraft draft = BuildDraft(room, battle);
+        BattlesFinished++;
+        handler(draft);
+    }
+
+    /// <summary>把一局的现状拼成战绩草稿。</summary>
+    /// <param name="room">房间。</param>
+    /// <param name="battle">这一局的世界。</param>
+    /// <returns>草稿。</returns>
+    private BattleRecordDraft BuildDraft(Room room, DungeonBattle battle)
+    {
+        var draft = new BattleRecordDraft
+        {
+            RoomId = room.RoomId,
+            MapId = battle.DungeonId,
+            SyncModeCode = 1,               // 副本走状态同步（`SyncMode.State`）
+            RandomSeed = battle.RandomSeed,
+            StartTick = 0,                  // ⚠️ 战斗世界是**每局新建**的，帧号从 0 开始
+            EndTick = battle.Tick,
+            TickIntervalMs = NetContract.TickIntervalMs,
+
+            // "怪被清光"算赢。⚠️ 别用 `!IsFinished` 反推：英雄全死时 IsFinished 也是真，
+            //    而那明显是**输**。
+            IsWin = battle.AliveMonsterCount == 0,
+        };
+
+        _statBuffer.Clear();
+        battle.CopyPlayerStats(_statBuffer);
+
+        for (int i = 0; i < _statBuffer.Count; i++)
+        {
+            draft.Players.Add(new BattlePlayerDraft(_statBuffer[i], draft.IsWin));
+        }
+
+        return draft;
+    }
+
     private void DropBattlesOfDeadRooms()
     {
         if (_battles.Count == 0)
@@ -562,6 +660,8 @@ public sealed class RoomBattleService
         for (int i = 0; i < dead.Count; i++)
         {
             _battles.Remove(dead[i]);
+            _recorded.Remove(dead[i]);      // ⚠️ 一起清：房号是**递增复用**的（r1、r2…），
+                                            //    留着旧记录会让"以后某个也叫 r1 的房间"被误判成交过了
             BattlesDropped++;
             Note?.Invoke($"房间 {dead[i]} 已经没人了，战斗世界已回收");
         }

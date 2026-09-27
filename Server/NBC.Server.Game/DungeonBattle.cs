@@ -380,6 +380,16 @@ public sealed class DungeonBattle
     /// <summary>待广播的服务端事件（掉落等；由 `RoomBattleService` 每帧取走，S7）。</summary>
     private readonly List<DropEvent> _pendingDrops = new();
 
+    /// <summary>
+    /// 每个玩家在这一局里的战绩（**一边打一边加**，打完交给数据层）。`SRV-13`
+    /// <para>⚠️ 为什么在这里累加、而不是让 `RoomBattleService` 从广播出去的事件里反推：
+    /// `DamageEvent.attacker_id` / `DeathEvent.killer_id` 是**实例编号**（`BattleEntity.Id`），
+    /// 而战绩要按**玩家**记（`BattleEntity.PlayerId`）。反推就得再做一次"实例 → 玩家"的映射；
+    /// 而 `ApplyDamage` 里**两个实体都在手上**，直接取最省事也最不容易错。
+    /// ⇒ **在信息最全的地方记账。**</para>
+    /// </summary>
+    private readonly Dictionary<long, BattlePlayerStat> _playerStats = new Dictionary<long, BattlePlayerStat>();
+
     /// <summary>待广播的伤害事件（M4-S1：每一次扣血一条）。</summary>
     private readonly List<DamageEvent> _pendingHits = new();
 
@@ -494,8 +504,18 @@ public sealed class DungeonBattle
         BasicAttackDamage = basicAttackDamage;
 
         // 种子：**同一房间的同一局要能复现**（M3 用固定常数 + 房号派生；历史对局的复现要记种子，属 M5）
-        _random = new BattleRandom(0x5EED_2026 ^ StableHash(roomId));
+        RandomSeed = 0x5EED_2026 ^ StableHash(roomId);
+        _random = new BattleRandom(RandomSeed);
     }
+
+    /// <summary>
+    /// 本局用的随机种子。`SRV-13`
+    /// <para>⚠️ **记到战绩里**（`battle_record.random_seed` 那一列本来就是为它准备的）：
+    /// 那个列存在了一整个 M3 都填不进去，就是因为**没有地方能问到真正的种子** ——
+    /// 它是 `DungeonBattle` 内部算的。⇒ 与其让落库那边再算一遍（两处实现迟早不一致），
+    /// 不如**从产生它的地方问**。</para>
+    /// </summary>
+    public int RandomSeed { get; }
 
     /// <summary>把配置表挂上来（`FromDungeon` 会调；挂上之后"怪死"才会掷掉落）。</summary>
     /// <param name="tables">配置表。</param>
@@ -812,6 +832,21 @@ public sealed class DungeonBattle
             RemainingHp = outcome.RemainingHp,
         });
 
+        // SRV-13：**在这里记账**（两个实体都在手上，理由见 `_playerStats` 的说明）。
+        // ⚠️ 记的同样是 `outcome.Applied`（实际扣掉的血）—— 与上面那条事件**口径一致**，
+        //    否则会出现"伤害事件说 5、战绩说 100"这种对不上的两口账。
+        BattleEntity? attackerEntity = attackerId == 0 ? null : Find(attackerId);
+
+        if (attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId > 0)
+        {
+            StatOf(attackerEntity).DamageDealt += outcome.Applied;
+        }
+
+        if (target.Kind == 0 && target.PlayerId > 0)
+        {
+            StatOf(target).DamageTaken += outcome.Applied;
+        }
+
         // **从活着打到死**那一下才掷掉落（打尸体不重复掉，M2 已经在共享层钉过"打 0 血不判致死"）
         if (wasAlive && !target.Alive)
         {
@@ -827,6 +862,18 @@ public sealed class DungeonBattle
                 KillerId = attackerId,
             });
 
+            // SRV-13：死亡/击杀也记账。
+            // ⚠️ 口径：**怪死算击杀、英雄死算死亡**；玩家自己死**不算**击杀
+            //    （否则"自杀"或"被怪打死"会刷出击杀数）。
+            if (target.Kind == 0 && target.PlayerId > 0)
+            {
+                StatOf(target).Death++;
+            }
+            else if (target.Kind == 1 && attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId > 0)
+            {
+                StatOf(attackerEntity).Kill++;
+            }
+
             if (target.Kind == 1 && _tables != null)
             {
                 BattleEntity? attacker = Find(attackerId);
@@ -836,6 +883,57 @@ public sealed class DungeonBattle
         }
 
         return DamageResult.Success(target, outcome, attackerId);
+    }
+
+    /// <summary>
+    /// 取这个玩家在这一局里的战绩累加器（没有就建一个）。`SRV-13`
+    /// <para>⚠️ 建累加器时就把英雄配置号填上：他可能在**第一次受伤之前**就死了（被秒），
+    /// 那时还没有任何伤害记账 —— 若只在"第一次记伤害"时建累加器，这个玩家就会漏掉。</para>
+    /// </summary>
+    /// <param name="entity">玩家控制的英雄实体（`Kind == 0`）。</param>
+    /// <returns>累加器。</returns>
+    private BattlePlayerStat StatOf(BattleEntity entity)
+    {
+        BattlePlayerStat? stat;
+
+        if (!_playerStats.TryGetValue(entity.PlayerId, out stat))
+        {
+            stat = new BattlePlayerStat
+            {
+                PlayerId = entity.PlayerId,
+                HeroConfigId = entity.ConfigId,
+            };
+
+            _playerStats[entity.PlayerId] = stat;
+        }
+
+        return stat;
+    }
+
+    /// <summary>
+    /// 把所有玩家的战绩复制出来（**按玩家编号升序**，让同一个房间的多次记录可对比）。
+    /// <para>⚠️ 这里**只给草稿数据，不碰数据库** —— 落库是 `NBC.Server.Data` 的事，
+    /// 而本工程（纯逻辑）不许引它。见 `BattleRecordDraft` 的文件头。</para>
+    /// </summary>
+    /// <param name="buffer">接收结果的表（会先清空）。</param>
+    public void CopyPlayerStats(List<BattlePlayerStat> buffer)
+    {
+        if (buffer == null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        buffer.Clear();
+
+        // ⚠️ 排序：字典遍历顺序**不保证**稳定，而"同一局两次导出顺序不同"
+        //    会让 `battle_player_detail` 的顺序飘 —— 排序是**确定性**的要求。
+        var ids = new List<long>(_playerStats.Keys);
+        ids.Sort();
+
+        for (int i = 0; i < ids.Count; i++)
+        {
+            buffer.Add(_playerStats[ids[i]]);
+        }
     }
 
     /// <summary>

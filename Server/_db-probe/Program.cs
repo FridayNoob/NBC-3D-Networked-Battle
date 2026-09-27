@@ -24,7 +24,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
+using MySqlConnector;
 using NBC.Server.Data;
+using NBC.Server.Game;
 using NBC.Shared.Reward;
 
 namespace NBC.DbProbe
@@ -86,6 +89,11 @@ namespace NBC.DbProbe
             Console.WriteLine("【五】真库：台账往返（需要凭据）");
 
             await LedgerMySqlSection().ConfigureAwait(false);
+
+            Console.WriteLine();
+            Console.WriteLine("【六】真库：战绩落库 SRV-13（记录 + 明细 + 档案累计，一次事务）");
+
+            await BattleRecordSection().ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
@@ -709,6 +717,357 @@ namespace NBC.DbProbe
             // ⑤ 收尾
             int cleaned = await dao.DeleteByPlayerAsync(playerId).ConfigureAwait(false);
             Check("真库台账：收尾把测试数据删干净", cleaned == 1, "删了 " + cleaned + " 行");
+        }
+
+        // ====================================================================
+        //  六、真库：战绩落库（SRV-13）
+        // ====================================================================
+
+        /// <summary>
+        /// 一局战绩真的写进库了吗（`battle_record` + `battle_player_detail` + `player_profile` 累计）。
+        /// <para>⚠️ 本块**会真改 `player_profile` 的累计列**，收尾时**按同样数量减回去** ——
+        /// 所以它必须记录"写之前是多少"，而不是"减一个期望值"（那样一旦中途失败就会**永久改坏**演示数据）。</para>
+        /// <para>⚠️ 本块**不测强制失败回滚**：要让事务在"记录已插、明细将插"之间失败需要一个
+        /// 故障注入接缝（DAO 目前没有）。⇒ 如实记为**未覆盖**，而不是假装覆盖了。</para>
+        /// </summary>
+        /// <returns>任务。</returns>
+        private static async Task BattleRecordSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】，这不是「通过」是「没跑」。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过（DB-10 的形状已由【三】验过）。");
+                return;
+            }
+
+            // ---- ① 房号转换（纯函数，先验它）----
+            Check("房号 `r12` → 12（`battle_record.room_id` 是 BIGINT）",
+                BattleRecordDao.ToNumericRoomId("r12") == 12, "得到 " + BattleRecordDao.ToNumericRoomId("r12"));
+            Check("房号 `7` → 7", BattleRecordDao.ToNumericRoomId("7") == 7, "得到 " + BattleRecordDao.ToNumericRoomId("7"));
+            Check("房号 `abc` → 稳定哈希（同样输入永远同一结果，不可逆）",
+                BattleRecordDao.ToNumericRoomId("abc") == BattleRecordDao.ToNumericRoomId("abc") &&
+                BattleRecordDao.ToNumericRoomId("abc") != 0,
+                "得到 " + BattleRecordDao.ToNumericRoomId("abc"));
+
+            var dao = new BattleRecordDao(factory);
+
+            // ---- ② 记录写之前的累计（收尾要用它**精确减回去**）----
+            const long knownPlayer = 1;         // `Docs\08` 种了 1~4
+            const long unknownPlayer = 999999;  // 一定没有档案
+
+            PlayerTotals before = await ReadTotalsAsync(factory, knownPlayer).ConfigureAwait(false);
+
+            Check("前置：player 1 有档案（能读到期累计）", before.Exists,
+                "读不到 player_profile.player_id = 1；先跑一次 Docs\\08-数据库脚本.sql");
+
+            if (!before.Exists)
+            {
+                return;
+            }
+
+            // ---- ③ 造一份草稿：一个**有档案**的玩家 + 一个**没档案**的玩家 ----
+            var draft = new BattleRecordDraft
+            {
+                RoomId = "r12",
+                MapId = 1001,
+                SyncModeCode = 1,
+                RandomSeed = 12345,
+                StartTick = 0,
+                EndTick = 90,
+                TickIntervalMs = 33,
+                IsWin = true,
+            };
+
+            draft.Players.Add(new BattlePlayerDraft(
+                new BattlePlayerStat
+                {
+                    PlayerId = knownPlayer,
+                    HeroConfigId = 1001,
+                    Kill = 3,
+                    Death = 1,
+                    DamageDealt = 777,
+                    DamageTaken = 123,
+                },
+                isWin: true));
+
+            draft.Players.Add(new BattlePlayerDraft(
+                new BattlePlayerStat
+                {
+                    PlayerId = unknownPlayer,
+                    HeroConfigId = 1001,
+                    Kill = 1,
+                    Death = 0,
+                    DamageDealt = 5,
+                    DamageTaken = 0,
+                },
+                isWin: true));
+
+            Check("草稿的 result_json 是**合法 JSON 形状**（含原始房号）",
+                draft.ToResultJson().Contains("\"room\":\"r12\"") && draft.ToResultJson().EndsWith("]}"),
+                draft.ToResultJson());
+
+            // ---- ④ 写 ----
+            BattleRecordWriteResult written = await dao.SaveAsync(draft).ConfigureAwait(false);
+
+            Check("真库：写进去了（拿到 record_id）", written.RecordId > 0, "recordId = " + written.RecordId);
+            Check("真库：明细**只给有档案的那个玩家**（跳过 1 个）",
+                written.DetailRows == 1 && written.SkippedPlayers == 1,
+                "明细 " + written.DetailRows + " 条、跳过 " + written.SkippedPlayers + " 个");
+            Console.WriteLine("      · " + written);
+
+            // ---- ⑤ 读回来核对 ----
+            BattleRecordRow? row = await ReadRecordAsync(factory, written.RecordId).ConfigureAwait(false);
+
+            Check("真库：battle_record 读得回来", row != null, "读不到 record_id = " + written.RecordId);
+
+            if (row != null)
+            {
+                Check("真库：room_id 是 12（不是 0、也不是 r12）", row.room_id == 12, "room_id = " + row.room_id);
+                Check("真库：map_id / seed / 起止帧 / 时长都对",
+                    row.map_id == 1001 && row.random_seed == 12345 &&
+                    row.start_tick == 0 && row.end_tick == 90 && row.duration_ms == 90 * 33,
+                    $"map={row.map_id} seed={row.random_seed} tick={row.start_tick}..{row.end_tick} ms={row.duration_ms}");
+                Check("真库：game_mode = 1（PVE）、sync_mode = 1（状态同步）",
+                    row.game_mode == 1 && row.sync_mode == 1,
+                    "game_mode=" + row.game_mode + " sync_mode=" + row.sync_mode);
+                Check("真库：result_json 里留着**原始房号**（数字不可逆时的补救）",
+                    row.result_json != null && row.result_json.Contains("\"room\": \"r12\""),
+                    row.result_json ?? "(null)");
+            }
+
+            int details = await CountDetailsAsync(factory, written.RecordId).ConfigureAwait(false);
+            Check("真库：明细**恰好 1 条**（没档案那个没写进去）", details == 1, "库里有 " + details + " 条");
+
+            // ---- ⑥ 档案累计真的涨了吗（SRV-13 的后半句）----
+            PlayerTotals after = await ReadTotalsAsync(factory, knownPlayer).ConfigureAwait(false);
+
+            Check("真库：player_profile 的累计**加上去了**（kill +3、death +1、win +1）",
+                after.Kill == before.Kill + 3 && after.Death == before.Death + 1 &&
+                after.Win == before.Win + 1 && after.Lose == before.Lose,
+                $"before(k={before.Kill},d={before.Death},w={before.Win},l={before.Lose}) " +
+                $"after(k={after.Kill},d={after.Death},w={after.Win},l={after.Lose})");
+
+            // ---- ⑦ 收尾：**精确减回去**，并删掉记录（外键：先删明细再删记录）----
+            await RestoreTotalsAsync(factory, knownPlayer, before, after).ConfigureAwait(false);
+            int removedDetails = await DeleteDetailsAsync(factory, written.RecordId).ConfigureAwait(false);
+            int removedRecord = await DeleteRecordAsync(factory, written.RecordId).ConfigureAwait(false);
+
+            PlayerTotals restored = await ReadTotalsAsync(factory, knownPlayer).ConfigureAwait(false);
+
+            Check("收尾：测试数据删干净（明细 + 记录）",
+                removedDetails == 1 && removedRecord == 1,
+                "删了明细 " + removedDetails + " 条、记录 " + removedRecord + " 条");
+            Check("收尾：档案累计**恢复原值**（不留下测试痕迹）",
+                restored.Kill == before.Kill && restored.Death == before.Death &&
+                restored.Win == before.Win && restored.Lose == before.Lose,
+                $"期望(k={before.Kill},d={before.Death},w={before.Win},l={before.Lose}) " +
+                $"实际(k={restored.Kill},d={restored.Death},w={restored.Win},l={restored.Lose})");
+        }
+
+        /// <summary>`player_profile` 的四个累计列。</summary>
+        private readonly struct PlayerTotals
+        {
+            /// <summary>有档案吗。</summary>
+            public readonly bool Exists;
+
+            /// <summary>累计击杀。</summary>
+            public readonly int Kill;
+
+            /// <summary>累计死亡。</summary>
+            public readonly int Death;
+
+            /// <summary>累计胜场。</summary>
+            public readonly int Win;
+
+            /// <summary>累计败场。</summary>
+            public readonly int Lose;
+
+            /// <summary>造一个。</summary>
+            /// <param name="exists">有档案吗。</param>
+            /// <param name="kill">击杀。</param>
+            /// <param name="death">死亡。</param>
+            /// <param name="win">胜。</param>
+            /// <param name="lose">败。</param>
+            public PlayerTotals(bool exists, int kill, int death, int win, int lose)
+            {
+                Exists = exists;
+                Kill = kill;
+                Death = death;
+                Win = win;
+                Lose = lose;
+            }
+        }
+
+        /// <summary>`battle_record` 的一行（读回来核对用）。</summary>
+        private sealed class BattleRecordRow
+        {
+            /// <summary>房号（数字）。</summary>
+            public long room_id { get; set; }
+
+            /// <summary>模式。</summary>
+            public int game_mode { get; set; }
+
+            /// <summary>同步模式。</summary>
+            public int sync_mode { get; set; }
+
+            /// <summary>副本。</summary>
+            public int map_id { get; set; }
+
+            /// <summary>种子。</summary>
+            public int random_seed { get; set; }
+
+            /// <summary>起始帧。</summary>
+            public long start_tick { get; set; }
+
+            /// <summary>结束帧。</summary>
+            public long end_tick { get; set; }
+
+            /// <summary>时长。</summary>
+            public int duration_ms { get; set; }
+
+            /// <summary>汇总 JSON。</summary>
+            public string? result_json { get; set; }
+        }
+
+        /// <summary>读一个玩家的累计。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>累计。</returns>
+        private static async Task<PlayerTotals> ReadTotalsAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "SELECT `total_kill`, `total_death`, `total_win`, `total_lose` " +
+                               "FROM `player_profile` WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                // ⚠️ 用**可变类**接 Dapper 的结果，不用 `readonly struct`：
+                //    探针第一版直接映射到 `PlayerTotals`（readonly struct + 带参构造），
+                //    Dapper **构造不出来** ⇒ 静默返回 `default` ⇒ "读不到档案"的**假失败**。
+                //    📌 教训：ORM 映射的目标类型要**能无参构造 + 有可写属性**，
+                //       否则它不报错、只给你一个默认值 —— 又一条"静默失败"。
+                TotalsDto? dto = await connection.QueryFirstOrDefaultAsync<TotalsDto>(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+
+                return dto == null
+                    ? new PlayerTotals(false, 0, 0, 0, 0)
+                    : new PlayerTotals(true, dto.total_kill, dto.total_death, dto.total_win, dto.total_lose);
+            }
+        }
+
+        /// <summary>Dapper 映射用的可变 DTO（见 `ReadTotalsAsync` 里的说明）。</summary>
+        private sealed class TotalsDto
+        {
+            /// <summary>累计击杀。</summary>
+            public int total_kill { get; set; }
+
+            /// <summary>累计死亡。</summary>
+            public int total_death { get; set; }
+
+            /// <summary>累计胜场。</summary>
+            public int total_win { get; set; }
+
+            /// <summary>累计败场。</summary>
+            public int total_lose { get; set; }
+        }
+
+        /// <summary>把累计**按差值精确减回去**（不是减一个期望值 —— 见本块的说明）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="before">写之前。</param>
+        /// <param name="after">写之后。</param>
+        /// <returns>任务。</returns>
+        private static async Task RestoreTotalsAsync(DbConnectionFactory factory, long playerId,
+                                                    PlayerTotals before, PlayerTotals after)
+        {
+            const string sql = "UPDATE `player_profile` SET " +
+                               "`total_kill` = `total_kill` - @Kill, `total_death` = `total_death` - @Death, " +
+                               "`total_win` = `total_win` - @Win, `total_lose` = `total_lose` - @Lose " +
+                               "WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                await connection.ExecuteAsync(new CommandDefinition(sql, new
+                {
+                    Kill = after.Kill - before.Kill,
+                    Death = after.Death - before.Death,
+                    Win = after.Win - before.Win,
+                    Lose = after.Lose - before.Lose,
+                    PlayerId = playerId,
+                })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>读一条战绩记录。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="recordId">记录编号。</param>
+        /// <returns>行（读不到返回 null）。</returns>
+        private static async Task<BattleRecordRow?> ReadRecordAsync(DbConnectionFactory factory, long recordId)
+        {
+            const string sql = "SELECT `room_id`, `game_mode`, `sync_mode`, `map_id`, `random_seed`, " +
+                               "`start_tick`, `end_tick`, `duration_ms`, CAST(`result_json` AS CHAR) AS result_json " +
+                               "FROM `battle_record` WHERE `record_id` = @recordId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.QueryFirstOrDefaultAsync<BattleRecordRow>(
+                    new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>数一条记录有几条明细。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="recordId">记录编号。</param>
+        /// <returns>条数。</returns>
+        private static async Task<int> CountDetailsAsync(DbConnectionFactory factory, long recordId)
+        {
+            const string sql = "SELECT COUNT(*) FROM `battle_player_detail` WHERE `record_id` = @recordId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(
+                    new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>删一条记录的全部明细（**外键要求先删它**）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="recordId">记录编号。</param>
+        /// <returns>删了几条。</returns>
+        private static async Task<int> DeleteDetailsAsync(DbConnectionFactory factory, long recordId)
+        {
+            const string sql = "DELETE FROM `battle_player_detail` WHERE `record_id` = @recordId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>删一条记录。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="recordId">记录编号。</param>
+        /// <returns>删了几条。</returns>
+        private static async Task<int> DeleteRecordAsync(DbConnectionFactory factory, long recordId)
+        {
+            const string sql = "DELETE FROM `battle_record` WHERE `record_id` = @recordId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
+            }
         }
 
         // ====================================================================

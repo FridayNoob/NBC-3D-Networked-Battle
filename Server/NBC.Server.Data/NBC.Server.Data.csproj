@@ -43,6 +43,21 @@
       ⚠️ 是"数据层实现共享层的接缝"，不是"共享层认识数据层" —— 方向不能反。
     -->
     <ProjectReference Include="..\NBC.Shared\NBC.Shared.csproj" />
+
+    <!--
+      ⚠️ **数据层引用逻辑层**（`Data -> Game`），方向是**刻意**的，且**不成环**：
+
+          完整依赖：Host -> Data -> Game -> Core -> Shared
+                    Host -> Game（Host 直接用逻辑层）
+
+      · 为什么需要它：落库要认 `BattleRecordDraft`（战绩草稿），而那个类型住在 Game
+        —— 因为它是**纯数据描述**，不该为了"方便落库"就把 MySQL 拖进逻辑层。
+      · 为什么不成环：`Game` **不引用** `Data`（这正是"纯逻辑要能在没有数据库的环境里跑测试"
+        的那条约束）。所以"逻辑层不知道数据库存在"依然成立，
+        而"数据层认识逻辑层的领域对象"是正常的（它本来就是在给领域对象做持久化）。
+      ⇒ 判据：**看的是"谁不知道谁"**，不是"谁引用了谁"。`Game` 不知道 `Data`，就够了。
+    -->
+    <ProjectReference Include="..\NBC.Server.Game\NBC.Server.Game.csproj" />
   </ItemGroup>
 
   <ItemGroup>
