@@ -155,6 +155,22 @@ internal static class Program
 
         Say($"[Check] {tables.Describe()}");
 
+        // 任务 / 成就 / 条件 / 奖励四张表（M4-S3 服务端权威化）。
+        // ⚠️ 与战斗表**分开读、失败后果也不同**：战斗表读不到**拒绝启动**（进副本没怪），
+        //    而这四张表读不到只是"成就判定没有配置"——服务端照样能打，所以只**警告**。
+        QuestTables? questTables = null;
+
+        if (QuestTables.TryLoad(configDir, out QuestTables loadedQuests, out string questError))
+        {
+            questTables = loadedQuests;
+            Say($"[Check] 任务成就表：{loadedQuests.Describe()}");
+        }
+        else
+        {
+            Say("[警告] 读不到任务/成就/奖励表，**服务端权威的成就判定不会工作**：");
+            Say("       " + questError);
+        }
+
         // ⚠️ 把"服务端**真正读到**的掉落配置"印出来（2026-09-23 负责人踩过这个坑）：
         //    服务端读的是 `Configs\Design\*.csv`（真源），而 Unity 侧读的是生成的 SO ——
         //    只改 SO 的话服务端**看不到**，表现是"打死了什么都不掉"，且不报任何错。
@@ -282,6 +298,39 @@ internal static class Program
         battles.BattleFinished += recordWriter.Submit;   // ⚠️ 这一行才是 SRV-13 真正"生效"的地方
 
         // ------------------------------------------------------------------
+        //  M4-S3 服务端权威：成就判定（§二十一）
+        // ------------------------------------------------------------------
+        //  ⚠️ **判定逻辑一行没改** —— 用的还是共享层的 `ConditionTracker`（和客户端同一份源码），
+        //     只是换了个执行者：**服务端说了算**，并且接上了 `condition_progress` + `reward_granted`。
+        //  ⚠️ 没接数据库时**故意不接**（`Track` 直接返回 false）：只判不记会让人以为成就系统好了。
+        AchievementAuthority? achievements = null;
+
+        if (questTables != null && dbFactory != null)
+        {
+            DbConnectionFactory liveFactory = dbFactory;
+
+            achievements = new AchievementAuthority(
+                questTables,
+                playerId => new CachingConditionProgressStore(new ConditionProgressDao(liveFactory), playerId),
+                playerId => new MySqlRewardLedger(new RewardLedgerDao(liveFactory), playerId));
+
+            achievements.Note += line => Log(quiet, "[成就] " + line);
+            battles.Achievements = achievements;
+
+            // 一局结束就冲一次库（**fire-and-forget**：这里是 Tick 线程，绝不能等 IO）
+            // ⚠️ lambda 的参数**不能叫 `_`** —— 那样里面的 `_ = 任务` 会被解析成"给这个参数赋值"，
+            //    报一句完全看不懂的 `无法将 Task<bool> 转换为 BattleRecordDraft`（本次实测踩到）。
+            battles.BattleFinished += draft => { _ = achievements.FlushAllAsync(2000); };
+
+            Say($"[成就] 服务端权威判定已接：{questTables.Describe()}");
+        }
+        else
+        {
+            Say($"[成就] **没接**：{(questTables == null ? "读不到任务成就表" : "服务端没接数据库")} —— " +
+                "成就判定仍然只发生在客户端（这是 M4-S3 之前的旧行为）。");
+        }
+
+        // ------------------------------------------------------------------
         //  M4-S3：登录审计（SRV-06）
         // ------------------------------------------------------------------
         //  登录本身只查内存（`AccountDirectory`）；这里记的是
@@ -296,6 +345,9 @@ internal static class Program
         {
             loginAudit.Submit(result.AccountId);
             Log(quiet, $"[登录] 账号 {result.AccountId} 登录成功 → 玩家 {result.PlayerId}（{result.Nickname}）");
+
+            // M4-S3 权威：开始追踪这个玩家的成就（**异步读进度**，中间收到的事实会排队 —— 见那个类的文件头）
+            achievements?.Track(result.PlayerId, result.Nickname);
         };
 
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
@@ -309,6 +361,9 @@ internal static class Program
             //    现在**什么都不用做** —— 游客编号属于**连接**，连接没了就没了，不需要归还。
             //    （旧写法必须记得还，漏一次就永久泄漏；"不需要还"是这次改动顺带买到的。
             //     登录玩家的身份属于**账号**，本来就跟连接无关。）
+            // M4-S3 权威：断开就停止追踪（内部会**异步**把脏进度冲回库，不在断开回调里等 IO）
+            achievements?.Untrack(session.PlayerId);
+
             Log(quiet, $"[断开] 会话 {session.SessionId}" +
                        (session.PlayerId != 0 ? $"（玩家 {session.PlayerId}）" : "（还没握手）") +
                        $"：{reason}");
@@ -379,6 +434,13 @@ internal static class Program
             Say("[收尾] 战绩落库" + (drained ? "已排空。" : "**超时**（还有没写完的）—— 见上面的失败原因。"));
         }
 
+        // M4-S3 权威：把成就进度冲干净（**这一步不做就等于"这一局的累计白打"**）
+        if (achievements != null && achievements.TrackedPlayers > 0)
+        {
+            bool drained = achievements.FlushAllAsync(3000).GetAwaiter().GetResult();
+            Say("[收尾] 成就进度落库" + (drained ? "已排空。" : "**超时**（还有没写完的）。"));
+        }
+
         // 登录审计同理：别把"谁登录过"丢在队列里
         if (loginAudit.PendingCount > 0 || loginAudit.Submitted > 0)
         {
@@ -401,6 +463,10 @@ internal static class Program
             Say($"[统计] {accounts.Describe()}");
         }
         Say($"[统计] {loginAudit.DescribeStats()}");
+        if (achievements != null)
+        {
+            Say($"[统计] {achievements.Describe()}");
+        }
         Say($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +
                           $"逻辑帧 {scheduler.CurrentTick}");

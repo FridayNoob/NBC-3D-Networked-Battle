@@ -29,6 +29,7 @@ using MySqlConnector;
 using NBC.Server.Core;          // M4-S3：`ELoginRejection` / `LoginResult`
 using NBC.Server.Data;
 using NBC.Server.Game;
+using NBC.Shared.Condition;
 using NBC.Shared.Auth;          // M4-S3：密码摘要配方（**双端唯一实现**）
 using NBC.Shared.Reward;
 
@@ -107,6 +108,11 @@ namespace NBC.DbProbe
             Console.WriteLine("【八】SRV-17a：**游客不落库**（负数是游客 ⇒ 不会污染任何账号的档案）");
 
             await GuestDoesNotPolluteSection().ConfigureAwait(false);
+
+            Console.WriteLine();
+            Console.WriteLine("【九】M4-S3 服务端权威：成就进度**落库** + **重启后还在** + **不重复发奖**");
+
+            await AchievementAuthoritySection().ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
@@ -1661,6 +1667,351 @@ namespace NBC.DbProbe
                 await connection.ExecuteAsync(
                     new CommandDefinition(sql, new { accountId, original })).ConfigureAwait(false);
             }
+        }
+
+        // ====================================================================
+        //  九、M4-S3 服务端权威：成就进度落库 / 重启后还在 / 不重复发奖
+        // ====================================================================
+
+        /// <summary>
+        /// **真库**：服务端权威判定的"跨局累计"是否真的成立。
+        ///
+        /// <para>
+        /// 这一节验的是整件事**唯一无法用内存证明**的一条：
+        /// 「**关掉服务端再起来，进度还在，而且不会重复发奖**」。
+        /// 判据挑的是最不会骗人的那三个：
+        /// ① 库里 `condition_progress` 真的多了那一行；
+        /// ② **新造一个权威（= 模拟重启）** 之后，进度还是 1（**不是被 Register 覆盖成 0**）；
+        /// ③ 重启后那条"已达成 ⇒ 当场回调"被**台账**挡住（`防重复 1 次`），台账行数**还是 1**。
+        /// </para>
+        /// </summary>
+        /// <returns>任务。</returns>
+        private static async Task AchievementAuthoritySection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            // ---- ⓵ 真表（`Configs\Design`）----
+            QuestTables tables = LoadQuestTables();
+
+            Check("权威：读到了真表（任务 / 成就 / 条件 / 奖励）",
+                tables.AchievementCount >= 3 && tables.ConditionCount >= 8,
+                tables.Describe());
+
+            Check("权威：加载时**校验跨表引用**（成就 9002 的条件 4010 指向狼王 6003、奖励 5003）",
+                tables.FindCondition(4010)?.Def.TargetId == 6003 &&
+                tables.FindReward(5003)?.Exp == 500,
+                "条件 4010 = " + (tables.FindCondition(4010)?.ToString() ?? "(没有)") +
+                "；奖励 5003 = " + (tables.FindReward(5003)?.ToString() ?? "(没有)"));
+
+            // ---- ⓶ 前置：把 player 1 的进度与台账清空（**先报清楚清了什么**）----
+            const long playerId = 1;
+
+            int progressBefore = await CountProgressAsync(factory, playerId).ConfigureAwait(false);
+            int ledgerBefore = await CountLedgerAsync(factory, playerId).ConfigureAwait(false);
+
+            Console.WriteLine("      · 前置：player 1 原有进度 " + progressBefore + " 条、台账 " + ledgerBefore + " 条 → 清空");
+
+            await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+            await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+
+            try
+            {
+                // ---- ⓷ 第一次"进游戏"：打一只狼王 → 解锁成就 9002 ----
+                using (var first = NewAuthority(tables, factory, playerId, out var notes1))
+                {
+                    Task? loading;
+                    bool tracked = first.Track(playerId, "测试玩家一", out loading);
+
+                    Check("权威：追踪玩家 1（有档案 ⇒ 追踪；游客才不追踪）", tracked, "tracked=" + tracked);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);        // ⚠️ 等它读完（读不完就没有"跨局"可言）
+                    }
+
+                    first.ApplyFact(new ProgressFact(playerId, EConditionEvent.KillMonster, 6003, 1));
+
+                    bool flushed = await first.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    Check("权威：冲库成功（不冲库 = 这一局的累计白打）", flushed, "FlushAllAsync 返回 false");
+
+                    Check("权威：**服务端判定出解锁**（台账里有成就 9002）",
+                        first.Describe().Contains("解锁 1 个"), first.Describe());
+
+                    Check("权威：日志里说得出「谁解锁了哪个成就、奖励是多少」",
+                        DescribeLines(notes1).Contains("9002") && DescribeLines(notes1).Contains("5003"),
+                        DescribeLines(notes1));
+                }
+
+                // ---- ⓸ 读库对账 ----
+                int progressNow = await CountProgressAsync(factory, playerId).ConfigureAwait(false);
+
+                Check("真库：`condition_progress` 真的多了行（4010=击杀狼王 已达成、4011=任意怪 在累计）",
+                    progressNow >= 2 &&
+                    await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false) == 1 &&
+                    await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false) == 1,
+                    "进度行数 " + progressNow + "；4010=" +
+                    await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false) + "；4011=" +
+                    await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false));
+
+                Check("真库：**「任意怪」条件（targetId=0）也吃到了这条事实**（服务端匹配语义与客户端一致）",
+                    await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false) == 1,
+                    "条件 4011 = " + await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false));
+
+                Check("真库：`reward_granted` 真的多了那一行（成就 9002）",
+                    await CountLedgerAsync(factory, playerId).ConfigureAwait(false) == 1,
+                    "台账行数 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false));
+
+                // ---- ⓹ ⭐ 模拟重启：新造一个权威，进度应当**从库里读回来** ----
+                using (var second = NewAuthority(tables, factory, playerId, out var notes2))
+                {
+                    Task? loading;
+                    second.Track(playerId, "测试玩家一", out loading);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);
+                    }
+
+                    // ⚠️ 这一条盯的是"LoadAsync 必须在 Register 之前"：
+                    //    顺序写反 ⇒ 登记时读到 0 ⇒ 这里会是 0（而且冲库会把库里的 1 覆盖成 0）
+                    Check("真库⭐：**重启后进度还在**（4010 仍是 1，不是被 Register 覆盖成 0）",
+                        await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false) == 1,
+                        "条件 4010 = " + await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false));
+
+                    Check("真库⭐：**重启后不重复发奖**（台账挡住了那次「登录即解锁」的回调）",
+                        second.Describe().Contains("防重复 1 次"),
+                        second.Describe());
+
+                    // 再打一只狼王 ⇒ **未达成的**条件接着累计（4011：1 → 2）。
+                    // ⚠️ 为什么不用 4010 验"累计"：`ConditionTracker` 里**进度是钳位的**
+                    //    ——「已经达成了：不再累计」（`ConditionTracker.cs:320`）。
+                    //    所以 4010 会**停在 1**（那是设计，不是 bug）。要验"跨局累计"必须挑一个**还没达成**的条件。
+                    second.ApplyFact(new ProgressFact(playerId, EConditionEvent.KillMonster, 6003, 1));
+                    await second.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    Check("真库⭐：**第二局接着累计**（4011「任意怪」：1 → 2）—— 这才是「跨局累计」本身",
+                        await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false) == 2,
+                        "条件 4011 = " + await ReadProgressAsync(factory, playerId, 4011).ConfigureAwait(false));
+
+                    Check("真库：**已达成的条件停在需求值**（4010 还是 1 —— 进度钳位是设计，不是丢数据）",
+                        await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false) == 1,
+                        "条件 4010 = " + await ReadProgressAsync(factory, playerId, 4010).ConfigureAwait(false));
+
+                    Check("真库：台账**还是 1 行**（没有因为解锁过就再发一次）",
+                        await CountLedgerAsync(factory, playerId).ConfigureAwait(false) == 1,
+                        "台账行数 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false));
+
+                    Check("权威：两次会话的日志都留下了痕迹（排查时有据可查）",
+                        notes2.Count > 0, "第二次会话的说明条数 = " + notes2.Count);
+                }
+
+                // ---- ⓺ ⭐ "已达成但没记过台账" ⇒ **启动时必须补上**（这才是 `resetProgress:false` 的意义）----
+                //  ⚠️ 这一条专门盯**次序**：`LoadAsync` 必须在 `Register` 之前。
+                //     顺序写反的话，登记时读到的是 0 ⇒ 那条"已达成 ⇒ 当场回调"**不会触发**
+                //     ⇒ 这个成就永远补不上（而进度看上去还是对的，所以最难发现）。
+                await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+                await SetProgressAsync(factory, playerId, 4010, 1).ConfigureAwait(false);
+
+                using (var third = NewAuthority(tables, factory, playerId, out var notes3))
+                {
+                    Task? loading;
+                    third.Track(playerId, "测试玩家一", out loading);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);
+                    }
+
+                    // ⚠️ 必须**先冲库再查库**：台账是**写回缓存**（`MySqlRewardLedger`），
+                    //    `MarkGranted` 只改内存，不冲库时库里当然还是 0 —— 本探针第一版就栽在这
+                    //    （日志明明写着"解锁"，查库是 0 行）。这是"判据要挑对"的又一例。
+                    await third.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    Check("真库⭐：**库里已达成、但台账没记过** ⇒ 启动时补发（`resetProgress:false` 要的就是它）",
+                        await CountLedgerAsync(factory, playerId).ConfigureAwait(false) == 1,
+                        "台账行数 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false) +
+                        "；说明：" + DescribeLines(notes3));
+                }
+            }
+            finally
+            {
+                // ---- ⓺ 收尾：把 player 1 的进度与台账清干净（**不留测试痕迹**）----
+                int removedProgress = await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+                int removedLedger = await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+
+                Console.WriteLine("      · 收尾：删掉进度 " + removedProgress + " 条、台账 " + removedLedger + " 条");
+
+                Check("收尾：player 1 的进度与台账**都清空了**", 
+                    await CountProgressAsync(factory, playerId).ConfigureAwait(false) == 0 &&
+                    await CountLedgerAsync(factory, playerId).ConfigureAwait(false) == 0,
+                    "还剩进度 " + await CountProgressAsync(factory, playerId).ConfigureAwait(false) +
+                    " 条、台账 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false) + " 条");
+            }
+        }
+
+        /// <summary>造一个**接了真库**的权威（每个会话一套，用来模拟重启）。</summary>
+        /// <param name="tables">四张表。</param>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号（只用于日志）。</param>
+        /// <param name="notes">收到的说明（断言用）。</param>
+        /// <returns>权威。</returns>
+        private static AchievementAuthority NewAuthority(
+            QuestTables tables, DbConnectionFactory factory, long playerId, out List<string> notes)
+        {
+            var collected = new List<string>();
+
+            var authority = new AchievementAuthority(
+                tables,
+                pid => new CachingConditionProgressStore(new ConditionProgressDao(factory), pid),
+                pid => new MySqlRewardLedger(new RewardLedgerDao(factory), pid));
+
+            authority.Note += line => collected.Add(line);
+            notes = collected;
+
+            return authority;
+        }
+
+        /// <summary>读真表（`Configs\Design`）。</summary>
+        /// <returns>四张表。</returns>
+        private static QuestTables LoadQuestTables()
+        {
+            if (!NBC.Server.Game.ServerTables.TryResolveConfigDir(out string dir))
+            {
+                throw new InvalidOperationException("探针找不到配置表目录 `Configs\\Design`。");
+            }
+
+            QuestTables tables;
+            string error;
+
+            if (!QuestTables.TryLoad(dir, out tables, out error))
+            {
+                throw new InvalidOperationException("探针读不到任务/成就表（" + dir + "）：" + error);
+            }
+
+            return tables;
+        }
+
+        /// <summary>数一个玩家有几条进度。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>条数。</returns>
+        private static async Task<int> CountProgressAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "SELECT COUNT(*) FROM `condition_progress` WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>数一个玩家有几条发奖台账。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>条数。</returns>
+        private static async Task<int> CountLedgerAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "SELECT COUNT(*) FROM `reward_granted` WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>读一个条件的进度（**直接问库**，不经过被测代码）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="conditionKey">条件编号。</param>
+        /// <returns>进度（没记录时是 0）。</returns>
+        private static async Task<int> ReadProgressAsync(DbConnectionFactory factory, long playerId, int conditionKey)
+        {
+            const string sql = "SELECT `progress` FROM `condition_progress` " +
+                               "WHERE `player_id` = @playerId AND `condition_key` = @conditionKey";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int?>(
+                    new CommandDefinition(sql, new { playerId, conditionKey })).ConfigureAwait(false) ?? 0;
+            }
+        }
+
+        /// <summary>直接往库里写一条进度（**模拟"上一次会话留下的进度"**，绕过被测代码）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="conditionKey">条件编号。</param>
+        /// <param name="progress">进度（绝对值）。</param>
+        /// <returns>任务。</returns>
+        private static async Task SetProgressAsync(
+            DbConnectionFactory factory, long playerId, int conditionKey, int progress)
+        {
+            const string sql =
+                "INSERT INTO `condition_progress` (`player_id`, `condition_key`, `progress`) " +
+                "VALUES (@playerId, @conditionKey, @progress) " +
+                "ON DUPLICATE KEY UPDATE `progress` = @progress";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { playerId, conditionKey, progress })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>清掉一个玩家的进度（收尾）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>删了几条。</returns>
+        private static async Task<int> ClearProgressAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "DELETE FROM `condition_progress` WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>清掉一个玩家的发奖台账（收尾）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>删了几条。</returns>
+        private static async Task<int> ClearLedgerAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "DELETE FROM `reward_granted` WHERE `player_id` = @playerId";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>把若干条说明拼成一行（断言失败时看得到）。</summary>
+        /// <param name="lines">说明。</param>
+        /// <returns>拼接结果。</returns>
+        private static string DescribeLines(List<string> lines)
+        {
+            return lines.Count == 0 ? "(没有说明)" : string.Join(" | ", lines);
         }
 
         // ====================================================================

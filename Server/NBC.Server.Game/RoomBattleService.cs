@@ -93,6 +93,16 @@ public sealed class RoomBattleService
     /// <summary>取死亡事件用的缓冲（M4-S1）。</summary>
     private readonly List<DeathEvent> _deathBuffer = new();
 
+    /// <summary>取条件事实用的缓冲（M4-S3 服务端权威；同样每帧复用）。</summary>
+    private readonly List<ProgressFact> _factBuffer = new();
+
+    /// <summary>
+    /// 服务端权威的成就判定（**可空**：没接数据库 / 没读表时为 null ⇒ 事实就没人消费）。
+    /// <para>⚠️ 用属性而不是构造参数：它与战斗服务的生命周期不同（战斗先建、权威后接），
+    /// 而且**探针里可以只接一半**（只想验战斗时不接权威）。</para>
+    /// </summary>
+    public AchievementAuthority? Achievements { get; set; }
+
     /// <summary>每个玩家**最近一条**输入（移动是"状态"，所以只留最新的一条，见文件头第二节）。</summary>
     private readonly Dictionary<long, PendingInput> _inputs = new();
 
@@ -212,6 +222,7 @@ public sealed class RoomBattleService
             BroadcastDrops(battle, room);       // ⑥ 掉落事件（S7）：**同一份字节发给全房**
             BroadcastSnapshot(battle, room);    // ⑦
             RecordIfFinished(room, battle);     // ⑧ SRV-13：打完了就交一份战绩草稿（**只交一次**）
+            ApplyProgressFacts(battle);         // ⑨ M4-S3 权威：把"击杀/拾取"事实喂给服务端成就判定
             TicksRun++;
         }
     }
@@ -584,6 +595,41 @@ public sealed class RoomBattleService
     ///     房间散了不影响它**（草稿已经离开本类了）。</item>
     /// </list>
     /// </summary>
+    /// <summary>
+    /// M4-S3 服务端权威：把这一局刚产生的**条件事实**（击杀 / 拾取）喂给 `AchievementAuthority`。
+    ///
+    /// <para>
+    /// ⚠️ 它和 `BroadcastCombatEvents` / `BroadcastDrops` 是**同一批权威事实的两个消费者**：
+    /// 客户端那份用于预测/显示（本地判定），服务端这份用于**记账**（落库 + 发奖 + 判解锁）。
+    /// 顺序上事实在**事件之后**处理 —— 与客户端"先看到事件、再算条件"的顺序一致，
+    /// 这样"同一局里两边算出来的进度"不会因为处理次序不同而出现差异。
+    /// </para>
+    /// <para>
+    /// ⚠️ `Achievements == null`（没接数据库 / 探针里没接）时**事实直接被丢掉**：
+    /// 这是**有意的**（权威不存在 = 没有记账的地方），但 `AchievementAuthority` 里
+    /// 不会因此报"没人认领"——那一类告警只对"接了权威却没追踪这个玩家"报。
+    /// </para>
+    /// </summary>
+    /// <param name="battle">这一局的世界。</param>
+    private void ApplyProgressFacts(DungeonBattle battle)
+    {
+        AchievementAuthority? authority = Achievements;
+
+        if (authority == null)
+        {
+            return;
+        }
+
+        battle.CopyPendingFacts(_factBuffer);
+
+        for (int i = 0; i < _factBuffer.Count; i++)
+        {
+            authority.ApplyFact(_factBuffer[i]);
+        }
+
+        _factBuffer.Clear();
+    }
+
     /// <param name="room">房间。</param>
     /// <param name="battle">这一局的世界。</param>
     private void RecordIfFinished(Room room, DungeonBattle battle)

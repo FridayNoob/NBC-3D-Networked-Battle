@@ -17,6 +17,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Google.Protobuf;
 using NBC.Framework.Net.Adapter;
 using NBC.Framework.Net.Sim;   // S8：网络模拟器（SimulatedTransport / NetSimProfile）
@@ -184,6 +185,12 @@ namespace NBC.NetProbe
             Login_GuestIdReachesTheBattleDraft();
             Login_NoAccountStoreSaysWhyInsteadOfSilentlyBecomingGuest();
             Login_DigestNeverAppearsInServerNotes();
+
+            Console.WriteLine();
+            Console.WriteLine("【十六】M4-S3 服务端权威：判定搬到服务端（同一份共享层逻辑，换了个执行者）");
+            Authority_LoggedInPlayerUnlocksFromItsOwnBattle();
+            Authority_GuestFactsAreNotRecorded();
+            Authority_NoDatabaseSaysWhyInsteadOfPretending();
 
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
@@ -2737,6 +2744,309 @@ namespace NBC.NetProbe
             }
         }
 
+        // ====================================================================
+        //  【十六】M4-S3 服务端权威：成就判定
+        // ====================================================================
+
+        /// <summary>
+        /// **登录玩家**打一局 → 服务端**自己**判定并解锁（不再依赖客户端）。
+        ///
+        /// <para>
+        /// 判据挑的是"**能一眼看出是服务端做的**"那几条：
+        /// ① 台账里出现了 `(成就 9002, 奖励 5003)` 这一行 —— 只有服务端会写台账；
+        /// ② 进度表里 `条件 4010`（击杀狼王 1 只）= 1；
+        /// ③ `AchievementAuthority.Describe()` 说解锁 1 个。
+        /// </para>
+        /// </summary>
+        private static void Authority_LoggedInPlayerUnlocksFromItsOwnBattle()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                QuestTables tables = LoadQuestTables();
+                var store = new FakeProgressStore();
+                var ledger = new FakeRewardLedger();
+
+                using (var authority = new AchievementAuthority(tables, _ => store, _ => ledger))
+                {
+                    h.Battles.Achievements = authority;
+                    authority.Note += line => h.AuthorityNotes.Add(line);
+
+                    // `FakeAccounts` 里 alice = 玩家 11（> 0 = 真实账号档案）
+                    Client a = h.ConnectAndLogin("alice", "pw-alice");
+                    long aliceId = AckOf(a, "alice 登录").PlayerId;
+
+                    Check("权威：登录玩家被追踪（游客不会被追踪）",
+                        authority.Track(aliceId, "爱丽丝") && authority.TrackedPlayers == 1,
+                        "TrackedPlayers=" + authority.TrackedPlayers);
+
+                    h.JoinSameRoom(a);
+                    h.TickBattles(2);
+
+                    DungeonBattle battle = h.BattleOf(a)!;
+                    BattleEntity hero = h.HeroOf(a)!;
+
+                    // 打死狼王（`Dungeon 1001` 的 bossId = 6003）—— 成就 9002 要的就是它
+                    BattleEntity boss = FindBoss(battle)!;
+                    int bossConfigId = boss.ConfigId;
+
+                    battle.ApplyDamage(boss.Id, 999999, hero.Id);
+                    h.TickBattles(2);
+
+                    Check("权威：**服务端自己**从战斗里判定出解锁（台账里有一行成就 9002）",
+                        ledger.HasGranted(NBC.Shared.Reward.ERewardOwnerKind.Achievement, 9002),
+                        "台账内容：" + ledger.Describe() + "；服务端日志：" + DescribeLines(h.AuthorityNotes));
+
+                    Check("权威：进度也落在**服务端**的存放处（条件 4010 = 击杀狼王）",
+                        store.GetProgress(4010) == 1,
+                        "条件 4010 的进度 = " + store.GetProgress(4010));
+
+                    Check("权威：解锁计数如实（1 个）",
+                        authority.Describe().Contains("解锁 1 个"), authority.Describe());
+
+                    Check("权威：狼王的配置号就是表里的 6003（判据不是我随手写的数）",
+                        bossConfigId == 6003, "配置号 = " + bossConfigId);
+                }
+            }
+        }
+
+        /// <summary>
+        /// **游客**的事实**一条都不记**（设计如此）—— 而且这件事要能看见（不是静默）。
+        /// </summary>
+        private static void Authority_GuestFactsAreNotRecorded()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                QuestTables tables = LoadQuestTables();
+                var store = new FakeProgressStore();
+                var ledger = new FakeRewardLedger();
+
+                using (var authority = new AchievementAuthority(tables, _ => store, _ => ledger))
+                {
+                    h.Battles.Achievements = authority;
+                    authority.Note += line => h.AuthorityNotes.Add(line);
+
+                    Client a = h.JoinSameRoom(h.ConnectAndHandshake("游客甲"));
+                    h.TickBattles(2);
+
+                    DungeonBattle battle = h.BattleOf(a)!;
+                    BattleEntity hero = h.HeroOf(a)!;
+
+                    for (int i = 0; i < battle.Entities.Count; i++)
+                    {
+                        if (battle.Entities[i].Kind == 1)
+                        {
+                            battle.ApplyDamage(battle.Entities[i].Id, 999999, hero.Id);
+                        }
+                    }
+
+                    h.TickBattles(2);
+
+                    Check("权威：游客（负数 id）的事实**一条都没记进进度与台账**",
+                        store.Count == 0 && ledger.Count == 0,
+                        "进度 " + store.Count + " 条、台账 " + ledger.Count + " 条");
+
+                    Check("权威：游客被跳过这件事**说得出来**（不是静默丢掉）",
+                        authority.Describe().Contains("游客跳过") &&
+                        DescribeLines(h.AuthorityNotes).Contains("游客"),
+                        authority.Describe());
+                }
+            }
+        }
+
+        /// <summary>
+        /// 服务端**没接数据库**时，权威必须**明确不工作**，而不是"只判不记"。
+        /// </summary>
+        private static void Authority_NoDatabaseSaysWhyInsteadOfPretending()
+        {
+            QuestTables tables = LoadQuestTables();
+            var notes = new List<string>();
+
+            using (var authority = new AchievementAuthority(tables, null, null))
+            {
+                authority.Note += line => notes.Add(line);
+
+                bool tracked = authority.Track(11, "爱丽丝");
+
+                Check("权威：没接数据库 ⇒ **不追踪**（拒绝「只判不记」）",
+                    !tracked && authority.TrackedPlayers == 0,
+                    "tracked=" + tracked + "、TrackedPlayers=" + authority.TrackedPlayers);
+
+                Check("权威：而且要说清「为什么」，不是安静地什么都不做",
+                    DescribeLines(notes).Contains("没接数据库"), DescribeLines(notes));
+            }
+        }
+
+        /// <summary>读真表（`Configs\Design`）—— 判据用的是**真源**，不是探针自己编的表。</summary>
+        /// <returns>四张表。</returns>
+        private static QuestTables LoadQuestTables()
+        {
+            string dir;
+
+            if (!ServerTables.TryResolveConfigDir(out dir))
+            {
+                throw new InvalidOperationException("探针找不到配置表目录 `Configs\\Design`。");
+            }
+
+            QuestTables tables;
+            string error;
+
+            if (!QuestTables.TryLoad(dir, out tables, out error))
+            {
+                throw new InvalidOperationException("探针读不到任务/成就表（" + dir + "）：" + error);
+            }
+
+            return tables;
+        }
+
+        /// <summary>把若干条说明拼成一行（断言失败时看得到）。</summary>
+        /// <param name="lines">说明。</param>
+        /// <returns>拼接结果。</returns>
+        private static string DescribeLines(List<string> lines)
+        {
+            return lines.Count == 0 ? "(没有说明)" : string.Join(" | ", lines);
+        }
+
+        /// <summary>
+        /// 探针用的**假进度存放处**：内存里存，`LoadAsync`/`FlushAsync` 立即完成。
+        /// <para>⚠️ 判定的"对不对"不归它验（那是共享层的 `ConditionTracker` 的事），
+        /// 它只负责"服务端有没有把该记的记下来"。</para>
+        /// </summary>
+        private sealed class FakeProgressStore : IPlayerProgressStore
+        {
+            private readonly Dictionary<int, int> _values = new();
+
+            /// <summary>存了几条。</summary>
+            public int Count
+            {
+                get { return _values.Count; }
+            }
+
+            /// <summary>这个存放处属于谁（探针里不关心）。</summary>
+            public long PlayerId
+            {
+                get { return 11; }
+            }
+
+            /// <summary>脏数据条数（内存实现永远是 0）。</summary>
+            public int DirtyCount
+            {
+                get { return 0; }
+            }
+
+            /// <inheritdoc/>
+            public int GetProgress(int conditionKey)
+            {
+                int value;
+                return _values.TryGetValue(conditionKey, out value) ? value : 0;
+            }
+
+            /// <inheritdoc/>
+            public void SetProgress(int conditionKey, int value)
+            {
+                _values[conditionKey] = value;
+            }
+
+            /// <inheritdoc/>
+            public bool Remove(int conditionKey)
+            {
+                return _values.Remove(conditionKey);
+            }
+
+            /// <inheritdoc/>
+            public Task<int> LoadAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                return Task.FromResult(0);
+            }
+
+            /// <inheritdoc/>
+            public Task<int> FlushAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                return Task.FromResult(0);
+            }
+
+            /// <inheritdoc/>
+            public string DescribeFlushStats()
+            {
+                return "假存放处：" + Count + " 条";
+            }
+
+            /// <inheritdoc/>
+            public void Dispose()
+            {
+            }
+        }
+
+        /// <summary>探针用的**假发奖台账**（内存里记"发过哪些"）。</summary>
+        private sealed class FakeRewardLedger : IPlayerRewardLedger
+        {
+            private readonly HashSet<string> _granted = new();
+
+            private readonly List<string> _detail = new();
+
+            /// <summary>发过几条。</summary>
+            public int Count
+            {
+                get { return _granted.Count; }
+            }
+
+            /// <summary>这个台账属于谁。</summary>
+            public long PlayerId
+            {
+                get { return 11; }
+            }
+
+            /// <summary>脏数据条数。</summary>
+            public int DirtyCount
+            {
+                get { return 0; }
+            }
+
+            /// <inheritdoc/>
+            public bool HasGranted(NBC.Shared.Reward.ERewardOwnerKind kind, int ownerId)
+            {
+                return _granted.Contains(kind + ":" + ownerId);
+            }
+
+            /// <inheritdoc/>
+            public void MarkGranted(NBC.Shared.Reward.ERewardOwnerKind kind, int ownerId, int rewardId)
+            {
+                if (_granted.Add(kind + ":" + ownerId))
+                {
+                    _detail.Add(ownerId + "→奖励" + rewardId);
+                }
+            }
+
+            /// <inheritdoc/>
+            public Task<int> LoadAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                return Task.FromResult(0);
+            }
+
+            /// <inheritdoc/>
+            public Task<int> FlushAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                return Task.FromResult(0);
+            }
+
+            /// <summary>一句人话（探针失败时看得到台账里有什么）。</summary>
+            /// <returns>例：`9002→奖励5003`。</returns>
+            public string Describe()
+            {
+                return _detail.Count == 0 ? "(空)" : string.Join(",", _detail);
+            }
+
+            /// <inheritdoc/>
+            public string DescribeFlushStats()
+            {
+                return "假台账：" + Count + " 条";
+            }
+
+            /// <inheritdoc/>
+            public void Dispose()
+            {
+            }
+        }
+
         /// <summary>
         /// 服务端**没有账号表**时，带账号的握手必须**明确报错**，而不是悄悄当游客。
         ///
@@ -3068,6 +3378,9 @@ namespace NBC.NetProbe
 
             /// <summary>消息泵记下的说明（握手被拒、踢人原因……）。</summary>
             public readonly List<string> Notes = new();
+
+            /// <summary>服务端权威（成就）记下的说明（【十六】要看它）。</summary>
+            public readonly List<string> AuthorityNotes = new();
 
             /// <summary>
             /// 服务端**交上来的战绩草稿**（`RoomBattleService.BattleFinished`）。

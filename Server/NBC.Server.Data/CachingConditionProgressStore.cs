@@ -64,12 +64,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using NBC.Server.Game;
 using NBC.Shared.Condition;
 
 namespace NBC.Server.Data
 {
     /// <summary>MySQL 版的条件进度存放处（写回缓存；**一个实例对应一个玩家**）。</summary>
-    public sealed class CachingConditionProgressStore : IConditionProgressStore, IDisposable
+    public sealed class CachingConditionProgressStore : IConditionProgressStore, IPlayerProgressStore, IDisposable
     {
         /// <summary>读写。</summary>
         private readonly IConditionProgressDao m_dao;

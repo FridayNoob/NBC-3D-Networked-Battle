@@ -1,0 +1,486 @@
+// ============================================================================
+//  QuestTables —— 服务端读**任务 / 成就 / 条件 / 奖励**四张表（M4-S3 服务端权威化）
+//  项目：3D联网战斗Demo   对应：`Docs\27` §二十一
+//
+//  ---------------------------------------------------------------------------
+//  它和 `ServerTables` 是**两个东西**，故意不合并
+//  ---------------------------------------------------------------------------
+//      `ServerTables`  战斗要用：`Dungeon` / `Monster` / `Hero` / `Skill` / `DropTable`
+//      `QuestTables`   任务与成就要用：`Quest` / `QuestCondition` / `Achievement` / `Reward`
+//
+//  ⚠️ 分开的理由不是"文件太大"，而是**它们的读者不同、失败后果也不同**：
+//      · 战斗表读不到 ⇒ 进副本就没怪，**必须拒绝启动**（M3 已经这么做了）
+//      · 任务表读不到 ⇒ 只是"成就判定没有配置"，服务端**照样能打**
+//    硬塞进一个类，会让"哪个错误该拦住启动"变成一个需要读代码才能回答的问题。
+//
+//  ---------------------------------------------------------------------------
+//  ⚠️ 为什么服务端要**自己再读一遍 CSV**（而不是复用客户端生成的代码）
+//  ---------------------------------------------------------------------------
+//  客户端读的是 `ConfigKit` 生成的 SO / TSV（`Client\Assets\_Project\Game\Config\Generated\`），
+//  它依赖 `UnityEngine`。而服务端**绝不能引 Unity**（本工程的硬约束）。
+//  ⇒ 两端的**唯一共同真源是 `Configs\Design\*.csv`**（见 `Docs\17` 与 `Docs\00` 的"唯一真源"）。
+//     所以这不是"重复"，而是"各自从真源生成自己能吃的形态"。
+//
+//  ---------------------------------------------------------------------------
+//  ⚠️ 枚举名走**共享层**解析（`ConditionEvents.TryParse`），不自己 `Enum.Parse`
+//  ---------------------------------------------------------------------------
+//  `QuestCondition.csv` 里 `eventType` 填的是名字（`KillMonster`）。
+//  名字的"官方拼法"定义在**共享层**（`Client\Assets\_Project\Shared\Condition\EConditionEvent.cs`），
+//  两端都编同一份 ⇒ 服务端不认识的名字与客户端不认识的名字**永远是同一批**。
+//  自己写 `Enum.Parse` 的坏处：它宽松（认 `killmonster`、认数字），
+//  于是"表里拼错了"会在一端静默生效、在另一端报错。
+//
+//  ---------------------------------------------------------------------------
+//  ⚠️ 跨表引用在**加载时**就校验（不是等运行到那一行才炸）
+//  ---------------------------------------------------------------------------
+//  `Quest.conditionIds` / `Achievement.conditionIds` 指向 `QuestCondition.id`，
+//  而 `rewardId` 指向 `Reward.id`。**引用不存在**是配置事故里最常见的一种，
+//  而且它的表现是"这个任务永远做不完"（最难往配置上想）。
+//  ⇒ 本类在 `TryLoad` 里**当场逐条校验**，报出"哪一行、哪个 id、指向了什么"。
+// ============================================================================
+
+using System.Collections.Generic;
+using NBC.Shared.Condition;
+
+namespace NBC.Server.Game
+{
+    /// <summary>一条条件（`QuestCondition` 表的一行）。</summary>
+    public sealed class ConditionRow
+    {
+        /// <summary>条件编号（`QuestCondition.id`）。</summary>
+        public readonly int Id;
+
+        /// <summary>定义（事件类型 + 目标 + 数量）—— 直接就是共享层认的那个结构。</summary>
+        public readonly ConditionDef Def;
+
+        /// <summary>表里填的事件类型名字（报错时说得出"你填的是哪个名字"）。</summary>
+        public readonly string EventTypeName;
+
+        /// <summary>说明（`note` 列，只用于日志）。</summary>
+        public readonly string Note;
+
+        /// <summary>造一行。</summary>
+        /// <param name="id">条件编号。</param>
+        /// <param name="def">定义。</param>
+        /// <param name="eventTypeName">事件类型名字。</param>
+        /// <param name="note">说明。</param>
+        public ConditionRow(int id, ConditionDef def, string eventTypeName, string note)
+        {
+            Id = id;
+            Def = def;
+            EventTypeName = eventTypeName;
+            Note = note;
+        }
+
+        /// <summary>一句人话。</summary>
+        /// <returns>例：`4009=KillMonster(6001)×10 累计击杀 10 只野狼`。</returns>
+        public override string ToString()
+        {
+            return Id + "=" + EventTypeName + "(" + Def.TargetId + ")×" + Def.RequiredCount +
+                   (string.IsNullOrEmpty(Note) ? string.Empty : " " + Note);
+        }
+    }
+
+    /// <summary>一条任务或成就（两张表**形状相同**，所以共用一个行类型）。</summary>
+    public sealed class OwnerRow
+    {
+        /// <summary>编号（任务编号 / 成就编号）。</summary>
+        public readonly int Id;
+
+        /// <summary>名字。</summary>
+        public readonly string Name;
+
+        /// <summary>描述。</summary>
+        public readonly string Desc;
+
+        /// <summary>完成条件编号（≥ 1 条；0 条在加载时就会被拒绝）。</summary>
+        public readonly int[] ConditionIds;
+
+        /// <summary>奖励编号（0 = 没有奖励）。</summary>
+        public readonly int RewardId;
+
+        /// <summary>造一行。</summary>
+        /// <param name="id">编号。</param>
+        /// <param name="name">名字。</param>
+        /// <param name="desc">描述。</param>
+        /// <param name="conditionIds">条件编号。</param>
+        /// <param name="rewardId">奖励编号。</param>
+        public OwnerRow(int id, string name, string desc, int[] conditionIds, int rewardId)
+        {
+            Id = id;
+            Name = name;
+            Desc = desc;
+            ConditionIds = conditionIds;
+            RewardId = rewardId;
+        }
+
+        /// <summary>一句人话。</summary>
+        /// <returns>例：`9003 猎手的直觉（条件 4011，奖励 5002）`。</returns>
+        public override string ToString()
+        {
+            return Id + " " + Name + "（条件 " + string.Join(",", ConditionIds) + "，奖励 " + RewardId + "）";
+        }
+    }
+
+    /// <summary>一份奖励（`Reward` 表的一行）。</summary>
+    public sealed class RewardRow
+    {
+        /// <summary>奖励编号。</summary>
+        public readonly int Id;
+
+        /// <summary>经验。</summary>
+        public readonly int Exp;
+
+        /// <summary>金币。</summary>
+        public readonly int Gold;
+
+        /// <summary>物品编号（0 = 无物品）。</summary>
+        public readonly int ItemId;
+
+        /// <summary>物品数量。</summary>
+        public readonly int ItemCount;
+
+        /// <summary>造一行。</summary>
+        /// <param name="id">编号。</param>
+        /// <param name="exp">经验。</param>
+        /// <param name="gold">金币。</param>
+        /// <param name="itemId">物品编号。</param>
+        /// <param name="itemCount">物品数量。</param>
+        public RewardRow(int id, int exp, int gold, int itemId, int itemCount)
+        {
+            Id = id;
+            Exp = exp;
+            Gold = gold;
+            ItemId = itemId;
+            ItemCount = itemCount;
+        }
+
+        /// <summary>一句人话。</summary>
+        /// <returns>例：`5002（exp 80、gold 40、物品 7002×1）`。</returns>
+        public override string ToString()
+        {
+            return Id + "（exp " + Exp + "、gold " + Gold +
+                   (ItemId > 0 ? "、物品 " + ItemId + "×" + ItemCount : string.Empty) + "）";
+        }
+    }
+
+    /// <summary>服务端侧的"任务 / 成就 / 条件 / 奖励"四张表（见文件头）。</summary>
+    public sealed class QuestTables
+    {
+        /// <summary>条件表（key = 条件编号）。</summary>
+        private readonly Dictionary<int, ConditionRow> m_conditions = new Dictionary<int, ConditionRow>();
+
+        /// <summary>任务表（key = 任务编号）。</summary>
+        private readonly Dictionary<int, OwnerRow> m_quests = new Dictionary<int, OwnerRow>();
+
+        /// <summary>成就表（key = 成就编号）。</summary>
+        private readonly Dictionary<int, OwnerRow> m_achievements = new Dictionary<int, OwnerRow>();
+
+        /// <summary>奖励表（key = 奖励编号）。</summary>
+        private readonly Dictionary<int, RewardRow> m_rewards = new Dictionary<int, RewardRow>();
+
+        /// <summary>成就列表（**按编号升序**：登记的先后顺序会影响事件顺序，确定性优先）。</summary>
+        private readonly List<OwnerRow> m_achievementList = new List<OwnerRow>();
+
+        /// <summary>条件个数。</summary>
+        public int ConditionCount
+        {
+            get { return m_conditions.Count; }
+        }
+
+        /// <summary>任务个数。</summary>
+        public int QuestCount
+        {
+            get { return m_quests.Count; }
+        }
+
+        /// <summary>成就个数。</summary>
+        public int AchievementCount
+        {
+            get { return m_achievements.Count; }
+        }
+
+        /// <summary>奖励个数。</summary>
+        public int RewardCount
+        {
+            get { return m_rewards.Count; }
+        }
+
+        /// <summary>全部成就（升序）。</summary>
+        public IReadOnlyList<OwnerRow> Achievements
+        {
+            get { return m_achievementList; }
+        }
+
+        /// <summary>取一条条件。</summary>
+        /// <param name="id">条件编号。</param>
+        /// <returns>行；没有则 null。</returns>
+        public ConditionRow? FindCondition(int id)
+        {
+            ConditionRow? row;
+            return m_conditions.TryGetValue(id, out row) ? row : null;
+        }
+
+        /// <summary>取一份奖励。</summary>
+        /// <param name="id">奖励编号。</param>
+        /// <returns>行；没有则 null。</returns>
+        public RewardRow? FindReward(int id)
+        {
+            RewardRow? row;
+            return m_rewards.TryGetValue(id, out row) ? row : null;
+        }
+
+        /// <summary>
+        /// 从目录读四张表（**读不到 / 配置有错都返回 false + 人话原因**）。
+        /// </summary>
+        /// <param name="directory">表目录（`Configs\Design`）。</param>
+        /// <param name="tables">读出来的表（失败时是 null）。</param>
+        /// <param name="error">失败原因（成功时是空串）。</param>
+        /// <returns>成功返回 true。</returns>
+        public static bool TryLoad(string directory, out QuestTables tables, out string error)
+        {
+            tables = null!;
+            error = string.Empty;
+
+            if (string.IsNullOrEmpty(directory) || !System.IO.Directory.Exists(directory))
+            {
+                error = "配置表目录不存在：" + (directory ?? "(空)");
+                return false;
+            }
+
+            var result = new QuestTables();
+
+            try
+            {
+                foreach (CsvSheet sheet in CsvSheet.LoadMany(
+                             directory, "QuestCondition", "Quest", "Achievement", "Reward"))
+                {
+                    switch (sheet.TableName)
+                    {
+                        case "QuestCondition":
+                            if (!result.LoadConditions(sheet, out error))
+                            {
+                                return false;
+                            }
+
+                            break;
+
+                        case "Quest":
+                            if (!result.LoadOwners(sheet, "任务", result.m_quests, out error))
+                            {
+                                return false;
+                            }
+
+                            break;
+
+                        case "Achievement":
+                            if (!result.LoadOwners(sheet, "成就", result.m_achievements, out error))
+                            {
+                                return false;
+                            }
+
+                            break;
+
+                        case "Reward":
+                            if (!result.LoadRewards(sheet, out error))
+                            {
+                                return false;
+                            }
+
+                            break;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                error = "读表时抛异常：" + ex.Message;
+                return false;
+            }
+
+            // 成就列表按编号升序（确定性优先；登记顺序会影响事件顺序）
+            foreach (KeyValuePair<int, OwnerRow> pair in result.m_achievements)
+            {
+                result.m_achievementList.Add(pair.Value);
+            }
+
+            result.m_achievementList.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+            // 跨表引用校验（**加载时**就查，理由见文件头）
+            if (!result.ValidateReferences(out error))
+            {
+                return false;
+            }
+
+            tables = result;
+            return true;
+        }
+
+        /// <summary>一句人话（启动横幅用）。</summary>
+        /// <returns>例：`任务 4、成就 3、条件 8、奖励 3`。</returns>
+        public string Describe()
+        {
+            return "任务 " + QuestCount + "、成就 " + AchievementCount +
+                   "、条件 " + ConditionCount + "、奖励 " + RewardCount;
+        }
+
+        // ====================================================================
+        //  内部：逐张表加载
+        // ====================================================================
+
+        /// <summary>读条件表。</summary>
+        /// <param name="sheet">表。</param>
+        /// <param name="error">失败原因。</param>
+        /// <returns>成功返回 true。</returns>
+        private bool LoadConditions(CsvSheet sheet, out string error)
+        {
+            error = string.Empty;
+
+            for (int r = 0; r < sheet.RowCount; r++)
+            {
+                int id = sheet.Int(r, "id");
+                string eventTypeName = sheet.Str(r, "eventType");
+                int targetId = sheet.Int(r, "targetId");
+                int requiredCount = sheet.Int(r, "requiredCount");
+
+                EConditionEvent eventType;
+
+                if (!ConditionEvents.TryParse(eventTypeName, out eventType))
+                {
+                    error = "QuestCondition.csv 第 " + (r + 1) + " 行（id=" + id + "）的事件类型 " +
+                            "\"" + eventTypeName + "\" 不认识。能填的是：" + ConditionEvents.DescribeAllNames();
+                    return false;
+                }
+
+                ConditionDef def;
+                string defError;
+
+                if (!ConditionDef.TryCreate(eventType, targetId, requiredCount, out def, out defError))
+                {
+                    error = "QuestCondition.csv 第 " + (r + 1) + " 行（id=" + id + "）配置有错：" + defError;
+                    return false;
+                }
+
+                if (m_conditions.ContainsKey(id))
+                {
+                    error = "QuestCondition.csv 里条件编号重复：" + id;
+                    return false;
+                }
+
+                m_conditions.Add(id, new ConditionRow(id, def, eventTypeName, sheet.Str(r, "note")));
+            }
+
+            return true;
+        }
+
+        /// <summary>读任务表或成就表（两张表形状相同）。</summary>
+        /// <param name="sheet">表。</param>
+        /// <param name="kind">"任务" / "成就"（只用于报错）。</param>
+        /// <param name="target">装到哪个字典。</param>
+        /// <param name="error">失败原因。</param>
+        /// <returns>成功返回 true。</returns>
+        private bool LoadOwners(CsvSheet sheet, string kind, Dictionary<int, OwnerRow> target, out string error)
+        {
+            error = string.Empty;
+
+            for (int r = 0; r < sheet.RowCount; r++)
+            {
+                int id = sheet.Int(r, "id");
+                int[] conditionIds = sheet.IntList(r, "conditionIds");
+
+                // ⚠️ 0 条条件 = "接了就直接完成"，那是配置事故，不是"简单任务"
+                if (conditionIds.Length == 0)
+                {
+                    error = sheet.TableName + ".csv 第 " + (r + 1) + " 行（" + kind + " " + id +
+                            "）**一条条件都没填**。0 条条件会被判定为「立刻完成」——那是配置事故，不是简单任务。";
+                    return false;
+                }
+
+                if (target.ContainsKey(id))
+                {
+                    error = sheet.TableName + ".csv 里编号重复：" + id;
+                    return false;
+                }
+
+                target.Add(id, new OwnerRow(
+                    id, sheet.Str(r, "name"), sheet.Str(r, "desc"), conditionIds, sheet.Int(r, "rewardId")));
+            }
+
+            return true;
+        }
+
+        /// <summary>读奖励表。</summary>
+        /// <param name="sheet">表。</param>
+        /// <param name="error">失败原因。</param>
+        /// <returns>成功返回 true。</returns>
+        private bool LoadRewards(CsvSheet sheet, out string error)
+        {
+            error = string.Empty;
+
+            for (int r = 0; r < sheet.RowCount; r++)
+            {
+                int id = sheet.Int(r, "id");
+
+                if (m_rewards.ContainsKey(id))
+                {
+                    error = "Reward.csv 里奖励编号重复：" + id;
+                    return false;
+                }
+
+                m_rewards.Add(id, new RewardRow(
+                    id, sheet.Int(r, "exp"), sheet.Int(r, "gold"),
+                    sheet.Int(r, "itemId"), sheet.Int(r, "itemCount")));
+            }
+
+            return true;
+        }
+
+        /// <summary>校验跨表引用（条件 / 奖励必须在各自表里存在）。</summary>
+        /// <param name="error">失败原因。</param>
+        /// <returns>全部有效返回 true。</returns>
+        private bool ValidateReferences(out string error)
+        {
+            error = string.Empty;
+
+            if (!ValidateOwnerReferences("Quest", m_quests, out error))
+            {
+                return false;
+            }
+
+            return ValidateOwnerReferences("Achievement", m_achievements, out error);
+        }
+
+        /// <summary>校验一批 owner（任务或成就）的条件与奖励引用。</summary>
+        /// <param name="tableName">表名（报错用）。</param>
+        /// <param name="owners">要校验的 owner。</param>
+        /// <param name="error">失败原因。</param>
+        /// <returns>全部有效返回 true。</returns>
+        private bool ValidateOwnerReferences(string tableName, Dictionary<int, OwnerRow> owners, out string error)
+        {
+            error = string.Empty;
+
+            foreach (KeyValuePair<int, OwnerRow> pair in owners)
+            {
+                OwnerRow owner = pair.Value;
+
+                for (int i = 0; i < owner.ConditionIds.Length; i++)
+                {
+                    if (!m_conditions.ContainsKey(owner.ConditionIds[i]))
+                    {
+                        error = tableName + " " + owner.Id + "（" + owner.Name + "）的第 " + (i + 1) +
+                                " 条条件 " + owner.ConditionIds[i] + " 在 QuestCondition.csv 里**不存在**。";
+                        return false;
+                    }
+                }
+
+                if (owner.RewardId != 0 && !m_rewards.ContainsKey(owner.RewardId))
+                {
+                    error = tableName + " " + owner.Id + "（" + owner.Name + "）的奖励 " + owner.RewardId +
+                            " 在 Reward.csv 里**不存在**。";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+}

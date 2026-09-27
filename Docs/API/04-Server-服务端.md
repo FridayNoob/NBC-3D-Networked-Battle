@@ -174,6 +174,27 @@ FlushAsync()  ← 按"落库时机"调（异步）
 ⚠️ 摘要**没有任何出口**：不进日志、不进 `HandshakeAck.Reason`、不进 `LoginResult`
 （`_net-probe`【十五】有一条专门翻遍所有服务端 Note 找它）。
 
+### 4.6.1 服务端权威的成就判定（**M4-S3 第一刀**）
+
+| 类型 | 职责 |
+| --- | --- |
+| `QuestTables`（`NBC.Server.Game`） | 服务端读 `Quest`/`QuestCondition`/`Achievement`/`Reward` 四张 CSV；**加载时校验跨表引用** |
+| `ProgressFact` | 一条"发生过的事实"（谁 杀了什么/捡了什么 几个）—— 与下发给客户端的**事件**分开 |
+| `IPlayerProgressStore` / `IPlayerRewardLedger` | 共享接口 + **带 IO 的 `LoadAsync`/`FlushAsync`**（共享接口故意是同步的） |
+| `AchievementAuthority` | 每个登录玩家一个共享层 `ConditionTracker` + 进度 + 台账；喂事实 / 判解锁 / 防重复 / 冲库 |
+
+⚠️ **三个必须守住的次序**（错一个就静默丢数据）：
+① `LoadAsync` 在 `Register` **之前**（否则把库里进度覆盖成 0，且"已达成未记台账"的成就永远补不上）；
+② 台账 `LoadAsync` 在第一次 `HasGranted` **之前**（否则每次启动重复发奖）；
+③ 登录同步、Load 异步 ⇒ 中间的事实**排队不许丢**。
+
+⚠️ **两条"设计如此"**：**进度是钳位的**（条件达成后不再累计）；`resetProgress:false`
+每次启动都会回调"已达成"的条件（这就是"登录即解锁"），所以**必须靠台账挡重复发奖**。
+
+⚠️ **这一刀没做**：奖励的**实际发放**（exp/gold 写进 `player_profile`，要与台账同事务）、
+**权威进度下发客户端**（客户端仍在本地算 = 预测）、**任务状态机**（要新建 `quest_state` 表）。
+见 `Docs\27` §21.4。
+
 ### 4.7 `player_id` 的取值约定（**一句话，全项目通用**）
 
 ```

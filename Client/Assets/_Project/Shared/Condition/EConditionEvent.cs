@@ -106,6 +106,74 @@ namespace NBC.Shared.Condition
         }
 
         /// <summary>
+        /// 把**配置表里写的名字**解析成枚举（`"KillMonster"` → <see cref="EConditionEvent.KillMonster"/>）。
+        ///
+        /// <para>
+        /// ⚠️ 为什么放在**共享层**而不是各写一份：`QuestCondition.csv` 里填的是名字，
+        /// 而**两端都要读同一张表**（客户端读生成的 TSV、服务端直接读 CSV，见 M4-S3 服务端权威化）。
+        /// 各写一份解析 = 迟早有一边多认一个名字 ⇒ "客户端认为条件成立、服务端认为配置有错"。
+        /// </para>
+        /// <para>
+        /// ⚠️ **大小写敏感**（按名字逐字符比）：表里就写 `KillMonster`，
+        /// 宽松匹配只会让 `killmonster` 这种拼错**静默生效**。
+        /// </para>
+        /// </summary>
+        /// <param name="name">名字（不带 `条件.` 前缀）。</param>
+        /// <param name="value">解析结果（失败时是 default）。</param>
+        /// <returns>解析成功返回 true。</returns>
+        public static bool TryParse(string name, out EConditionEvent value)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                var candidate = (EConditionEvent)i;
+
+                if (string.Equals(NameOf(candidate), name, System.StringComparison.Ordinal))
+                {
+                    value = candidate;
+                    return true;
+                }
+            }
+
+            value = default(EConditionEvent);
+            return false;
+        }
+
+        /// <summary>枚举成员名（与配置表里填的名字一致；和 <see cref="KeyOf"/> 的 `条件.` 前缀无关）。</summary>
+        /// <param name="value">事件类型。</param>
+        /// <returns>名字。</returns>
+        public static string NameOf(EConditionEvent value)
+        {
+            switch (value)
+            {
+                case EConditionEvent.KillMonster: return "KillMonster";
+                case EConditionEvent.CollectItem: return "CollectItem";
+                case EConditionEvent.ReachArea: return "ReachArea";
+                case EConditionEvent.UseSkill: return "UseSkill";
+                case EConditionEvent.TalkToNpc: return "TalkToNpc";
+                default: return "未知(" + (int)value + ")";
+            }
+        }
+
+        /// <summary>所有合法名字，拼成一句人话（报错时告诉人"能填什么"）。</summary>
+        /// <returns>例：`KillMonster / CollectItem / …`。</returns>
+        public static string DescribeAllNames()
+        {
+            string text = string.Empty;
+
+            for (int i = 0; i < Count; i++)
+            {
+                if (i > 0)
+                {
+                    text += " / ";
+                }
+
+                text += NameOf((EConditionEvent)i);
+            }
+
+            return text;
+        }
+
+        /// <summary>
         /// 稳定的**字符串键**（日志、事件注册、外部协议里用它）。
         /// <para>约定形状：`条件.<成员名>`，例如 `条件.KillMonster`。</para>
         /// <para>
@@ -118,15 +186,7 @@ namespace NBC.Shared.Condition
         /// <returns>字符串键。</returns>
         public static string KeyOf(EConditionEvent value)
         {
-            switch (value)
-            {
-                case EConditionEvent.KillMonster: return "条件.KillMonster";
-                case EConditionEvent.CollectItem: return "条件.CollectItem";
-                case EConditionEvent.ReachArea: return "条件.ReachArea";
-                case EConditionEvent.UseSkill: return "条件.UseSkill";
-                case EConditionEvent.TalkToNpc: return "条件.TalkToNpc";
-                default: return "条件.未知(" + (int)value + ")";
-            }
+            return "条件." + NameOf(value);
         }
 
         /// <summary>转成一句人话（报错消息里用）。</summary>

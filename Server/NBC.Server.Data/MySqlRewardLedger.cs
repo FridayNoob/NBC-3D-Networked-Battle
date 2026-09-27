@@ -43,12 +43,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using NBC.Server.Game;
 using NBC.Shared.Reward;
 
 namespace NBC.Server.Data
 {
     /// <summary>MySQL 版的已发奖励台账（**一个实例对应一个玩家**）。</summary>
-    public sealed class MySqlRewardLedger : IRewardLedger, IDisposable
+    public sealed class MySqlRewardLedger : IRewardLedger, IPlayerRewardLedger, IDisposable
     {
         /// <summary>读写。</summary>
         private readonly IRewardLedgerDao m_dao;

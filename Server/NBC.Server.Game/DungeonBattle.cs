@@ -42,6 +42,7 @@
 using System.Collections.Generic;
 using NBC.Protocol;
 using NBC.Shared.Battle;
+using NBC.Shared.Condition;
 using NBC.Shared.Net;
 
 namespace NBC.Server.Game;
@@ -395,6 +396,9 @@ public sealed class DungeonBattle
 
     /// <summary>待广播的死亡事件（M4-S1：英雄与怪都发，客户端按 `kind` 分派）。</summary>
     private readonly List<DeathEvent> _pendingDeaths = new();
+
+    /// <summary>待处理的条件事实（击杀 / 拾取；见 `ProgressFact` 文件头）。</summary>
+    private readonly List<ProgressFact> _pendingFacts = new();
 
     /// <summary>本局的**确定性**随机数（见 `BattleRandom` 的注释：为什么不能用 `System.Random`）。</summary>
     private readonly BattleRandom _random;
@@ -879,6 +883,12 @@ public sealed class DungeonBattle
             else if (target.Kind == 1 && attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId != 0)
             {
                 StatOf(attackerEntity).Kill++;
+
+                // M4-S3 服务端权威化：**击杀事实**就在"怪物刚死、击杀者还在手上"这一行记下来。
+                // ⚠️ 条件系统要的是**玩家编号**，而 `DeathEvent.KillerId` 是**实体编号** ——
+                //    这个转换只有这里最省事（两个实体都在手上），理由见 `ProgressFact` 文件头。
+                _pendingFacts.Add(new ProgressFact(
+                    attackerEntity.PlayerId, EConditionEvent.KillMonster, target.ConfigId, 1));
             }
 
             if (target.Kind == 1 && _tables != null)
@@ -986,6 +996,29 @@ public sealed class DungeonBattle
     }
 
     /// <summary>
+    /// 取走待处理的**条件事实**（击杀 / 拾取；取走即清空，M4-S3 服务端权威化）。
+    ///
+    /// <para>
+    /// ⚠️ 为什么"事实"和"事件"要分开两份：
+    /// `DeathEvent` 里的 `KillerId` 是**实体编号**（实例），而条件系统要的是**玩家编号**；
+    /// 而"是谁杀的"这件事**只有 `ApplyDamage` 那一刻知道**（那时两个实体都在手上）。
+    /// ⇒ 在信息最全的地方记账 → 这里直接记下 `(玩家, 事件类型, 目标, 数量)`。
+    /// </para>
+    /// <para>
+    /// ⚠️ 它是给**服务端权威**（`AchievementAuthority`）吃的，与下发给客户端的
+    /// `ServerEvent` 是**同一批权威事实**的两个消费者 —— 客户端那份是预测/显示，
+    /// 服务端这份才是记账的（见 `Docs\27` §二十一）。
+    /// </para>
+    /// </summary>
+    /// <param name="buffer">接收结果的表（会先清空）。</param>
+    public void CopyPendingFacts(List<ProgressFact> buffer)
+    {
+        buffer.Clear();
+        buffer.AddRange(_pendingFacts);
+        _pendingFacts.Clear();
+    }
+
+    /// <summary>
     /// 取走待广播的**死亡事件**（取走即清空；`RoomBattleService` 每帧调一次，M4-S1）。
     /// </summary>
     /// <param name="buffer">接收结果的表（会先清空）。</param>
@@ -1049,6 +1082,15 @@ public sealed class DungeonBattle
                 Count = count,
                 WinnerPlayerId = winnerPlayerId,
             });
+
+            // M4-S3 服务端权威化：**拾取事实**（"带回 2 张狼皮"就是 `CollectItem(7001)×2`）。
+            // ⚠️ 只有**归某个玩家**的掉落才算事实（`winnerPlayerId == 0` = 无主，谁也不算）；
+            //    游客（负数）照记 —— 权威系统那边按 `> 0` 过滤（"能不能落库"不归这层管）。
+            if (winnerPlayerId != 0)
+            {
+                _pendingFacts.Add(new ProgressFact(
+                    winnerPlayerId, EConditionEvent.CollectItem, row.ItemId, count));
+            }
 
             rolled++;
         }
