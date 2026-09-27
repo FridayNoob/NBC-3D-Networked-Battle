@@ -58,9 +58,12 @@ internal static class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        int port = ReadIntArg(args, "--port", TcpServerTransport.DefaultPort);
+        // SRV-01：配置来源 = `命令行 > appsettings.json > 内置默认值`（见 `HostConfig` 文件头）
+        HostConfig config = HostConfig.Load(args);
+
+        int port = config.ListenPort;
         int tickLimit = ReadIntArg(args, "--ticks", 0);          // 0 = 一直跑
-        bool quiet = HasFlag(args, "--quiet");
+        bool quiet = HasFlag(args, "--quiet") || config.QuietByConfig;
 
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
 
@@ -74,6 +77,27 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine($"[Check] NBC.Shared 可引用，共享层版本标识：{SharedInfo.Describe()}");
         Console.WriteLine($"[Check] 协议：{NetContract.Describe()}");
+
+        // ⚠️ **配置的来源要印出来** —— 否则"我改了 appsettings 到底生效没有"又要靠猜，
+        //    而那正是 `HostConfig` 存在的理由（改了没生效是本项目踩过的坑）。
+        Console.WriteLine($"[配置] 文件：{config.ConfigFilePath ?? "**没找到**（全部用内置默认值）"}");
+        Console.WriteLine($"[配置] 监听端口 {port}（来源：{config.ListenPortSource}）");
+        Console.WriteLine($"[配置] 数据库参数来源：{config.DescribeDatabaseSource()}；日志级别：{config.LogLevel}" +
+                          (config.QuietByConfig ? "（⇒ 安静模式）" : string.Empty));
+
+        foreach (string note in config.Notes)
+        {
+            Console.WriteLine("       " + note.Replace("\n", "\n       "));
+        }
+
+        // ⚠️ 这个检查在"两边都是 const"的年代**永远执行不到**（编译器 CS0162 直接判死），
+        //    因为 `Simulation.LogicTickRate` 现在是从文件读来的，它**重新有意义**了。见 `HostConfig` 文件头。
+        string? tickMismatch = config.DescribeTickRateMismatch();
+
+        if (tickMismatch != null)
+        {
+            Console.WriteLine("       " + tickMismatch.Replace("\n", "\n       "));
+        }
 
         // ⚠️ 负责人是**双击 bin 里的 exe** 启动的 —— 双击**永远不会编译**。
         //    所以"改了服务端代码却没重编"是**必然会发生**的事（2026-09-26 真发生过一次），
@@ -135,10 +159,14 @@ internal static class Program
         //  ⇒ **累计连过 4 次之后**，后面每一局的战绩明细都会被外键拒绝、**静默跳过**
         //     （表现是"打完一局 total_kill 不涨了"）。调试时反复开关窗口很容易撞上。
         //
-        //  ⚠️ 顺手把数据库也在这里初始化 —— `recordDao` 与槽位用的是同一份连接配置，
-        //     分成两处读配置迟早会不一致（"为什么战绩能写、槽位读不到"）。
-        var dbOptions = new DatabaseOptions();
-        dbOptions.ApplyPasswordFromEnvironment();
+        //  ⚠️ 配置来源：`appsettings.json` 的 `Database` 段（SRV-01 起**真的读了**），
+        //     密码走环境变量 `NBC_DB_PASSWORD` —— 见 `HostConfig` 与 `DatabaseOptions`。
+        //     命令行 `--port` 仍然优先于配置文件（运维/自动化靠它）。
+        //
+        //  ⚠️ 启动时**同步探一次活**（`.GetAwaiter().GetResult()`）：这发生在**主循环之前**，
+        //     阻塞几百毫秒换来"启动横幅明说数据库通不通"，是划算的。
+        //     主循环里**绝不能**这么写 —— 那正是 `BattleRecordWriter` 存在的理由。
+        var dbOptions = config.Database;
 
         DbConnectionFactory? dbFactory = null;
         BattleRecordDao? recordDao = null;
