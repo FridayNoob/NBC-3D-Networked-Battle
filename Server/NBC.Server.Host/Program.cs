@@ -29,6 +29,7 @@
 // ============================================================================
 
 using System.Reflection;
+using Google.Protobuf;           // `ToByteArray()`（少了它报 CS1061 —— 本项目撞过好几次）
 using NBC.Protocol;
 using NBC.Framework.Log;        // SRV-14：日志（**与客户端编同一份源码**，见 NBC.Server.Core.csproj）
 using NBC.Server.Core;
@@ -305,6 +306,9 @@ internal static class Program
         //  ⚠️ 没接数据库时**故意不接**（`Track` 直接返回 false）：只判不记会让人以为成就系统好了。
         AchievementAuthority? achievements = null;
 
+        // M4-S3 收口（未做#2）：把权威进度推给客户端的那条线（**Host 与探针共用**）
+        ProgressBroadcaster? progress = null;
+
         if (questTables != null && dbFactory != null)
         {
             DbConnectionFactory liveFactory = dbFactory;
@@ -316,6 +320,16 @@ internal static class Program
 
             achievements.Note += line => Log(quiet, "[成就] " + line);
             battles.Achievements = achievements;
+
+            // ================================================================
+            //  M4-S3 收口（§21.4 未做#2）：把**权威进度**推给客户端
+            //  —— 收掉"两个账房"：在此之前任务/成就进度**客户端自己也算一份**，
+            //     两边一致只是"碰巧"，一旦不一致**不报错**。
+            // ================================================================
+            // ⚠️ 逻辑在 `ProgressBroadcaster` 里，**Host 与探针共用同一份** ——
+            //    抄一份进探针，验的就是抄本（M3-A 的 `ServerMessagePump` 同一条理由）。
+            progress = new ProgressBroadcaster(transport, rooms.Registry, achievements);
+            progress.Note += line => Log(quiet, "[进度] " + line);
 
             // 一局结束就冲一次库（**fire-and-forget**：这里是 Tick 线程，绝不能等 IO）
             // ⚠️ lambda 的参数**不能叫 `_`** —— 那样里面的 `_ = 任务` 会被解析成"给这个参数赋值"，
@@ -424,6 +438,11 @@ internal static class Program
 
         Say(string.Empty);
         Say("[收尾] 正在关闭监听……");
+
+        // ⚠️ 退订要**在 `Stop()` 之前**：`Stop()` 会关掉所有会话，
+        //    之后再触发的进度变化会找不到会话（那倒也不致命，但会白记一次"跳过"）。
+        progress?.Dispose();
+
         transport.Stop();
 
         // SRV-17：优雅关闭要**把战绩写完**再退。⚠️ 带超时 ——

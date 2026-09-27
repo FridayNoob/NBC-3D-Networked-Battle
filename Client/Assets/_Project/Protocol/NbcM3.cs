@@ -58,21 +58,26 @@ namespace NBC.Protocol {
             "dW50GAIgASgFEhgKEHdpbm5lcl9wbGF5ZXJfaWQYAyABKAMihQEKC1NlcnZl",
             "ckV2ZW50EiUKBmRhbWFnZRgBIAEoCzITLm5iYy5tMy5EYW1hZ2VFdmVudEgA",
             "EiMKBWRlYXRoGAIgASgLMhIubmJjLm0zLkRlYXRoRXZlbnRIABIhCgRkcm9w",
-            "GAMgASgLMhEubmJjLm0zLkRyb3BFdmVudEgAQgcKBWV2ZW50IokCCg1TZXJ2",
-            "ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMuSGFu",
-            "ZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAASJwoK",
-            "cm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghzbmFw",
-            "c2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZlbnQY",
-            "BSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEoCzIV",
-            "Lm5iYy5tMy5FcnJvclJlc3BvbnNlSABCCQoHcGF5bG9hZCLkAQoNQ2xpZW50",
-            "TWVzc2FnZRImCgloYW5kc2hha2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtl",
-            "SAASHAoEcGluZxgCIAEoCzIMLm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29t",
-            "GAMgASgLMhcubmJjLm0zLkpvaW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQg",
-            "ASgLMhMubmJjLm0zLlBsYXllcklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEo",
-            "CzIYLm5iYy5tMy5MZWF2ZVJvb21SZXF1ZXN0SABCCQoHcGF5bG9hZCpUCglS",
-            "b29tUGhhc2USFgoSUk9PTV9QSEFTRV9XQUlUSU5HEAASFgoSUk9PTV9QSEFT",
-            "RV9SVU5OSU5HEAESFwoTUk9PTV9QSEFTRV9GSU5JU0hFRBACQg+qAgxOQkMu",
-            "UHJvdG9jb2xiBnByb3RvMw=="));
+            "GAMgASgLMhEubmJjLm0zLkRyb3BFdmVudEgAQgcKBWV2ZW50Il8KFkNvbmRp",
+            "dGlvblByb2dyZXNzRW50cnkSFQoNY29uZGl0aW9uX2tleRgBIAEoBRIPCgdj",
+            "dXJyZW50GAIgASgFEhAKCHJlcXVpcmVkGAMgASgFEgsKA21ldBgEIAEoCCJU",
+            "CgxQcm9ncmVzc1N5bmMSLwoHZW50cmllcxgBIAMoCzIeLm5iYy5tMy5Db25k",
+            "aXRpb25Qcm9ncmVzc0VudHJ5EhMKC3NlcnZlcl90aWNrGAIgASgDIrgCCg1T",
+            "ZXJ2ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMu",
+            "SGFuZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAAS",
+            "JwoKcm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghz",
+            "bmFwc2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZl",
+            "bnQYBSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEo",
+            "CzIVLm5iYy5tMy5FcnJvclJlc3BvbnNlSAASLQoNcHJvZ3Jlc3Nfc3luYxgH",
+            "IAEoCzIULm5iYy5tMy5Qcm9ncmVzc1N5bmNIAEIJCgdwYXlsb2FkIuQBCg1D",
+            "bGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIRLm5iYy5tMy5IYW5k",
+            "c2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBpbmdIABIsCglqb2lu",
+            "X3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1ZXN0SAASJAoFaW5w",
+            "dXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIuCgpsZWF2ZV9yb29t",
+            "GAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RIAEIJCgdwYXlsb2Fk",
+            "KlQKCVJvb21QaGFzZRIWChJST09NX1BIQVNFX1dBSVRJTkcQABIWChJST09N",
+            "X1BIQVNFX1JVTk5JTkcQARIXChNST09NX1BIQVNFX0ZJTklTSEVEEAJCD6oC",
+            "DE5CQy5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -92,7 +97,9 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.DeathEvent), global::NBC.Protocol.DeathEvent.Parser, new[]{ "EntityId", "ConfigId", "Kind", "KillerId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.DropEvent), global::NBC.Protocol.DropEvent.Parser, new[]{ "ItemId", "Count", "WinnerPlayerId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerEvent), global::NBC.Protocol.ServerEvent.Parser, new[]{ "Damage", "Death", "Drop" }, new[]{ "Event" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ConditionProgressEntry), global::NBC.Protocol.ConditionProgressEntry.Parser, new[]{ "ConditionKey", "Current", "Required", "Met" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ProgressSync), global::NBC.Protocol.ProgressSync.Parser, new[]{ "Entries", "ServerTick" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync" }, new[]{ "Payload" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom" }, new[]{ "Payload" }, null, null, null)
           }));
     }
@@ -5026,6 +5033,550 @@ namespace NBC.Protocol {
   }
 
   /// <summary>
+  //// 一条条件的**权威进度**。
+  /// </summary>
+  public sealed partial class ConditionProgressEntry : pb::IMessage<ConditionProgressEntry>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<ConditionProgressEntry> _parser = new pb::MessageParser<ConditionProgressEntry>(() => new ConditionProgressEntry());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<ConditionProgressEntry> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[16]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ConditionProgressEntry() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ConditionProgressEntry(ConditionProgressEntry other) : this() {
+      conditionKey_ = other.conditionKey_;
+      current_ = other.current_;
+      required_ = other.required_;
+      met_ = other.met_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ConditionProgressEntry Clone() {
+      return new ConditionProgressEntry(this);
+    }
+
+    /// <summary>Field number for the "condition_key" field.</summary>
+    public const int ConditionKeyFieldNumber = 1;
+    private int conditionKey_;
+    /// <summary>
+    /// `QuestCondition` 表主键
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int ConditionKey {
+      get { return conditionKey_; }
+      set {
+        conditionKey_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "current" field.</summary>
+    public const int CurrentFieldNumber = 2;
+    private int current_;
+    /// <summary>
+    /// 已累计（**服务端权威**；已钳位在 required 以内）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Current {
+      get { return current_; }
+      set {
+        current_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "required" field.</summary>
+    public const int RequiredFieldNumber = 3;
+    private int required_;
+    /// <summary>
+    /// 需求值
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Required {
+      get { return required_; }
+      set {
+        required_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "met" field.</summary>
+    public const int MetFieldNumber = 4;
+    private bool met_;
+    /// <summary>
+    /// 达成了没有
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Met {
+      get { return met_; }
+      set {
+        met_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as ConditionProgressEntry);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(ConditionProgressEntry other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (ConditionKey != other.ConditionKey) return false;
+      if (Current != other.Current) return false;
+      if (Required != other.Required) return false;
+      if (Met != other.Met) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (ConditionKey != 0) hash ^= ConditionKey.GetHashCode();
+      if (Current != 0) hash ^= Current.GetHashCode();
+      if (Required != 0) hash ^= Required.GetHashCode();
+      if (Met != false) hash ^= Met.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (ConditionKey != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(ConditionKey);
+      }
+      if (Current != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Current);
+      }
+      if (Required != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Required);
+      }
+      if (Met != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(Met);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (ConditionKey != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(ConditionKey);
+      }
+      if (Current != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Current);
+      }
+      if (Required != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Required);
+      }
+      if (Met != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(Met);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (ConditionKey != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ConditionKey);
+      }
+      if (Current != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Current);
+      }
+      if (Required != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Required);
+      }
+      if (Met != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(ConditionProgressEntry other) {
+      if (other == null) {
+        return;
+      }
+      if (other.ConditionKey != 0) {
+        ConditionKey = other.ConditionKey;
+      }
+      if (other.Current != 0) {
+        Current = other.Current;
+      }
+      if (other.Required != 0) {
+        Required = other.Required;
+      }
+      if (other.Met != false) {
+        Met = other.Met;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            ConditionKey = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Current = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            Required = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Met = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            ConditionKey = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Current = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            Required = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Met = input.ReadBool();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 服务端 → 客户端的**权威进度同步**（M4-S3 收口：§21.4 未做#2）。
+  ////
+  //// ⚠️ 为什么必须有这一条：在此之前客户端**自己也算一份**进度（= 预测）。
+  ////    两边数值一致，但**仍是两个账房** —— 只要配置、时序、或"哪个事件喂了几次"
+  ////    有半点不同，就会出现"客户端显示已完成、服务端说没达成"（而且**不报错**）。
+  ////    这一条消息把"谁是权威"钉死在服务端：客户端**只显示**收到的东西。
+  ////
+  //// ⚠️ 兼容性：**只加消息 + 只加 oneof 分支** ⇒ 老客户端忽略未知字段（proto3）、
+  ////    老服务端不发这条 ⇒ 客户端退回"自己算"的旧行为。**不需要升 `CONTRACT_VERSION`。**
+  /// </summary>
+  public sealed partial class ProgressSync : pb::IMessage<ProgressSync>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<ProgressSync> _parser = new pb::MessageParser<ProgressSync>(() => new ProgressSync());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<ProgressSync> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[17]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProgressSync() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProgressSync(ProgressSync other) : this() {
+      entries_ = other.entries_.Clone();
+      serverTick_ = other.serverTick_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProgressSync Clone() {
+      return new ProgressSync(this);
+    }
+
+    /// <summary>Field number for the "entries" field.</summary>
+    public const int EntriesFieldNumber = 1;
+    private static readonly pb::FieldCodec<global::NBC.Protocol.ConditionProgressEntry> _repeated_entries_codec
+        = pb::FieldCodec.ForMessage(10, global::NBC.Protocol.ConditionProgressEntry.Parser);
+    private readonly pbc::RepeatedField<global::NBC.Protocol.ConditionProgressEntry> entries_ = new pbc::RepeatedField<global::NBC.Protocol.ConditionProgressEntry>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::NBC.Protocol.ConditionProgressEntry> Entries {
+      get { return entries_; }
+    }
+
+    /// <summary>Field number for the "server_tick" field.</summary>
+    public const int ServerTickFieldNumber = 2;
+    private long serverTick_;
+    /// <summary>
+    /// 服务端逻辑帧号（排查"这条是什么时候的"）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long ServerTick {
+      get { return serverTick_; }
+      set {
+        serverTick_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as ProgressSync);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(ProgressSync other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if(!entries_.Equals(other.entries_)) return false;
+      if (ServerTick != other.ServerTick) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      hash ^= entries_.GetHashCode();
+      if (ServerTick != 0L) hash ^= ServerTick.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      entries_.WriteTo(output, _repeated_entries_codec);
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      entries_.WriteTo(ref output, _repeated_entries_codec);
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      size += entries_.CalculateSize(_repeated_entries_codec);
+      if (ServerTick != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTick);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(ProgressSync other) {
+      if (other == null) {
+        return;
+      }
+      entries_.Add(other.entries_);
+      if (other.ServerTick != 0L) {
+        ServerTick = other.ServerTick;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(input, _repeated_entries_codec);
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(ref input, _repeated_entries_codec);
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   //// 服务端 → 客户端。
   /// </summary>
   public sealed partial class ServerMessage : pb::IMessage<ServerMessage>
@@ -5042,7 +5593,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[16]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[18]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5080,6 +5631,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.Error:
           Error = other.Error.Clone();
+          break;
+        case PayloadOneofCase.ProgressSync:
+          ProgressSync = other.ProgressSync.Clone();
           break;
       }
 
@@ -5167,6 +5721,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "progress_sync" field.</summary>
+    public const int ProgressSyncFieldNumber = 7;
+    /// <summary>
+    /// M4-S3 收口追加（兼容：同上）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.ProgressSync ProgressSync {
+      get { return payloadCase_ == PayloadOneofCase.ProgressSync ? (global::NBC.Protocol.ProgressSync) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.ProgressSync;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -5177,6 +5746,7 @@ namespace NBC.Protocol {
       Snapshot = 4,
       Event = 5,
       Error = 6,
+      ProgressSync = 7,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5213,6 +5783,7 @@ namespace NBC.Protocol {
       if (!object.Equals(Snapshot, other.Snapshot)) return false;
       if (!object.Equals(Event, other.Event)) return false;
       if (!object.Equals(Error, other.Error)) return false;
+      if (!object.Equals(ProgressSync, other.ProgressSync)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -5227,6 +5798,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.Snapshot) hash ^= Snapshot.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.Event) hash ^= Event.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.Error) hash ^= Error.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.ProgressSync) hash ^= ProgressSync.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -5270,6 +5842,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(50);
         output.WriteMessage(Error);
       }
+      if (payloadCase_ == PayloadOneofCase.ProgressSync) {
+        output.WriteRawTag(58);
+        output.WriteMessage(ProgressSync);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -5304,6 +5880,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(50);
         output.WriteMessage(Error);
       }
+      if (payloadCase_ == PayloadOneofCase.ProgressSync) {
+        output.WriteRawTag(58);
+        output.WriteMessage(ProgressSync);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5331,6 +5911,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.Error) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Error);
+      }
+      if (payloadCase_ == PayloadOneofCase.ProgressSync) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(ProgressSync);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -5380,6 +5963,12 @@ namespace NBC.Protocol {
             Error = new global::NBC.Protocol.ErrorResponse();
           }
           Error.MergeFrom(other.Error);
+          break;
+        case PayloadOneofCase.ProgressSync:
+          if (ProgressSync == null) {
+            ProgressSync = new global::NBC.Protocol.ProgressSync();
+          }
+          ProgressSync.MergeFrom(other.ProgressSync);
           break;
       }
 
@@ -5452,6 +6041,15 @@ namespace NBC.Protocol {
             Error = subBuilder;
             break;
           }
+          case 58: {
+            global::NBC.Protocol.ProgressSync subBuilder = new global::NBC.Protocol.ProgressSync();
+            if (payloadCase_ == PayloadOneofCase.ProgressSync) {
+              subBuilder.MergeFrom(ProgressSync);
+            }
+            input.ReadMessage(subBuilder);
+            ProgressSync = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -5521,6 +6119,15 @@ namespace NBC.Protocol {
             Error = subBuilder;
             break;
           }
+          case 58: {
+            global::NBC.Protocol.ProgressSync subBuilder = new global::NBC.Protocol.ProgressSync();
+            if (payloadCase_ == PayloadOneofCase.ProgressSync) {
+              subBuilder.MergeFrom(ProgressSync);
+            }
+            input.ReadMessage(subBuilder);
+            ProgressSync = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -5545,7 +6152,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[17]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[19]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

@@ -33,6 +33,7 @@ using NBC.Game.GameFlow;       // M4-S1c：`BattleSession`（条件 → 任务 �
 using NBC.Game.Net;
 using NBC.Game.Quest;          // M4-S1：`ConditionEventBridge`（事件中心 → 条件系统，M2 就有的那座桥）
 using NBC.Game.UI;             // M4-S1c：`QuestPanelModel` / `QuestRow`（真面板的视图模型，窗口复用同一份）
+using NBC.Protocol;           // M4-S3 收口：`ProgressSync` / `ConditionProgressEntry`（服务端权威进度）
 using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
 using UnityEditor;
@@ -1262,6 +1263,29 @@ namespace NBC.EditorTools
                        "，昵称 " + ack.Nickname +
                        "，服务端 " + ack.ServerVersion);
             m_session.RttUpdated += rtt => AddLog("RTT " + rtt + "ms");
+
+            // ------------------------------------------------------------------
+            //  M4-S3 收口：**服务端权威进度**（§23）
+            // ------------------------------------------------------------------
+            //  ⚠️ 这一段的意义不是"多打一行日志"，而是**把"谁是权威"变成看得见的东西**：
+            //    在此之前进度只有客户端自己算的一份（= 预测），界面上看不出真假；
+            //    现在服务端把它的账发下来，这里**逐条念出来**（含每个条件的 当前/需求/是否达成）。
+            //  ⚠️ 顺带一条边界：**只有登录玩家才有权威进度**（游客没有档案 ⇒ 服务端不追踪、也不下发）。
+            //     所以用游客连接时这里**一条都不该出现** —— 那不是 bug，是设计（见 `Docs\27` §二十）。
+            m_session.ProgressReceived += progress =>
+            {
+                AddLog("=== 服务端权威进度（tick " + progress.ServerTick + "，" +
+                       progress.Entries.Count + " 条）===");
+
+                for (int i = 0; i < progress.Entries.Count; i++)
+                {
+                    ConditionProgressEntry entry = progress.Entries[i];
+
+                    AddLog("  [权威] 条件 " + entry.ConditionKey + "：" +
+                           entry.Current + "/" + entry.Required +
+                           (entry.Met ? "（**已达成**）" : string.Empty));
+                }
+            };
 
             m_lastUpdateTime = EditorApplication.timeSinceStartup;
             AddLog("=== 连接 " + m_host + ":" + m_port +

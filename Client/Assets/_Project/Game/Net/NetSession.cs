@@ -152,6 +152,12 @@ namespace NBC.Game.Net
         /// <summary>最近一条死亡事件（M4-S1）。</summary>
         private DeathEvent m_lastDeath;
 
+        /// <summary>最近一次收到的**权威进度**（null = 还没收到过）。</summary>
+        private ProgressSync m_lastProgress;
+
+        /// <summary>收到过多少条权威进度同步。</summary>
+        private long m_progressSyncs;
+
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
 
@@ -348,6 +354,49 @@ namespace NBC.Game.Net
         /// <summary>累计收到多少条死亡事件（M4-S1）。</summary>
         public long DeathsReceived { get; private set; }
 
+        /// <summary>
+        /// 最近一次收到的**服务端权威进度**（null = 还没收到过）。
+        /// <para>⚠️ 它是**全量**：这个玩家关心的全部条件 + 当前值。
+        /// 界面应当**以它为准**，不要再拿本地算出来的数去显示（见 `ProgressReceived`）。</para>
+        /// </summary>
+        public ProgressSync LastProgress
+        {
+            get { return m_lastProgress; }
+        }
+
+        /// <summary>累计收到多少条权威进度同步。</summary>
+        public long ProgressSyncsReceived
+        {
+            get { return m_progressSyncs; }
+        }
+
+        /// <summary>
+        /// 按条件编号取权威进度（没收到过、或那个条件不在这一条里 ⇒ 返回 null）。
+        /// <para>⚠️ 返回 null 表示"**服务端没说**"，**不是**"进度是 0" ——
+        /// 这两件事必须分得开，否则界面会把"还没同步"画成"一格都没做"。</para>
+        /// </summary>
+        /// <param name="conditionKey">条件编号（`QuestCondition` 表主键）。</param>
+        /// <returns>条目或 null。</returns>
+        public ConditionProgressEntry FindProgress(int conditionKey)
+        {
+            ProgressSync snapshot = m_lastProgress;
+
+            if (snapshot == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < snapshot.Entries.Count; i++)
+            {
+                if (snapshot.Entries[i].ConditionKey == conditionKey)
+                {
+                    return snapshot.Entries[i];
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>最近几次掉落（新的在前，最多 `MaxRecentDrops` 条）—— 界面直接显示它。</summary>
         public IReadOnlyList<DropEvent> RecentDrops
         {
@@ -409,6 +458,17 @@ namespace NBC.Game.Net
 
         /// <summary>收到一条伤害事件（M4-S1；**每次扣血一条**，表现层的飘字靠它）。</summary>
         public event Action<DamageEvent> DamageReceived;
+
+        /// <summary>
+        /// 收到一条**服务端权威进度**（M4-S3 收口：收掉"两个账房"）。
+        /// <para>⚠️ 为什么需要它：在此之前任务/成就进度**客户端自己也算一份**（= 预测）。
+        /// 两边数值一致，但仍是两个账房 —— 只要配置、时序、或"哪个事件喂了几次"有半点不同，
+        /// 就会出现"客户端显示已完成、服务端说没达成"，而且**不报错**。
+        /// 收到这条之后，客户端应当**以它为准**（本地那份退化成预测/兜底）。</para>
+        /// <para>⚠️ 全量语义：它带的是这个玩家关心的**全部条件**的当前值，
+        /// 所以客户端可以**直接覆盖**，不需要自己合并增量。</para>
+        /// </summary>
+        public event Action<ProgressSync> ProgressReceived;
 
         /// <summary>收到一条死亡事件（M4-S1；怪与英雄都走这里，**按 `kind` 分派**）。</summary>
         public event Action<DeathEvent> DeathReceived;
@@ -758,6 +818,10 @@ namespace NBC.Game.Net
                     HandleServerEvent(message.Event);
                     break;
 
+                case ServerMessage.PayloadOneofCase.ProgressSync:
+                    HandleProgressSync(message.ProgressSync);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -992,6 +1056,25 @@ namespace NBC.Game.Net
 
             Log($"死亡：单位 {death.ConfigId}（实例 {death.EntityId}，kind {death.Kind}，" +
                 $"击杀者 {death.KillerId}）");
+        }
+
+        /// <summary>一条**服务端权威进度**：存下来、记数、发事件、写日志。</summary>
+        /// <param name="progress">权威进度（null 会被忽略 —— 一条 0 长度帧解出来就是 null）。</param>
+        private void HandleProgressSync(ProgressSync progress)
+        {
+            if (progress == null)
+            {
+                return;
+            }
+
+            // ⚠️ **整体替换**，不是合并：服务端发的是全量（见 `ProgressReceived` 的说明）。
+            //    合并增量在这里是错的 —— 漏一条就永久少一格，而且不报错。
+            m_lastProgress = progress;
+            m_progressSyncs++;
+
+            ProgressReceived?.Invoke(progress);
+
+            Log("收到**权威进度**：服务端帧 " + progress.ServerTick + "，" + progress.Entries.Count + " 条条件");
         }
 
         /// <summary>一条掉落事件：记数、留最近几条、发事件、写日志。</summary>

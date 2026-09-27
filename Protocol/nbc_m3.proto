@@ -252,6 +252,30 @@ message ServerEvent
 //  信封：一条消息 = 一个 payload（**帧格式另行加长度前缀**，见 Docs\25 D1）
 // ============================================================================
 
+/// 一条条件的**权威进度**。
+message ConditionProgressEntry
+{
+    int32 condition_key = 1;   // `QuestCondition` 表主键
+    int32 current       = 2;   // 已累计（**服务端权威**；已钳位在 required 以内）
+    int32 required      = 3;   // 需求值
+    bool  met           = 4;   // 达成了没有
+}
+
+/// 服务端 → 客户端的**权威进度同步**（M4-S3 收口：§21.4 未做#2）。
+///
+/// ⚠️ 为什么必须有这一条：在此之前客户端**自己也算一份**进度（= 预测）。
+///    两边数值一致，但**仍是两个账房** —— 只要配置、时序、或"哪个事件喂了几次"
+///    有半点不同，就会出现"客户端显示已完成、服务端说没达成"（而且**不报错**）。
+///    这一条消息把"谁是权威"钉死在服务端：客户端**只显示**收到的东西。
+///
+/// ⚠️ 兼容性：**只加消息 + 只加 oneof 分支** ⇒ 老客户端忽略未知字段（proto3）、
+///    老服务端不发这条 ⇒ 客户端退回"自己算"的旧行为。**不需要升 `CONTRACT_VERSION`。**
+message ProgressSync
+{
+    repeated ConditionProgressEntry entries = 1;
+    int64 server_tick = 2;   // 服务端逻辑帧号（排查"这条是什么时候的"）
+}
+
 /// 服务端 → 客户端。
 message ServerMessage
 {
@@ -263,6 +287,7 @@ message ServerMessage
         WorldSnapshot snapshot      = 4;
         ServerEvent   event         = 5;
         ErrorResponse error         = 6;   // M3-S4 追加（兼容：只是多一个 oneof 分支）
+        ProgressSync  progress_sync = 7;   // M4-S3 收口追加（兼容：同上）
     }
 }
 

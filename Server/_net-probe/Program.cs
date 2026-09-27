@@ -2805,6 +2805,71 @@ namespace NBC.NetProbe
 
                     Check("权威：狼王的配置号就是表里的 6003（判据不是我随手写的数）",
                         bossConfigId == 6003, "配置号 = " + bossConfigId);
+
+                    // ================================================================
+                    //  M4-S3 收口（`Docs\27` §21.4 未做#2）：权威进度**下发给客户端**
+                    //  ⚠️ 用的是 Host 那份**同一个** `ProgressBroadcaster` ——
+                    //     在探针里另抄一份"建消息 → 找会话 → 发"，验的就是抄本
+                    //     （M3-A 的 `ServerMessagePump` / §12.3 3h 同一条教训）。
+                    // ================================================================
+                    using (var push = new ProgressBroadcaster(h.Server, h.Registry, authority))
+                    {
+                        // 再打死一只**活着的**怪，让进度**变化**一次（推送是在"进度变了"时触发的）。
+                        // ⚠️ 判据必须是 `Kind == 1 && Alive`：服务端的 `DungeonBattle` **保留尸体**
+                        //    （Hp 归零但仍在 `Entities` 里），所以"找到 boss 就打"会打在尸体上 ——
+                        //    那样**不产生击杀事实**，也就没有进度变化。第一版就是这么写的，探针当场红了。
+                        for (int i = 0; i < battle.Entities.Count; i++)
+                        {
+                            if (battle.Entities[i].Kind == 1 && battle.Entities[i].Alive)
+                            {
+                                battle.ApplyDamage(battle.Entities[i].Id, 999999, hero.Id);
+                                break;
+                            }
+                        }
+
+                        h.TickBattles(2);
+
+                        ServerMessage? sync = null;
+
+                        for (int i = 0; i < a.Received.Count; i++)
+                        {
+                            if (a.Received[i].PayloadCase == ServerMessage.PayloadOneofCase.ProgressSync)
+                            {
+                                sync = a.Received[i];
+                            }
+                        }
+
+                        ConditionProgressEntry? entry4010 = null;
+
+                        if (sync != null)
+                        {
+                            for (int i = 0; i < sync.ProgressSync.Entries.Count; i++)
+                            {
+                                if (sync.ProgressSync.Entries[i].ConditionKey == 4010)
+                                {
+                                    entry4010 = sync.ProgressSync.Entries[i];
+                                }
+                            }
+                        }
+
+                        Check("推送⭐：客户端**真的收到**了权威进度（`progress_sync` 那一条）",
+                            sync != null,
+                            "收到 " + a.Received.Count + " 条消息，没有一条是 progress_sync；" +
+                            "服务端说明：" + DescribeLines(h.AuthorityNotes));
+
+                        Check("推送⭐：里面的条件 4010 是**服务端权威值**（1/1、已达成）",
+                            entry4010 != null && entry4010.Current == 1 && entry4010.Required == 1 && entry4010.Met,
+                            entry4010 == null
+                                ? "这条进度里没有条件 4010"
+                                : entry4010.Current + "/" + entry4010.Required + "，met=" + entry4010.Met);
+
+                        Check("推送：推的是**全量**（这个玩家关心的条件都在里面，不止 4010）",
+                            sync != null && sync.ProgressSync.Entries.Count >= 2,
+                            "只有 " + (sync == null ? 0 : sync.ProgressSync.Entries.Count) + " 条");
+
+                        Check("推送：发出去的份数如实（`Sent` 与收到的一致）",
+                            push.Sent >= 1, "Sent=" + push.Sent + "；" + push.Describe());
+                    }
                 }
             }
         }

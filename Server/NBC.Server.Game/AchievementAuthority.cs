@@ -52,6 +52,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using NBC.Protocol;
 using NBC.Shared.Condition;
 using NBC.Shared.Reward;
 
@@ -182,6 +183,15 @@ namespace NBC.Server.Game
 
         /// <summary>值得记一句的事情（Host 接到日志上）。</summary>
         public event Action<string>? Note;
+
+        /// <summary>
+        /// 某个玩家的**权威进度变了**（参数 = 玩家编号）。
+        /// <para>⚠️ 宿主接住它之后要立刻把 `TryBuildProgressView` 的结果**发给那个玩家** ——
+        /// 这就是"客户端不再自己算"的那条线（`Docs\27` §21.4 未做#2：收掉"两个账房"）。</para>
+        /// <para>⚠️ 刻意**只传玩家编号**、不传进度内容：发什么由 `TryBuildProgressView` 决定，
+        /// 于是"什么时候发"与"发什么"分开 —— 将来要改成合并/限流也只动一处。</para>
+        /// </summary>
+        public event Action<long>? ProgressChanged;
 
         /// <summary>追踪了几个玩家。</summary>
         public int TrackedPlayers
@@ -548,6 +558,67 @@ namespace NBC.Server.Game
         /// <param name="state">玩家状态。</param>
         /// <param name="key">条件编号。</param>
         /// <param name="progress">进度。</param>
+        /// <summary>
+        /// 把某个玩家当前的**权威进度**拍成一条可以下发的消息（客户端只显示、不再自己算）。
+        /// <para>⚠️ 内容是"这个玩家关心的**全部条件**的当前值"（= 全量），不是增量 ——
+        /// 与 D5（每 tick 全量快照）同一个判据：**全量最省心**，
+        /// 增量一旦漏一条就会永久少一格，而且**不报错**。</para>
+        /// </summary>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="serverTick">服务端逻辑帧号（排查"这条是什么时候的"）。</param>
+        /// <param name="message">要下发的消息。</param>
+        /// <returns>这个玩家被追踪、判定器可用时返回 true；否则 false（**不发**）。</returns>
+        public bool TryBuildProgressView(long playerId, long serverTick, out ProgressSync message)
+        {
+            message = new ProgressSync();
+
+            PlayerState? state;
+
+            if (!m_players.TryGetValue(playerId, out state) || state.Tracker == null)
+            {
+                return false;
+            }
+
+            var seen = new HashSet<int>();
+
+            for (int i = 0; i < m_tables.Achievements.Count; i++)
+            {
+                OwnerRow owner = m_tables.Achievements[i];
+                int[] conditionIds = owner.ConditionIds;
+
+                for (int c = 0; c < conditionIds.Length; c++)
+                {
+                    // 两个成就可能共用同一条条件 ⇒ 去重，否则客户端会看到重复条目
+                    if (!seen.Add(conditionIds[c]))
+                    {
+                        continue;
+                    }
+
+                    ConditionProgress progress;
+
+                    if (!state.Tracker.TryGetProgress(conditionIds[c], out progress))
+                    {
+                        continue;
+                    }
+
+                    message.Entries.Add(new ConditionProgressEntry
+                    {
+                        ConditionKey = conditionIds[c],
+                        Current = progress.Current,
+                        Required = progress.Required,
+                        Met = progress.IsMet
+                    });
+                }
+            }
+
+            message.ServerTick = serverTick;
+            return true;
+        }
+
+        /// <summary>条件进度推进了（还没达成的那一条）。</summary>
+        /// <param name="state">玩家状态。</param>
+        /// <param name="key">条件编号。</param>
+        /// <param name="progress">新进度。</param>
         private void OnProgressChanged(PlayerState state, int key, ConditionProgress progress)
         {
             if (progress.IsMet)
@@ -557,6 +628,9 @@ namespace NBC.Server.Game
 
             Note?.Invoke("成就进度：玩家 " + state.PlayerId + " 条件 " + key + " → " +
                          progress.Current + "/" + progress.Required);
+
+            // 进度真的动了 ⇒ 让宿主把**权威值**推给客户端（未做#2）
+            ProgressChanged?.Invoke(state.PlayerId);
         }
 
         /// <summary>
@@ -620,6 +694,11 @@ namespace NBC.Server.Game
                                  : "→ 奖励 " + reward + "（exp +" + expDelta + " / gold +" + goldDelta +
                                    "，与台账**同一事务**落库）"));
             }
+
+            // ⚠️ 放在**循环之后**：一条事实可能让好几个成就同时解锁，推一次就够。
+            //    而且"条件达成了但成就还没解锁"（别的条件没满）也要推 ——
+            //    客户端要看得到 2/3 变成 3/3（它自己不再算了）。
+            ProgressChanged?.Invoke(state.PlayerId);
         }
 
         /// <summary>这个 owner 的所有条件都达成了吗。</summary>
