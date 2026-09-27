@@ -101,9 +101,101 @@ namespace NBC.Server.Data
                 return 0;
             }
 
+            string sql = BuildInsertSql(playerId, rows, out DynamicParameters parameters);
+
+            using (MySqlConnection connection = await m_factory.OpenAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, parameters, commandTimeout: m_commandTimeoutSeconds,
+                                          cancellationToken: cancellationToken)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>**台账 + 实际发放**：两件事在同一个事务里（要么都成，要么都不成）。</summary>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="rows">要写的台账行（可以为空表 —— 那时只发钱）。</param>
+        /// <param name="expDelta">要加的 exp（0 = 不加）。</param>
+        /// <param name="goldDelta">要加的 gold（0 = 不加）。</param>
+        /// <param name="cancellationToken">取消令牌。</param>
+        /// <returns>写下的台账行数。</returns>
+        /// <exception cref="ProfileMissingException">有实际发放、但档案不存在（整体回滚）。</exception>
+        public async Task<int> InsertBatchAndPayAsync(
+            long playerId, IReadOnlyList<RewardGrantedRow> rows,
+            int expDelta, int goldDelta,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            bool hasRows = rows != null && rows.Count > 0;
+            bool paying = expDelta != 0 || goldDelta != 0;
+
+            if (!hasRows && !paying)
+            {
+                return 0;
+            }
+
+            using (MySqlConnection connection = await m_factory.OpenAsync(cancellationToken).ConfigureAwait(false))
+            using (MySqlTransaction transaction = connection.BeginTransaction())
+            {
+                int ledgerRows = 0;
+
+                // ⚠️ 这里**必须直接判 null**（不要用上面那个 `hasRows` 布尔量）：
+                //    编译器不认"布尔量蕴含非空"，会报 CS8604（本项目的闸门是 0 警告）。
+                if (rows != null && rows.Count > 0)
+                {
+                    string sql = BuildInsertSql(playerId, rows, out DynamicParameters parameters);
+
+                    ledgerRows = await connection.ExecuteAsync(
+                        new CommandDefinition(sql, parameters, transaction: transaction,
+                                              commandTimeout: m_commandTimeoutSeconds,
+                                              cancellationToken: cancellationToken)).ConfigureAwait(false);
+                }
+
+                if (paying)
+                {
+                    // ⚠️ §21.4 那句"`affected_rows` 的语义要单独设计"，说的就是下面这个判断。
+                    //    这里写成 `exp = exp + @d`：**匹配到的行一定发生变化**，
+                    //    所以 `affected == 0` **只可能**是"没有这个档案" —— 那才是真错误。
+                    //    （反面教材：若写成 `SET exp = @d` 而值恰好没变，MySQL 默认语义下 affected 也是 0，
+                    //      那时把 0 当错误就会**误报**。判据的形状决定了它能不能当判据。）
+                    const string paySql =
+                        "UPDATE `player_profile` SET `exp` = `exp` + @expDelta, `gold` = `gold` + @goldDelta " +
+                        "WHERE `player_id` = @playerId";
+
+                    int paid = await connection.ExecuteAsync(
+                        new CommandDefinition(paySql, new { playerId, expDelta, goldDelta },
+                                              transaction: transaction,
+                                              commandTimeout: m_commandTimeoutSeconds,
+                                              cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+                    if (paid < 1)
+                    {
+                        throw new ProfileMissingException(
+                            "[RewardLedgerDao] 要给玩家 " + playerId + " 发 " + expDelta + " exp / " + goldDelta +
+                            " gold，但 `player_profile` 里没有这个玩家 ⇒ **整笔回滚**（台账也不会写进去）。" +
+                            "静默跳过会留下『台账说发过、钱没到账』——而台账是单调的，那个玩家永远不会再补发。");
+                    }
+                }
+
+                transaction.Commit();
+                return ledgerRows;
+            }
+        }
+
+        /// <summary>
+        /// 拼那条**幂等**的台账 INSERT —— 两条写入路径（只记台账 / 台账加发放）**共用同一份 SQL**。
+        /// <para>⚠️ 一处分实现迟早会漂移：这条 SQL 里 `ON DUPLICATE KEY UPDATE` 是"台账可不可信"的地基，
+        /// 两处各写一遍就会出现"一条路幂等、另一条路不幂等"。</para>
+        /// </summary>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="rows">行。</param>
+        /// <param name="parameters">拼出来的参数。</param>
+        /// <returns>SQL。</returns>
+        private static string BuildInsertSql(
+            long playerId, IReadOnlyList<RewardGrantedRow> rows, out DynamicParameters parameters)
+        {
             var sql = new StringBuilder();
             sql.Append("INSERT INTO `reward_granted` (`player_id`, `owner_kind`, `owner_id`, `reward_id`) VALUES ");
-            var parameters = new DynamicParameters();
+
+            parameters = new DynamicParameters();
             parameters.Add("playerId", playerId);
 
             for (int i = 0; i < rows.Count; i++)
@@ -128,13 +220,7 @@ namespace NBC.Server.Data
             // ⚠️ 见文件头 ①：只容忍主键冲突，**不用 `INSERT IGNORE`**
             //    （那会把"外键不存在"这类真错误一起吞掉）
             sql.Append(" ON DUPLICATE KEY UPDATE `reward_id` = VALUES(`reward_id`)");
-
-            using (MySqlConnection connection = await m_factory.OpenAsync(cancellationToken).ConfigureAwait(false))
-            {
-                return await connection.ExecuteAsync(
-                    new CommandDefinition(sql.ToString(), parameters, commandTimeout: m_commandTimeoutSeconds,
-                                          cancellationToken: cancellationToken)).ConfigureAwait(false);
-            }
+            return sql.ToString();
         }
 
         /// <summary>删掉一个玩家的全部台账（**清档/测试收尾用**）。</summary>

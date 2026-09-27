@@ -74,6 +74,19 @@ namespace NBC.Server.Game
         /// <returns>写回去几条。</returns>
         Task<int> FlushAsync(CancellationToken cancellationToken = default(CancellationToken));
 
+        /// <summary>
+        /// 记下"刚刚发了这份奖励"，并把这笔**实际发放**（exp/gold）排进**同一个事务**
+        /// （落库时与台账行一起提交，要么都成、要么都不成）。
+        /// <para>⚠️ 幂等：这个 `(kind, ownerId)` 已经有记录时**连发放也不排** ——
+        /// 否则"重复解锁"会重复发钱，而台账那边看不出异常（它本来就是单调的）。</para>
+        /// </summary>
+        /// <param name="kind">谁发的。</param>
+        /// <param name="ownerId">发布者编号。</param>
+        /// <param name="rewardId">奖励编号（留痕/排查用）。</param>
+        /// <param name="exp">这笔要加的 exp（0 = 不加）。</param>
+        /// <param name="gold">这笔要加的 gold（0 = 不加）。</param>
+        void MarkGrantedWithPayout(ERewardOwnerKind kind, int ownerId, int rewardId, int exp, int gold);
+
         /// <summary>一句人话（落库统计）。</summary>
         /// <returns>例：`台账：读 1、写 1、脏 0`。</returns>
         string DescribeFlushStats();

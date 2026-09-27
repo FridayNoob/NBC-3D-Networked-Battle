@@ -43,6 +43,31 @@ namespace NBC.Server.Data
             long playerId, IReadOnlyList<RewardGrantedRow> rows,
             CancellationToken cancellationToken = default(CancellationToken));
 
+        /// <summary>
+        /// **台账 + 实际发放**：把这一批台账行写下，并把这笔奖励（exp/gold）加到 `player_profile`，
+        /// 两件事在**同一个事务**里（要么都成，要么都不成）。
+        /// <para>
+        /// ⚠️ 为什么必须同一事务（这是本方法的全部理由）：
+        /// 分两次写就会出现「**台账记了"发过"、金币却没加**」——
+        /// 而且台账是**单调**的（发过就是发过、不会撤销），所以那个玩家**永远拿不到这笔钱**，
+        /// 也永远不会再补发。这是**静默的数据丢失**，只有对账才看得出。
+        /// </para>
+        /// </summary>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="rows">要写的台账行。</param>
+        /// <param name="expDelta">这笔要加的 exp（0 = 不加）。</param>
+        /// <param name="goldDelta">这笔要加的 gold（0 = 不加）。</param>
+        /// <param name="cancellationToken">取消令牌。</param>
+        /// <returns>写下的台账行数。</returns>
+        /// <exception cref="ProfileMissingException">
+        /// 有实际发放、但 `player_profile` 里没有这个 `player_id` ⇒ **整体回滚**。
+        /// 静默跳过会变成"台账说发过、钱没到账"，正是本方法要防的那件事。
+        /// </exception>
+        Task<int> InsertBatchAndPayAsync(
+            long playerId, IReadOnlyList<RewardGrantedRow> rows,
+            int expDelta, int goldDelta,
+            CancellationToken cancellationToken = default(CancellationToken));
+
         /// <summary>删掉一个玩家的全部台账（清档/测试收尾用）。</summary>
         /// <param name="playerId">玩家编号。</param>
         /// <param name="cancellationToken">取消令牌。</param>

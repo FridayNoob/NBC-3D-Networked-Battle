@@ -222,6 +222,22 @@ namespace NBC.Server.Data
         }
     }
 
+    /// <summary>
+    /// 要发奖励、但 `player_profile` 里**没有**这个 `player_id` ⇒ 整笔交易回滚。
+    /// <para>⚠️ 为什么不静默跳过：台账与发放必须同生同死。跳过的结果是
+    /// 「台账记了『发过』、金币却没加」—— 而台账是**单调**的，
+    /// 那个玩家**永远不会再补发**。⇒ 宁可让这一次 flush 失败并重试。</para>
+    /// </summary>
+    public sealed class ProfileMissingException : Exception
+    {
+        /// <summary>造一个。</summary>
+        /// <param name="message">人话（已含"该怎么办"）。</param>
+        public ProfileMissingException(string message)
+            : base(message)
+        {
+        }
+    }
+
     /// <summary>一次数据库探活的结果（**不用 `out` 参数**，见 `PingAsync` 的说明）。</summary>
     public readonly struct PingResult
     {

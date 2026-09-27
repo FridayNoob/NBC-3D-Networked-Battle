@@ -597,18 +597,28 @@ namespace NBC.Server.Game
                     continue;
                 }
 
-                state.Ledger?.MarkGranted(ERewardOwnerKind.Achievement, owner.Id, owner.RewardId);
+                RewardRow? reward = owner.RewardId == 0 ? null : m_tables.FindReward(owner.RewardId);
+
+                int expDelta = reward == null ? 0 : reward.Exp;
+                int goldDelta = reward == null ? 0 : reward.Gold;
+
+                // ⚠️ 用**带发放**的那个重载（§21.4 未做#1 的收口）：
+                //    发放与台账**同生同死** —— 它们在同一次 flush 的同一个事务里落库。
+                //    分两次写的后果是"台账记了『发过』、金币却没加"，而台账是**单调**的，
+                //    那个玩家**永远不会再补发** ⇒ 静默的数据丢失，只有对账才看得出。
+                //    `HasGranted` 上面已经挡过一次重复；这个方法自己也幂等（重复连发放都不排）。
+                state.Ledger?.MarkGrantedWithPayout(
+                    ERewardOwnerKind.Achievement, owner.Id, owner.RewardId, expDelta, goldDelta);
 
                 state.Unlocked++;
                 m_unlocked++;
 
-                RewardRow? reward = owner.RewardId == 0 ? null : m_tables.FindReward(owner.RewardId);
-
                 Note?.Invoke("🏆 **成就解锁**（服务端权威）：玩家 " + state.PlayerId + " → " +
                              owner.Id + "「" + owner.Name + "」" +
-                             (reward == null ? "（无奖励）" : "→ 台账已记奖励 " + reward) +
-                             "\n    ⚠️ 奖励的**实际发放**（exp/gold 写进 `player_profile`）还没做：" +
-                             "它必须与台账**同一事务**，留下一刀（见 `Docs\\27` §21.4）。");
+                             (reward == null
+                                 ? "（无奖励）"
+                                 : "→ 奖励 " + reward + "（exp +" + expDelta + " / gold +" + goldDelta +
+                                   "，与台账**同一事务**落库）"));
             }
         }
 

@@ -3016,6 +3016,27 @@ namespace NBC.NetProbe
                 }
             }
 
+            /// <summary>累计排进来的 exp（验"权威真的把发放排上了"）。</summary>
+            public long PaidExp { get; private set; }
+
+            /// <summary>累计排进来的 gold。</summary>
+            public long PaidGold { get; private set; }
+
+            /// <inheritdoc/>
+            public void MarkGrantedWithPayout(
+                NBC.Shared.Reward.ERewardOwnerKind kind, int ownerId, int rewardId, int exp, int gold)
+            {
+                // 与真实现同一套幂等语义：已经有记录 ⇒ **连发放也不排**
+                if (!_granted.Add(kind + ":" + ownerId))
+                {
+                    return;
+                }
+
+                _detail.Add(ownerId + "→奖励" + rewardId + "(exp+" + exp + ",gold+" + gold + ")");
+                PaidExp += exp;
+                PaidGold += gold;
+            }
+
             /// <inheritdoc/>
             public Task<int> LoadAsync(CancellationToken cancellationToken = default(CancellationToken))
             {

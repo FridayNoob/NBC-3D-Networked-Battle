@@ -115,9 +115,238 @@ namespace NBC.DbProbe
             await AchievementAuthoritySection().ConfigureAwait(false);
 
             Console.WriteLine();
+            Console.WriteLine("【十】M4-S3 收口（§21.4 未做#1）：**奖励的实际发放** —— exp/gold 与台账**同一事务**");
+
+            await RewardPayoutSection().ConfigureAwait(false);
+
+            Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有失败");
             return s_failed == 0 ? 0 : 1;
+        }
+
+        // ====================================================================
+        //  十、M4-S3 收口：奖励的**实际发放**（exp/gold 与台账同一事务）
+        // ====================================================================
+
+        /// <summary>`player_profile` 里的 exp / gold（Dapper 直接映射）。</summary>
+        private sealed class ExpGold
+        {
+            /// <summary>经验。</summary>
+            public long exp { get; set; }
+
+            /// <summary>金币。</summary>
+            public long gold { get; set; }
+        }
+
+        /// <summary>读一个玩家的 exp / gold。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>exp / gold。</returns>
+        private static async Task<ExpGold> ReadExpGoldAsync(DbConnectionFactory factory, long playerId)
+        {
+            const string sql = "SELECT `exp`, `gold` FROM `player_profile` WHERE `player_id` = @playerId";
+
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.QuerySingleAsync<ExpGold>(
+                    new CommandDefinition(sql, new { playerId })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>把 exp / gold 写回原值（**收尾用**：这一节会真改档案）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="exp">原来的 exp。</param>
+        /// <param name="gold">原来的 gold。</param>
+        /// <returns>任务。</returns>
+        private static async Task RestoreExpGoldAsync(
+            DbConnectionFactory factory, long playerId, long exp, long gold)
+        {
+            const string sql =
+                "UPDATE `player_profile` SET `exp` = @exp, `gold` = @gold WHERE `player_id` = @playerId";
+
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { playerId, exp, gold })).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// 【十】奖励的**实际发放**：解锁成就要真的把 exp/gold 加进 `player_profile`，
+        /// 而且这一步与台账**同一事务**。
+        /// <para>⚠️ 这一节盯的是 §21.4 的「未做#1」：在那之前，台账会记「发过」，
+        /// 但**一分钱都没加** —— 而台账是**单调**的，那个玩家**永远不会再补发**。</para>
+        /// </summary>
+        /// <returns>任务。</returns>
+        private static async Task RewardPayoutSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            QuestTables tables = LoadQuestTables();
+            const long playerId = 1;
+
+            RewardRow? reward = tables.FindReward(5003);
+
+            if (reward == null)
+            {
+                Check("发放：奖励 5003 读得到（成就 9002 的奖励）", false, "读不到 5003");
+                return;
+            }
+
+            // ---- ⓵ 快照：先记下"发之前"的 exp/gold（这一节会真改档案，收尾要还回去）----
+            ExpGold before = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+            Console.WriteLine("      · 前置：player 1 的 exp=" + before.exp + " gold=" + before.gold +
+                              "；奖励 5003 = exp +" + reward.Exp + " / gold +" + reward.Gold);
+
+            // 清空进度与台账，让成就 9002 **能重新解锁**（不清就是"已发过 ⇒ 挡住了"）
+            await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+            await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+
+            // ⚠️ M4-S3 收口（**奖励的实际发放**）之后，本节的"补发"会**真的改** `player_profile.exp/gold`
+            //    ⇒ 收尾只删台账/进度**已经不够了**，必须把它们也还原。
+            //    这是"加了一个副作用，旧的收尾没跟上"的典型：2026-09-27 实测每跑一次
+            //    就漏 1000 exp / 600 gold（= 两次奖励 5003），而且**看起来一切正常**。
+            ExpGold expGoldBefore = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+            try
+            {
+                // ---- ⓶ 打一只狼王 ⇒ 解锁成就 9002 ----
+                using (var authority = NewAuthority(tables, factory, playerId, out _))
+                {
+                    Task? loading;
+                    authority.Track(playerId, "测试玩家一", out loading);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);
+                    }
+
+                    authority.ApplyFact(new ProgressFact(playerId, EConditionEvent.KillMonster, 6003, 1));
+
+                    bool flushed = await authority.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    Check("发放：冲库成功（不冲库 ⇒ 进度、台账、发放三样都不会落）", flushed, "FlushAllAsync 返回 false");
+                }
+
+                ExpGold after = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+                // ---- ⓷ ⭐ 这一节的核心：钱真的到了 ----
+                Check("真库⭐：解锁成就后 `player_profile.exp` **真的加了**（这正是 §21.4 的「未做#1」）",
+                    after.exp - before.exp == reward.Exp,
+                    "exp " + before.exp + " → " + after.exp + "（期望 +" + reward.Exp + "）");
+
+                Check("真库⭐：`player_profile.gold` **也真的加了**",
+                    after.gold - before.gold == reward.Gold,
+                    "gold " + before.gold + " → " + after.gold + "（期望 +" + reward.Gold + "）");
+
+                Check("真库：台账也写下了同一笔（`reward_granted` 1 行）—— 钱与台账**一起**落的",
+                    await CountLedgerAsync(factory, playerId).ConfigureAwait(false) == 1,
+                    "台账行数 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false));
+
+                // ---- ⓸ ⭐ 重启：**不许发第二遍钱** ----
+                using (var restarted = NewAuthority(tables, factory, playerId, out _))
+                {
+                    Task? loading;
+                    restarted.Track(playerId, "测试玩家一", out loading);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);     // 进度已达成 ⇒ 会触发一次"登录即解锁"回调
+                    }
+
+                    await restarted.FlushAllAsync(3000).ConfigureAwait(false);
+                }
+
+                ExpGold afterRestart = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+                Check("真库⭐：**重启后不重复发放**（进度已达成 ⇒ 回调过一次，但台账挡住了发钱）",
+                    afterRestart.exp == after.exp && afterRestart.gold == after.gold,
+                    "exp " + after.exp + " → " + afterRestart.exp + "；gold " + after.gold + " → " + afterRestart.gold);
+
+                // ---- ⓹ 判据的形状："发放匹配不到档案"必须**报错**，不能静默跳过 ----
+                //   ⚠️ 如实记一条边界：`reward_granted.player_id` 上有外键指向 `player_profile`，
+                //      所以"有台账行、却没有档案"这种状态**在库里根本存不下** ——
+                //      ⇒ 这条判断是**防御性**的（防将来的 schema 改动 / 装配顺序写错），
+                //        它今天**不可能**在正常路径上被触发。
+                //      所以我用"空台账行 + 幽灵玩家"来**单独**打中这条判断（否则它永远没被验过）。
+                const long ghostId = 987654321L;
+                var dao = new RewardLedgerDao(factory);
+
+                bool threw = false;
+
+                try
+                {
+                    await dao.InsertBatchAndPayAsync(
+                        ghostId, new List<RewardGrantedRow>(), 10, 20).ConfigureAwait(false);
+                }
+                catch (ProfileMissingException)
+                {
+                    threw = true;
+                }
+
+                Check("真库：发放匹配不到档案 ⇒ 抛 `ProfileMissingException`（**不静默跳过**）", threw,
+                    "没有抛异常 ⇒ 那就成了「钱没发、却当成功」");
+
+                // ---- ⓺ 有台账行 + 幽灵玩家 ⇒ 两样都不能留下（两道保险：外键 + 同一事务）----
+                var ghostRow = new RewardGrantedRow
+                {
+                    player_id = ghostId,
+                    owner_kind = (int)ERewardOwnerKind.Achievement,
+                    owner_id = 9002,
+                    reward_id = 5003
+                };
+
+                bool rejected = false;
+
+                try
+                {
+                    await dao.InsertBatchAndPayAsync(
+                        ghostId, new List<RewardGrantedRow> { ghostRow }, reward.Exp, reward.Gold)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    rejected = true;
+                }
+
+                Check("真库⭐：幽灵玩家 ⇒ **整笔被拒**，而且 `reward_granted` 里**不会**留下那一行",
+                    rejected && await CountLedgerAsync(factory, ghostId).ConfigureAwait(false) == 0,
+                    "rejected=" + rejected + "；幽灵台账行数 " +
+                    await CountLedgerAsync(factory, ghostId).ConfigureAwait(false));
+            }
+            finally
+            {
+                // ---- 收尾：档案、进度、台账都还回去（**这一节真改过真库**）----
+                await RestoreExpGoldAsync(factory, playerId, before.exp, before.gold).ConfigureAwait(false);
+                await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+                await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+
+                ExpGold restored = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+                Check("收尾：`player_profile.exp/gold` **还原成原值**",
+                    restored.exp == before.exp && restored.gold == before.gold,
+                    "exp=" + restored.exp + "（期望 " + before.exp + "）；gold=" + restored.gold +
+                    "（期望 " + before.gold + "）");
+            }
         }
 
         // ====================================================================
@@ -1730,6 +1959,12 @@ namespace NBC.DbProbe
             await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
             await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
 
+            // ⚠️ M4-S3 收口（**奖励的实际发放**）之后，本节的"补发"会**真的改** `player_profile.exp/gold`
+            //    ⇒ 收尾只删台账/进度**已经不够了**，必须把它们也还原。
+            //    这是"加了一个副作用，旧的收尾没跟上"的典型：2026-09-27 实测每跑一次
+            //    就漏 1000 exp / 600 gold（= 两次奖励 5003），而且**看起来一切正常**。
+            ExpGold expGoldBefore = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
             try
             {
                 // ---- ⓷ 第一次"进游戏"：打一只狼王 → 解锁成就 9002 ----
@@ -1856,7 +2091,19 @@ namespace NBC.DbProbe
                 int removedProgress = await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
                 int removedLedger = await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
 
+                // ⚠️ 台账删了 ≠ 痕迹没了：**发放已经落到 `player_profile` 上了**，
+                //    所以这里必须把 exp/gold 也**按绝对值还原**（见本节开头那段说明）。
+                await RestoreExpGoldAsync(factory, playerId, expGoldBefore.exp, expGoldBefore.gold)
+                    .ConfigureAwait(false);
+
+                ExpGold expGoldRestored = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
                 Console.WriteLine("      · 收尾：删掉进度 " + removedProgress + " 条、台账 " + removedLedger + " 条");
+
+                Check("收尾：`player_profile.exp/gold` **也还原了**（奖励发放会改它们）",
+                    expGoldRestored.exp == expGoldBefore.exp && expGoldRestored.gold == expGoldBefore.gold,
+                    $"期望 exp={expGoldBefore.exp} gold={expGoldBefore.gold}；" +
+                    $"实际 exp={expGoldRestored.exp} gold={expGoldRestored.gold}");
 
                 Check("收尾：player 1 的进度与台账**都清空了**", 
                     await CountProgressAsync(factory, playerId).ConfigureAwait(false) == 0 &&
@@ -2102,6 +2349,56 @@ namespace NBC.DbProbe
                         "（假 DAO）故意让这一次写失败，用来验「失败之后那一批会不会回到脏集」。", null);
                 }
 
+                m_lastBatch.Clear();
+                m_lastBatch.AddRange(rows);
+
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    m_rows[rows[i].owner_kind + ":" + rows[i].owner_id] = rows[i];
+                }
+
+                return Task.FromResult(rows.Count);
+            }
+
+            /// <summary>最近一次收到的发放（验"台账与发放是不是同一批"）。</summary>
+            public int LastExpDelta { get; private set; }
+
+            /// <summary>最近一次收到的 gold 发放。</summary>
+            public int LastGoldDelta { get; private set; }
+
+            /// <summary>让**下一次**发放故意失败（验"发放失败 ⇒ 台账也不能写进去"）。</summary>
+            public bool FailNextPayout { get; set; }
+
+            /// <summary>模拟"台账 + 发放同一事务"：假实现里用"要么都改、要么都不改"来代表它。</summary>
+            /// <param name="playerId">玩家编号。</param>
+            /// <param name="rows">台账行。</param>
+            /// <param name="expDelta">exp。</param>
+            /// <param name="goldDelta">gold。</param>
+            /// <param name="cancellationToken">取消令牌。</param>
+            /// <returns>写了几行。</returns>
+            public Task<int> InsertBatchAndPayAsync(
+                long playerId, IReadOnlyList<RewardGrantedRow> rows,
+                int expDelta, int goldDelta,
+                CancellationToken cancellationToken = default(CancellationToken))
+            {
+                LastExpDelta = expDelta;
+                LastGoldDelta = goldDelta;
+
+                if (FailNextPayout)
+                {
+                    FailNextPayout = false;
+                    throw new ProfileMissingException("（假 DAO）故意让发放失败，用来验「发放失败时台账会不会也回滚」。");
+                }
+
+                if (FailNextUpsert)
+                {
+                    FailNextUpsert = false;
+                    throw new DatabaseUnavailableException(
+                        "（假 DAO）故意让这一次写失败，用来验「失败之后那一批会不会回到脏集」。", null);
+                }
+
+                // ⚠️ 真实现是一个事务；假实现用"先算好、再一起改"代表它 ——
+                //    中途抛异常时**两边都没改**，这才是"同一事务"要保住的性质。
                 m_lastBatch.Clear();
                 m_lastBatch.AddRange(rows);
 

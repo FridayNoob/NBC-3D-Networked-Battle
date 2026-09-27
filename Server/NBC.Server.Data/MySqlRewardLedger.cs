@@ -63,6 +63,14 @@ namespace NBC.Server.Data
         /// <summary>还没落库的键（键 → 要写的行）。</summary>
         private readonly Dictionary<string, RewardGrantedRow> m_dirty = new Dictionary<string, RewardGrantedRow>();
 
+        /// <summary>
+        /// 还没落库的**实际发放**（键 → exp/gold）。与 `m_dirty` **同生同死**：
+        /// 两者一起被取走、一起写进**同一个事务**、失败时一起放回（见 `FlushAsync`）。
+        /// <para>⚠️ 为什么发放不能当场写库：登录是同步的、握手不许等 IO（见文件头），
+        /// 所以发放只能跟着台账一起排队，冲库时一并落。这也正是"同一事务"的由来。</para>
+        /// </summary>
+        private readonly Dictionary<string, PendingPayout> m_pendingPayout = new Dictionary<string, PendingPayout>();
+
         /// <summary>保护上面两个字典。</summary>
         private readonly object m_gate = new object();
 
@@ -74,6 +82,12 @@ namespace NBC.Server.Data
 
         /// <summary>累计落库行数。</summary>
         private int m_flushedRowCount;
+
+        /// <summary>累计发出去多少 exp / gold（"到底有没有真的发钱"要看得见）。</summary>
+        private long m_paidExp;
+
+        /// <summary>累计发出去多少 gold。</summary>
+        private long m_paidGold;
 
         /// <summary>Dispose 过没有。</summary>
         private bool m_disposed;
@@ -182,6 +196,43 @@ namespace NBC.Server.Data
             }
         }
 
+        /// <summary>
+        /// 记下"刚刚发了这份奖励"，并把这笔**实际发放**（exp/gold）排进**同一个事务**。
+        /// <para>⚠️ 幂等：这个键已经有记录时**什么都不做**（连发放也不排）——
+        /// 否则"重复解锁"会重复发钱，而台账那边看不出异常（它本来就是单调的）。</para>
+        /// </summary>
+        /// <param name="kind">谁发的。</param>
+        /// <param name="ownerId">发布者编号。</param>
+        /// <param name="rewardId">奖励编号。</param>
+        /// <param name="exp">这笔要加的 exp。</param>
+        /// <param name="gold">这笔要加的 gold。</param>
+        public void MarkGrantedWithPayout(ERewardOwnerKind kind, int ownerId, int rewardId, int exp, int gold)
+        {
+            string key = KeyOf(kind, ownerId);
+
+            lock (m_gate)
+            {
+                if (m_granted.ContainsKey(key))
+                {
+                    return;     // 见上面的幂等说明：连发放也不排
+                }
+
+                m_granted[key] = rewardId;
+                m_dirty[key] = new RewardGrantedRow
+                {
+                    player_id = m_playerId,
+                    owner_kind = (int)kind,
+                    owner_id = ownerId,
+                    reward_id = rewardId
+                };
+
+                if (exp != 0 || gold != 0)
+                {
+                    m_pendingPayout[key] = new PendingPayout(exp, gold);
+                }
+            }
+        }
+
         // ====================================================================
         //  载入 / 落库
         // ====================================================================
@@ -226,20 +277,36 @@ namespace NBC.Server.Data
             }
 
             List<RewardGrantedRow>? batch = null;
+            List<KeyValuePair<string, PendingPayout>>? payouts = null;
 
             try
             {
                 batch = TakeDirtyBatch();
+                payouts = TakePendingPayouts(batch);
 
-                if (batch.Count == 0)
+                if (batch.Count == 0 && payouts.Count == 0)
                 {
                     return 0;
                 }
 
-                int written = await m_dao.InsertBatchAsync(m_playerId, batch, cancellationToken).ConfigureAwait(false);
+                int sumExp = 0;
+                int sumGold = 0;
+
+                for (int i = 0; i < payouts.Count; i++)
+                {
+                    sumExp += payouts[i].Value.Exp;
+                    sumGold += payouts[i].Value.Gold;
+                }
+
+                // ⚠️ 台账与实际发放走**同一个事务**（§21.4 未做#1 收口）：
+                //    分两次写会留下"台账说发过、金币没加"，而台账是单调的 ⇒ 那个玩家**永远不会再补发**。
+                int written = await m_dao.InsertBatchAndPayAsync(
+                    m_playerId, batch, sumExp, sumGold, cancellationToken).ConfigureAwait(false);
 
                 m_flushCount++;
                 m_flushedRowCount += batch.Count;
+                m_paidExp += sumExp;
+                m_paidGold += sumGold;
                 return written;
             }
             catch
@@ -251,7 +318,11 @@ namespace NBC.Server.Data
                 //
                 //    进度那边要"比一下值再决定标不标"（怕旧值覆盖新值）；
                 //    台账是**单调**的，所以**无条件放回**就是对的 —— 落库语句本身幂等。
+                //
+                //    ⚠️ 发放也必须一起放回：台账与发放是同一事务，回滚了两边都没发生，
+                //       所以"放回"不会造成重复发放（下一次重试恰好补上）。
                 RestoreDirty(batch);
+                RestorePayouts(payouts);
                 throw;
             }
             finally
@@ -294,10 +365,63 @@ namespace NBC.Server.Data
             }
         }
 
+        /// <summary>
+        /// 把这一批行对应的**发放**从待发集合里取走（锁里只拷贝/删除）。
+        /// <para>⚠️ 只取**这一批行**对应的那些键：发放与台账行必须成对搬运，
+        /// 否则会出现"行写进去了、钱留着下次发"或反过来。</para>
+        /// </summary>
+        /// <param name="rows">这一批要落库的行。</param>
+        /// <returns>取走的发放（键 → exp/gold）。</returns>
+        private List<KeyValuePair<string, PendingPayout>> TakePendingPayouts(List<RewardGrantedRow> rows)
+        {
+            var taken = new List<KeyValuePair<string, PendingPayout>>(0);
+
+            if (rows.Count == 0 || m_pendingPayout.Count == 0)
+            {
+                return taken;
+            }
+
+            lock (m_gate)
+            {
+                taken = new List<KeyValuePair<string, PendingPayout>>(rows.Count);
+
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    string key = ((int)rows[i].owner_kind) + ":" + rows[i].owner_id;
+                    PendingPayout payout;
+
+                    if (m_pendingPayout.TryGetValue(key, out payout))
+                    {
+                        taken.Add(new KeyValuePair<string, PendingPayout>(key, payout));
+                        m_pendingPayout.Remove(key);
+                    }
+                }
+            }
+
+            return taken;
+        }
+
+        /// <summary>落库失败时把发放**无条件放回**（与 `RestoreDirty` 同一理由）。</summary>
+        /// <param name="payouts">要放回的发放。</param>
+        private void RestorePayouts(List<KeyValuePair<string, PendingPayout>>? payouts)
+        {
+            if (payouts == null || payouts.Count == 0)
+            {
+                return;
+            }
+
+            lock (m_gate)
+            {
+                for (int i = 0; i < payouts.Count; i++)
+                {
+                    m_pendingPayout[payouts[i].Key] = payouts[i].Value;
+                }
+            }
+        }
+
         /// <summary>把脏集拷一份出来并清空（锁里只拷贝）。</summary>
         /// <returns>要落库的行。</returns>
-        private List<RewardGrantedRow> TakeDirtyBatch()
-        {
+        private List<RewardGrantedRow> TakeDirtyBatch()        {
             lock (m_gate)
             {
                 if (m_dirty.Count == 0)
@@ -324,6 +448,25 @@ namespace NBC.Server.Data
         private static string KeyOf(ERewardOwnerKind kind, int ownerId)
         {
             return ((int)kind) + ":" + ownerId;
+        }
+
+        /// <summary>一笔还没落库的**实际发放**（exp/gold）。</summary>
+        private readonly struct PendingPayout
+        {
+            /// <summary>要加的 exp。</summary>
+            public readonly int Exp;
+
+            /// <summary>要加的 gold。</summary>
+            public readonly int Gold;
+
+            /// <summary>造一笔。</summary>
+            /// <param name="exp">exp。</param>
+            /// <param name="gold">gold。</param>
+            public PendingPayout(int exp, int gold)
+            {
+                Exp = exp;
+                Gold = gold;
+            }
         }
 
         /// <summary>Dispose 之后不许再用。</summary>
