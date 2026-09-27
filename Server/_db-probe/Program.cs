@@ -98,16 +98,15 @@ namespace NBC.DbProbe
             await BattleRecordSection().ConfigureAwait(false);
 
             Console.WriteLine();
-            Console.WriteLine("【七】玩家档案槽位（SRV-06 最小版 —— 解掉「第 5 次连接就丢战绩」那个欠账）");
-
-            SlotLogicSection();
-            await SlotMySqlSection().ConfigureAwait(false);
-
-            Console.WriteLine();
-            Console.WriteLine("【八】M4-S3：账号登录（SRV-06 真正的登录 —— 身份属于账号，不属于连接）");
+            Console.WriteLine("【七】M4-S3：账号登录（SRV-06 真正的登录 —— 身份属于账号，不属于连接）");
 
             PasswordRecipeSection();
             await LoginMySqlSection().ConfigureAwait(false);
+
+            Console.WriteLine();
+            Console.WriteLine("【八】SRV-17a：**游客不落库**（负数是游客 ⇒ 不会污染任何账号的档案）");
+
+            await GuestDoesNotPolluteSection().ConfigureAwait(false);
 
             Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
@@ -836,8 +835,9 @@ namespace NBC.DbProbe
 
             Check("真库：写进去了（拿到 record_id）", written.RecordId > 0, "recordId = " + written.RecordId);
             Check("真库：明细**只给有档案的那个玩家**（跳过 1 个）",
-                written.DetailRows == 1 && written.SkippedPlayers == 1,
-                "明细 " + written.DetailRows + " 条、跳过 " + written.SkippedPlayers + " 个");
+                written.DetailRows == 1 && written.SkippedUnknownPlayers == 1 && written.SkippedGuests == 0,
+                "明细 " + written.DetailRows + " 条、跳过(有 id 无档案) " + written.SkippedUnknownPlayers +
+                " 个、游客 " + written.SkippedGuests + " 个");
             Console.WriteLine("      · " + written);
 
             // ---- ⑤ 读回来核对 ----
@@ -889,10 +889,236 @@ namespace NBC.DbProbe
                 $"实际(k={restored.Kill},d={restored.Death},w={restored.Win},l={restored.Lose})");
         }
 
+        // ====================================================================
+        //  八、SRV-17a：游客不落库
+        // ====================================================================
+
+        /// <summary>
+        /// **真库**：一局里既有游客（负数 id）又有登录玩家时 ——
+        /// 游客的战绩**不能**记到任何账号头上。
+        ///
+        /// <para>
+        /// ⚠️ 这条盯的是一个**真实发生过的数据污染**：游客以前的编号是 1、2、3…
+        /// （`PlayerProfileSlots` 发的"空闲档案槽位"），而那恰好是 `player_profile` 里
+        /// **真实账号的档案 id** ⇒ 库里那几条战绩记录全是游客打的，却记在 test01/test02 名下。
+        /// </para>
+        /// <para>
+        /// 判据挑的是**最不会骗人的那个**：给游客一份"杀 99 个"的假战绩，
+        /// 然后看登录玩家的 `total_kill` **只涨了他自己那 2 个**。
+        /// （如果只断言"明细 1 条"，一个"把游客的 kill 加到了别人头上"的实现照样能过。）
+        /// </para>
+        /// </summary>
+        /// <returns>任务。</returns>
+        private static async Task GuestDoesNotPolluteSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            // ---- ⓵ 全局不变量：库里**永远**不该有非正数 player_id 的明细 ----
+            int negativeRows = await CountNegativePlayerRowsAsync(factory).ConfigureAwait(false);
+
+            Check("真库不变量：`battle_player_detail` 里没有 `player_id <= 0` 的行（游客不该出现在库里）",
+                negativeRows == 0, "居然有 " + negativeRows + " 行");
+
+            int negativeProgress = await CountGuestProgressRowsAsync(factory).ConfigureAwait(false);
+
+            Check("真库不变量：`condition_progress` / `reward_granted` 里也没有非正数 player_id",
+                negativeProgress == 0, "居然有 " + negativeProgress + " 行");
+
+            // ---- ⓶ 造一份"游客 + 登录玩家"的草稿 ----
+            const long guestPlayer = -1;
+            const long realPlayer = 1;      // `Docs\08` 种了 1~4
+
+            PlayerTotals before = await ReadTotalsAsync(factory, realPlayer).ConfigureAwait(false);
+
+            if (!before.Exists)
+            {
+                Check("前置：player 1 有档案", false, "先跑一次 Docs\\08-数据库脚本.sql");
+                return;
+            }
+
+            // 2~4 号的**写入前**快照（下面 ⓹ 要拿它对比，见那里的说明）
+            var otherTotalsBefore = new Dictionary<long, PlayerTotals>();
+
+            for (long other = 2; other <= 4; other++)
+            {
+                otherTotalsBefore[other] = await ReadTotalsAsync(factory, other).ConfigureAwait(false);
+            }
+
+            var draft = new BattleRecordDraft
+            {
+                RoomId = "r17a",
+                MapId = 1001,
+                SyncModeCode = 1,
+                RandomSeed = 1717,
+                StartTick = 0,
+                EndTick = 60,
+                TickIntervalMs = 33,
+                IsWin = true,
+            };
+
+            // 游客：战绩很夸张（99 杀），这样"污染"一眼就能看出来
+            draft.Players.Add(new BattlePlayerDraft(
+                new BattlePlayerStat
+                {
+                    PlayerId = guestPlayer,
+                    HeroConfigId = 1001,
+                    Kill = 99,
+                    Death = 9,
+                    DamageDealt = 99999,
+                    DamageTaken = 99999,
+                },
+                isWin: true));
+
+            // 登录玩家：真的那 2 个击杀
+            draft.Players.Add(new BattlePlayerDraft(
+                new BattlePlayerStat
+                {
+                    PlayerId = realPlayer,
+                    HeroConfigId = 1001,
+                    Kill = 2,
+                    Death = 0,
+                    DamageDealt = 100,
+                    DamageTaken = 0,
+                },
+                isWin: true));
+
+            var dao = new BattleRecordDao(factory);
+            BattleRecordWriteResult written = await dao.SaveAsync(draft).ConfigureAwait(false);
+
+            Check("真库：写进去了（拿到 record_id）", written.RecordId > 0, "recordId = " + written.RecordId);
+
+            Check("真库：游客被**单独计数**为「设计如此」，而不是混进「有 id 无档案」那个告警里",
+                written.SkippedGuests == 1 && written.SkippedUnknownPlayers == 0 && written.DetailRows == 1,
+                written.ToString());
+
+            // ---- ⓷ 读回来：只有登录玩家那一条明细（顺带对 2~4 号做前后快照）----
+            int details = await CountDetailsAsync(factory, written.RecordId).ConfigureAwait(false);
+            Check("真库：明细**只有登录玩家那 1 条**（游客那条没写进去）",
+                details == 1, "库里有 " + details + " 条");
+
+            int guestDetails = await CountGuestDetailsAsync(factory, written.RecordId).ConfigureAwait(false);
+
+            Check("真库：这条记录里**没有任何负数 player_id 的明细**",
+                guestDetails == 0, "有 " + guestDetails + " 条负数明细");
+
+            // ---- ⓸ ⭐ 最关键的一条：累计只涨"登录玩家自己那 2 个" ----
+            PlayerTotals after = await ReadTotalsAsync(factory, realPlayer).ConfigureAwait(false);
+
+            Check("真库⭐：登录玩家的 `total_kill` **只涨 2**（游客那 99 个**一个都没算到他头上**）",
+                after.Kill == before.Kill + 2,
+                $"before={before.Kill} after={after.Kill}（期望 +2；如果涨了 101，就是游客的战绩被记到账号头上了）");
+
+            Check("真库：死亡/胜负也各按**自己那份**涨（游客的 9 死不算进来）",
+                after.Death == before.Death && after.Win == before.Win + 1 && after.Lose == before.Lose,
+                $"before(k={before.Kill},d={before.Death},w={before.Win}) " +
+                $"after(k={after.Kill},d={after.Death},w={after.Win})");
+
+            // ---- ⓹ 别人（2~4 号档案）一个都不许被动 ----
+            //  ⚠️ 这里必须**前后各快照一次**再比，否则 `othersUntouched = true` 永远为真
+            //     —— 那就是本项目的 W9/假绿那一族（"一个永远为真的判据等于没判据"）。
+            bool othersUntouched = true;
+            string othersDetail = string.Empty;
+
+            for (long other = 2; other <= 4; other++)
+            {
+                PlayerTotals snapBefore = otherTotalsBefore[other];
+                PlayerTotals snapAfter = await ReadTotalsAsync(factory, other).ConfigureAwait(false);
+
+                othersDetail += $"{other}: before(k={snapBefore.Kill},d={snapBefore.Death},w={snapBefore.Win},l={snapBefore.Lose}) " +
+                                $"after(k={snapAfter.Kill},d={snapAfter.Death},w={snapAfter.Win},l={snapAfter.Lose}); ";
+
+                if (snapAfter.Kill != snapBefore.Kill || snapAfter.Death != snapBefore.Death ||
+                    snapAfter.Win != snapBefore.Win || snapAfter.Lose != snapBefore.Lose)
+                {
+                    othersUntouched = false;
+                }
+            }
+
+            Check("真库：其他账号（2~4）的累计**前后一模一样**（这一局只该碰 1 号）",
+                othersUntouched, othersDetail.Trim());
+
+            // ---- ⓺ 收尾：删记录（先删明细）+ 把 1 号的累计精确减回去 ----
+            await RestoreTotalsAsync(factory, realPlayer, before, after).ConfigureAwait(false);
+            await DeleteDetailsAsync(factory, written.RecordId).ConfigureAwait(false);
+            await DeleteRecordAsync(factory, written.RecordId).ConfigureAwait(false);
+
+            PlayerTotals restored = await ReadTotalsAsync(factory, realPlayer).ConfigureAwait(false);
+
+            Check("收尾：档案累计**恢复原值**（不留下测试痕迹）",
+                restored.Kill == before.Kill && restored.Death == before.Death &&
+                restored.Win == before.Win && restored.Lose == before.Lose,
+                $"期望(k={before.Kill}) 实际(k={restored.Kill})");
+
+            // 收尾之后**再查一次**全局不变量：确保这一局没在库里留下负数行
+            int negativeAfter = await CountNegativePlayerRowsAsync(factory).ConfigureAwait(false);
+
+            Check("收尾：跑完之后库里仍然没有负数 player_id 的明细",
+                negativeAfter == 0, "有 " + negativeAfter + " 行");
+        }
+
+        /// <summary>数一数 `battle_player_detail` 里有几行是非正数 `player_id`。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <returns>行数（正常永远是 0）。</returns>
+        private static async Task<int> CountNegativePlayerRowsAsync(DbConnectionFactory factory)
+        {
+            const string sql = "SELECT COUNT(*) FROM `battle_player_detail` WHERE `player_id` <= 0";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(new CommandDefinition(sql)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>数一数进度表与台账里有几行是非正数 `player_id`。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <returns>行数（正常永远是 0）。</returns>
+        private static async Task<int> CountGuestProgressRowsAsync(DbConnectionFactory factory)
+        {
+            const string sql =
+                "SELECT (SELECT COUNT(*) FROM `condition_progress` WHERE `player_id` <= 0) + " +
+                "       (SELECT COUNT(*) FROM `reward_granted` WHERE `player_id` <= 0)";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(new CommandDefinition(sql)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>数一条记录里有几行负数 `player_id` 的明细。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="recordId">记录编号。</param>
+        /// <returns>行数。</returns>
+        private static async Task<int> CountGuestDetailsAsync(DbConnectionFactory factory, long recordId)
+        {
+            const string sql = "SELECT COUNT(*) FROM `battle_player_detail` " +
+                               "WHERE `record_id` = @recordId AND `player_id` <= 0";
+
+            using (MySqlConnection connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteScalarAsync<int>(
+                    new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
+            }
+        }
+
         /// <summary>`player_profile` 的四个累计列。</summary>
         private readonly struct PlayerTotals
-        {
-            /// <summary>有档案吗。</summary>
+        {            /// <summary>有档案吗。</summary>
             public readonly bool Exists;
 
             /// <summary>累计击杀。</summary>
@@ -1082,84 +1308,6 @@ namespace NBC.DbProbe
                 return await connection.ExecuteAsync(
                     new CommandDefinition(sql, new { recordId })).ConfigureAwait(false);
             }
-        }
-
-        // ====================================================================
-        //  七、玩家档案槽位（SRV-06 最小版）
-        // ====================================================================
-
-        /// <summary>
-        /// 槽位逻辑（**不需要数据库**）：领最小的空闲 / 断开复用 / 领完要报 false /
-        /// 还一个不是自己发出去的 id 要**无害**。
-        /// </summary>
-        private static void SlotLogicSection()
-        {
-            var slots = new PlayerProfileSlots(new long[] { 3, 1, 2 });
-
-            Check("槽位：构造时按升序（确定性优先）", slots.SlotCount == 3 && slots.FreeCount == 3,
-                "槽位 " + slots.SlotCount + " 空闲 " + slots.FreeCount);
-
-            long a, b, c, d;
-
-            Check("槽位：第一次领到 **最小的** 1", slots.TryClaim(out a) && a == 1, "领到 " + a);
-            Check("槽位：第二次领到 2", slots.TryClaim(out b) && b == 2, "领到 " + b);
-            Check("槽位：第三次领到 3", slots.TryClaim(out c) && c == 3, "领到 " + c);
-            Check("槽位：领完了要返回 false（不是给一个假的 id）",
-                !slots.TryClaim(out d) && d == 0, "居然领到 " + d);
-            Check("槽位：领完时占用 3、空闲 0", slots.BusyCount == 3 && slots.FreeCount == 0,
-                "占用 " + slots.BusyCount + " 空闲 " + slots.FreeCount);
-
-            slots.Release(2);
-            Check("槽位：还回去之后空闲 +1（这就是「反复连接会复用」的关键）",
-                slots.FreeCount == 1 && slots.TryClaim(out d) && d == 2, "领到 " + d);
-
-            // ⚠️ 还一个"不是这里发出去的 id"必须无害：否则它会被后面的握手领走
-            //    ⇒ 又变成一个不存在的 player_id ⇒ 战绩明细被外键拒绝。
-            int freeBefore = slots.FreeCount;
-            slots.Release(999);
-            slots.Release(0);
-            Check("槽位：还一个不是自己发出去的 id -> **无害**（不污染空闲表）",
-                slots.FreeCount == freeBefore, "空闲从 " + freeBefore + " 变成了 " + slots.FreeCount);
-
-            var empty = new PlayerProfileSlots(null);
-            long none;
-            Check("槽位：没有档案（没接数据库）-> 一律返回 false（调用方降级）",
-                empty.SlotCount == 0 && !empty.TryClaim(out none) &&
-                empty.Describe().Contains("没有"),
-                empty.Describe());
-        }
-
-        /// <summary>真库：把 `player_profile.player_id` 读出来，看槽位是不是真的 1~4。</summary>
-        /// <returns>任务。</returns>
-        private static async Task SlotMySqlSection()
-        {
-            var options = new DatabaseOptions();
-            options.ApplyPasswordFromEnvironment();
-
-            if (string.IsNullOrEmpty(options.Password))
-            {
-                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
-                return;
-            }
-
-            var factory = new DbConnectionFactory(options);
-            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
-
-            if (!ping.Ok)
-            {
-                Console.WriteLine("  ⏭️  连不上，跳过。");
-                return;
-            }
-
-            var dao = new PlayerProfileDao(factory);
-            IReadOnlyList<long> ids = await dao.LoadIdsAsync().ConfigureAwait(false);
-            var slots = new PlayerProfileSlots(ids);
-
-            Check("真库：读到了玩家档案 id（`Docs\\08` 种了 4 个）",
-                slots.SlotCount >= 4, "读到 " + slots.SlotCount + " 个");
-
-            Check("真库：升序（第一个是最小的）", ids.Count >= 1 && ids[0] == 1, "第一个是 " + (ids.Count > 0 ? ids[0] : -1));
-            Console.WriteLine("      · " + slots.Describe());
         }
 
         // ====================================================================

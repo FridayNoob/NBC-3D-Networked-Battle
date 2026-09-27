@@ -265,7 +265,12 @@ public sealed class RoomBattleService
         {
             long playerId = room.Seats[i].Session.PlayerId;
 
-            if (playerId <= 0 || battle.FindHeroOfPlayer(playerId) != null)
+            // ⚠️ 判据是 `== 0`（"这个席位**还没有身份**"），**不是 `<= 0`**：
+            //    `player_id` 现在有两个哨兵语义，别混（见 `DungeonBattle` 里 `0 = 无主`）：
+            //        0   = 还没握手 / 无主
+            //        < 0 = **游客**（有身份，只是没有账号档案）
+            //    写成 `<= 0` 的后果是**游客一个英雄都建不出来**（"输入上行"那几条用例会红）。
+            if (playerId == 0 || battle.FindHeroOfPlayer(playerId) != null)
             {
                 continue;
             }
@@ -276,6 +281,10 @@ public sealed class RoomBattleService
                              attackDamage: battle.BasicAttackDamage,
                              moveSpeedMmPerTick: battle.HeroMoveMmPerTick);
 
+            // ⚠️ **入场就在战绩里占一行**（SRV-17a）：否则"整局什么都没做"的玩家
+            //    在草稿里根本不存在 ⇒ 明细里连"0 杀 0 死"那一行都没有 ⇒ 事后答不出"他在不在场"。
+            battle.EnsurePlayerStat(playerId, DungeonBattle.HeroConfigId);
+
             Note?.Invoke($"玩家 {playerId}（{room.Seats[i].PlayerName}）进入副本，出生点 ({spawnX}, {spawnZ})mm");
         }
 
@@ -284,7 +293,9 @@ public sealed class RoomBattleService
         {
             BattleEntity entity = battle.Entities[i];
 
-            if (entity.Kind != 0 || entity.PlayerId <= 0)
+            // ⚠️ 同样必须是 `== 0`：游客（负数）的英雄**也**要在"人走了"的时候被移出世界，
+            //    写成 `<= 0` 会把游客的英雄永远留在场上当靶子（而且没有任何日志）。
+            if (entity.Kind != 0 || entity.PlayerId == 0)
             {
                 continue;
             }
@@ -310,7 +321,8 @@ public sealed class RoomBattleService
         {
             long playerId = room.Seats[i].Session.PlayerId;
 
-            if (playerId <= 0)
+            // ⚠️ `== 0`（还没身份），不是 `<= 0` —— 否则**游客的输入全被丢掉**。
+            if (playerId == 0)
             {
                 continue;
             }

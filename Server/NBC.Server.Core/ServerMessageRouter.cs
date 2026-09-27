@@ -92,18 +92,16 @@ public sealed class ServerMessageRouter
         _handlers = new();
 
     private readonly string _serverVersion;
-    private long _nextPlayerId = 1;
 
     /// <summary>
-    /// 玩家档案槽位（**可空**：没接数据库时为 null ⇒ 退回"第几个连上来的"）。
-    /// <para>⚠️ 它是 `IPlayerSlotProvider`（Core 里的接缝），实现住在 `NBC.Server.Data` ——
-    /// 网络层**不许**认识 MySQL。见那个接口的文件头。</para>
+    /// 下一个游客编号（**从 -1 开始往下发**）。
+    /// <para>⚠️ 负数 = 游客：不会和账号档案撞号，也不需要归还。理由见 `HandleHandshake` 里那段。</para>
     /// </summary>
-    private readonly IPlayerSlotProvider? _slots;
+    private long _nextGuestId = -1;
 
     /// <summary>
     /// 账号表（**可空**：没接数据库时为 null ⇒ 账号登录用不了，游客照旧）。
-    /// <para>⚠️ 与 <see cref="_slots"/> 一样是 Core 里的接缝，实现住在 `NBC.Server.Data`。</para>
+    /// <para>⚠️ 它是 Core 里的接缝，实现住在 `NBC.Server.Data` —— 网络层**不许**认识 MySQL。</para>
     /// </summary>
     private readonly IAccountStore? _accounts;
 
@@ -120,24 +118,24 @@ public sealed class ServerMessageRouter
 
     /// <summary>建一个路由。</summary>
     /// <param name="serverVersion">服务端版本标识（只进日志与 `HandshakeAck`，用于排查）。</param>
-    /// <param name="slots">
-    /// 玩家档案槽位；**传 null = 没有数据库**，玩家编号退回"第几个连上来的"计数器。
-    /// <para>⚠️ 这个降级路径是**必须保留**的：`_net-probe` 在没有数据库的环境里跑，
-    /// 而它的用例断言 `PlayerId == 1`、`== 2`。退回老行为，那 93 条才不会红。</para>
-    /// </param>
     /// <param name="accounts">
     /// 账号表；**传 null = 没有数据库** ⇒ 带账号的握手会被拒（并说清"为什么用不了"），
-    /// 不带账号的游客握手**一字不变**。
+    /// 不带账号的游客照常（发一个负数编号）。
     /// <para>⚠️ 为什么这里**不**"登录失败就退回游客"：那会让玩家以为自己登录了
     /// （界面显示已登录，战绩却记到别人头上）。**身份这种事不许静默降级。**</para>
     /// </param>
+    /// <remarks>
+    /// ⚠️ 这里**原来还有一个 `IPlayerSlotProvider slots` 参数**（"领一个空闲档案槽位"），
+    /// 2026-09-27 **随 SRV-17a 退役**：它存在的唯一理由是"还没有账号系统"，
+    /// 而那个理由已经被真实登录消掉了；留着它等于留着一个
+    /// **把游客战绩写进别人档案**的 bug 源（游客拿到的 1~4 恰好是账号的档案 id）。
+    /// 现在游客一律发**负数**编号，见 `HandleHandshake`。
+    /// </remarks>
     public ServerMessageRouter(
         string? serverVersion = null,
-        IPlayerSlotProvider? slots = null,
         IAccountStore? accounts = null)
     {
         _serverVersion = string.IsNullOrEmpty(serverVersion) ? "nbc-server/unknown" : serverVersion!;
-        _slots = slots;
         _accounts = accounts;
 
         // 握手是**内建**的：既不能被替换，也不可能忘记注册
@@ -282,31 +280,28 @@ public sealed class ServerMessageRouter
 
         // ⚠️ 身份只有两条路，**没有第三种**（身份这种事不许静默降级）：
         //    ① 给了账号 ⇒ **必须登进去**（失败就拒，并说清为什么）
-        //    ② 没给账号 ⇒ **游客**，走 M3 的老路（槽位 / 计数器）
+        //    ② 没给账号 ⇒ **游客**：发一个**负数**编号（见下）
         if (!string.IsNullOrEmpty(hello.Account))
         {
             return HandleAccountLogin(session, hello);
         }
 
-        // 玩家编号从哪来（见 `IPlayerSlotProvider` 文件头）：
-        //   ① 接了数据库 ⇒ **领一个真实存在的档案槽位**（断开时还回去 ⇒ 反复连接会复用 1~4）
-        //   ② 没接数据库 / 槽位用完了 ⇒ 退回"第几个连上来的"计数器（老行为）
+        // ------------------------------------------------------------------
+        //  游客：`player_id` 从 **-1** 开始往下发（2026-09-27 起）
+        // ------------------------------------------------------------------
+        //  ⚠️ **负数 = 游客**是本项目的一条硬约定，它一次解决三件事：
+        //    ① **不会和任何账号的档案撞号**
+        //       （旧写法发 1、2、3… = `player_profile` 里那 4 个真实档案的 id
+        //        ⇒ 游客的战绩会记进**别人**的累计里 —— 那是真实发生过的数据污染）
+        //    ② **不需要"还回去"**：编号属于连接，连接没了就没了；
+        //       旧写法必须靠 `Release` 归还，漏一次就永久泄漏（发完 4 个就再也发不出）
+        //    ③ **落库这件事在数据层自动被挡住**：`battle_player_detail` / `condition_progress`
+        //       都有指向 `player_profile` 的外键，而负数在 `player_profile` 里**不存在**
+        //       ⇒ 想给游客记档只可能是"明确写下来的特例"，不会"顺手就写了"
         //
-        // ⚠️ ②**必须保留**：`_net-probe` 没有数据库，而它断言 `PlayerId == 1`、`== 2`。
-        // ⚠️ 退回计数器时**可能撞上真实档案 id**（比如槽位发完了，计数器的 5 又发出去）
-        //    —— 那正是"战绩明细会被外键拒绝"的老问题。所以 Host 那边会把
-        //    `ExhaustedCount > 0` 报出来（见 `PlayerProfileSlots.Describe`）。
-        long claimedPlayerId;
-
-        if (_slots != null && _slots.TryClaim(out claimedPlayerId))
-        {
-            session.PlayerId = claimedPlayerId;
-        }
-        else
-        {
-            // M3 的老语义：player_id 就是"第几个连上来的"
-            session.PlayerId = _nextPlayerId++;
-        }
+        //  ⚠️ 判据（别再改回去）：**`player_id > 0` ⟺ 这是一个真实账号的档案**。
+        //     数据层所有"要不要落库"的判断都应该只看这一个条件。
+        session.PlayerId = _nextGuestId--;
 
         session.PlayerName = string.IsNullOrEmpty(hello.PlayerName) ? "玩家" + session.PlayerId : hello.PlayerName;
         session.Phase = SessionPhase.InLobby;
@@ -331,7 +326,7 @@ public sealed class ServerMessageRouter
     /// <para>
     /// 成功时 `player_id` 来自**账号自己的档案**（`player_profile.player_id`）——
     /// 所以**重连还是同一个人**，战绩累计到同一个人身上。
-    /// 这是它与游客槽位（"第几个连上来的"）最本质的区别。
+    /// 这是它与游客（**负数编号**，见 `HandleHandshake`）最本质的区别。
     /// </para>
     /// </summary>
     /// <param name="session">会话。</param>

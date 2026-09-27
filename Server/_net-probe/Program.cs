@@ -181,6 +181,7 @@ namespace NBC.NetProbe
             Login_WrongPasswordIsRejectedWithHumanReason();
             Login_UnknownAccountIsRejectedWithHumanReason();
             Login_GuestStillWorksOldWay();
+            Login_GuestIdReachesTheBattleDraft();
             Login_NoAccountStoreSaysWhyInsteadOfSilentlyBecomingGuest();
             Login_DigestNeverAppearsInServerNotes();
 
@@ -240,7 +241,7 @@ namespace NBC.NetProbe
             ack = FindAck(received);
 
             Check("客户端模式：握手成功（跨进程）",
-                ack != null && ack.Accepted && ack.PlayerId > 0 && ack.TickHz == NetContract.TickRate,
+                ack != null && ack.Accepted && ack.PlayerId < 0 && ack.TickHz == NetContract.TickRate,
                 Describe(ack));
 
             const long sent = 424242L;
@@ -308,7 +309,7 @@ namespace NBC.NetProbe
             }
 
             Check("会话层：拿到 player_id 与服务端版本",
-                session.PlayerId > 0 && session.Ack != null && !string.IsNullOrEmpty(session.Ack.ServerVersion),
+                session.PlayerId < 0 && session.Ack != null && !string.IsNullOrEmpty(session.Ack.ServerVersion),
                 "player_id=" + session.PlayerId + "，server=" + (session.Ack == null ? "无" : session.Ack.ServerVersion));
 
             // ------------------------------------------------------------------
@@ -579,19 +580,19 @@ namespace NBC.NetProbe
 
                 HandshakeAck ack = c.Last != null ? c.Last.HandshakeAck : null;
                 bool ok = ack != null && ack.Accepted
-                          && ack.PlayerId == 1
+                          && ack.PlayerId < 0
                           && ack.ProtocolVersion == NetContract.Version
                           && ack.TickHz == NetContract.TickRate
                           && ack.ServerVersion == "probe";
 
-                Check("握手成功：accepted + 玩家号 1 + 版本回显 + tick 率", ok, Describe(ack));
+                Check("握手成功：accepted + **游客编号是负数** + 版本回显 + tick 率", ok, Describe(ack));
 
                 Check("握手成功后会话推进到 InLobby（M0 的会话状态机真的动了）",
                     h.Sessions.Count == 1 && h.Sessions[0].Phase == SessionPhase.InLobby,
                     h.Sessions.Count == 1 ? ("Phase=" + h.Sessions[0].Phase) : "会话数=" + h.Sessions.Count);
 
-                Check("会话拿到了 player_id（不是 0）",
-                    h.Sessions.Count == 1 && h.Sessions[0].PlayerId == 1,
+                Check("会话拿到了 player_id（游客是负数，**不是 0**）",
+                    h.Sessions.Count == 1 && h.Sessions[0].PlayerId < 0,
                     h.Sessions.Count == 1 ? ("player_id=" + h.Sessions[0].PlayerId) : "没有会话");
             }
         }
@@ -2629,10 +2630,12 @@ namespace NBC.NetProbe
         }
 
         /// <summary>
-        /// 游客一个字都没变（**这条是 93 条老用例的守门人**）。
+        /// 游客拿的是**负数编号**（SRV-17a，2026-09-27 起）—— 这条是"游客不污染账号"的守门人。
         ///
         /// <para>
-        /// 判据：不给账号时，`player_id` 仍然从 1 开始按「第几个连上来的」发。
+        /// ⚠️ 为什么这条这么重要：旧写法给游客发 **1、2、3…**，而那恰好是
+        /// `player_profile` 里**真实账号的档案 id** ⇒ 游客的战绩被记进了**别人的**累计里
+        /// （本项目真的发生过：库里那几条战绩记录全是游客打出来的，却记在 test01/test02 名下）。
         /// </para>
         /// </summary>
         private static void Login_GuestStillWorksOldWay()
@@ -2644,10 +2647,93 @@ namespace NBC.NetProbe
                 HandshakeAck ackA = AckOf(a, "游客甲");
                 HandshakeAck ackB = AckOf(b, "游客乙");
 
-                Check("M4-S3：游客仍然是「第几个连上来的」（1、2），且昵称就是发来的 player_name",
-                    ackA.PlayerId == 1 && ackB.PlayerId == 2
-                    && ackA.Nickname == "游客甲" && ackB.Nickname == "游客乙",
-                    $"甲={ackA.PlayerId}({ackA.Nickname})、乙={ackB.PlayerId}({ackB.Nickname})");
+                Check("M4-S3：游客的编号是**负数**（= 不会和任何账号档案撞号）",
+                    ackA.PlayerId < 0 && ackB.PlayerId < 0,
+                    $"甲={ackA.PlayerId}、乙={ackB.PlayerId}");
+
+                Check("M4-S3：两个游客**不会同号**（从 -1 往下发，一人一个）",
+                    ackA.PlayerId != ackB.PlayerId,
+                    $"甲={ackA.PlayerId}、乙={ackB.PlayerId}");
+
+                Check("M4-S3：游客的昵称就是发来的 player_name（没有档案可查，也就不去查）",
+                    ackA.Nickname == "游客甲" && ackB.Nickname == "游客乙",
+                    $"甲=\"{ackA.Nickname}\"、乙=\"{ackB.Nickname}\"");
+
+                // ⚠️ 反向对照：**登录玩家的编号必须是正数**。
+                //    两条合起来才是「正数 ⟺ 真实账号」这条约定的完整守门人 ——
+                //    只验"游客是负数"的话，有人把登录也改成负数这条不会红。
+                Client logged = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck loggedAck = AckOf(logged, "登录玩家");
+
+                Check("M4-S3：**登录玩家的编号是正数**（正数 ⟺ 真实账号档案）",
+                    loggedAck.Accepted && loggedAck.PlayerId > 0,
+                    $"player_id={loggedAck.PlayerId}");
+            }
+        }
+
+        /// <summary>
+        /// **草稿里要有游客**（负数 id）—— 这是"游客不落库"那条链的**前半段**。
+        ///
+        /// <para>
+        /// ⚠️ 为什么必须单独验这一段：过滤掉落不了库的东西是**数据层**的活（`BattleRecordDao`），
+        /// 而**战斗层必须如实记账**。如果战斗层偷偷把游客丢掉（比如判据写成 `PlayerId > 0`），
+        /// 结果看起来"也对"（库里反正没有游客），但你会**永远发现不了**：
+        /// ① 数据层的"游客 N 人"那条日志再也不会出现；
+        /// ② 一旦以后要支持"游客也能进排行榜"，账已经丢了。
+        /// ⇒ **分工要能被观察到**，而不是"反正结果一样"。
+        /// </para>
+        /// </summary>
+        private static void Login_GuestIdReachesTheBattleDraft()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("游客甲"));
+                Client b = h.JoinSameRoom(h.ConnectAndHandshake("游客乙"));
+                h.TickBattles(2);
+
+                DungeonBattle battle = h.BattleOf(a)!;
+                BattleEntity heroA = h.HeroOf(a)!;
+
+                int monsters = 0;
+
+                for (int i = 0; i < battle.Entities.Count; i++)
+                {
+                    if (battle.Entities[i].Kind == 1)
+                    {
+                        battle.ApplyDamage(battle.Entities[i].Id, 999999, heroA.Id);
+                        monsters++;
+                    }
+                }
+
+                h.TickBattles(2);
+
+                Check("草稿：这一局真的交上来了（`BattleFinished`）",
+                    h.Drafts.Count == 1, "收到 " + h.Drafts.Count + " 份草稿");
+
+                if (h.Drafts.Count == 0)
+                {
+                    return;
+                }
+
+                BattleRecordDraft draft = h.Drafts[0];
+
+                Check("草稿：**两个游客都在草稿里，而且 id 是负数**（过滤是数据层的活，战斗层不许偷偷丢）",
+                    draft.Players.Count == 2 && draft.Players[0].PlayerId < 0 && draft.Players[1].PlayerId < 0,
+                    "草稿里 " + draft.Players.Count + " 个玩家：" +
+                    string.Join(",", System.Linq.Enumerable.Select(draft.Players, p => p.PlayerId)));
+
+                // ⚠️ 这条盯的是 `DungeonBattle` 里那几个 `PlayerId != 0` 的判据：
+                //    写成 `> 0` 的话游客**一个击杀都不记**，草稿里是 0。
+                BattlePlayerDraft killer = draft.Players[0].PlayerId == heroA.PlayerId
+                    ? draft.Players[0]
+                    : draft.Players[1];
+
+                Check("草稿：游客打死的怪**如实算在游客头上**（"+ monsters + " 个）",
+                    killer.Kill == monsters,
+                    "草稿里记了 " + killer.Kill + " 个击杀");
+
+                Check("草稿：这一局的胜负也对（怪全死 ⇒ win）",
+                    draft.IsWin, "IsWin=" + draft.IsWin);
             }
         }
 
@@ -2983,6 +3069,13 @@ namespace NBC.NetProbe
             /// <summary>消息泵记下的说明（握手被拒、踢人原因……）。</summary>
             public readonly List<string> Notes = new();
 
+            /// <summary>
+            /// 服务端**交上来的战绩草稿**（`RoomBattleService.BattleFinished`）。
+            /// <para>⚠️ 有了它才能验"**草稿里到底有没有游客**" —— 那是"游客不落库"这条链的**前半段**：
+            /// 战斗层负责**如实记账**（含游客），数据层负责**过滤掉落不了库的**。</para>
+            /// </summary>
+            public readonly List<BattleRecordDraft> Drafts = new();
+
             /// <summary>建夹具并开始监听。</summary>
             /// <param name="heartbeatTimeoutMs">心跳超时（毫秒）。</param>
             /// <param name="roomCapacity">每房容量。</param>
@@ -2994,7 +3087,7 @@ namespace NBC.NetProbe
                            IAccountStore? accounts = null)
             {
                 Server = new TcpServerTransport(0, IPAddress.Loopback, heartbeatTimeoutMs);
-                Router = new ServerMessageRouter("probe", null, accounts);
+                Router = new ServerMessageRouter("probe", accounts);
                 Pump = new ServerMessagePump(Server, Router);
                 Pump.Note += line => Notes.Add(line);
 
@@ -3015,6 +3108,7 @@ namespace NBC.NetProbe
 
                 Battles = new RoomBattleService(Server, Registry, Tables);
                 Battles.Note += line => RoomNotes.Add(line);
+                Battles.BattleFinished += draft => Drafts.Add(draft);   // SRV-17a：验草稿里有没有游客
 
                 // ⚠️ 忘了这一行 = 所有输入用例**静默失效**（服务端根本没处理 Input 消息）。
                 //    2026-09-23 第一版就漏了，9 条用例一起红给我看，根因就在这里。

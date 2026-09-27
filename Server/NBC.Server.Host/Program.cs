@@ -182,12 +182,12 @@ internal static class Program
         var transport = new TcpServerTransport(port);
 
         // ------------------------------------------------------------------
-        //  玩家档案槽位（SRV-06 的最小可用版，见 `IPlayerSlotProvider` 文件头）
+        //  数据库（账号表 + 战绩落库）
         // ------------------------------------------------------------------
-        //  解决的是这个会咬人的欠账：原来 `PlayerId = 第几个连上来的`（只增不减），
-        //  而 `battle_player_detail.player_id` 有外键指向 `player_profile`（只种了 1~4）
-        //  ⇒ **累计连过 4 次之后**，后面每一局的战绩明细都会被外键拒绝、**静默跳过**
-        //     （表现是"打完一局 total_kill 不涨了"）。调试时反复开关窗口很容易撞上。
+        //  历史：这一段原来是"玩家档案槽位"（SRV-06 的最小可用版）——
+        //  用来解决"累计连过 4 次之后战绩明细被外键静默跳过"那个会咬人的欠账。
+        //  ⚠️ 2026-09-27 **SRV-17a 把它退役了**：真正的原因不是"槽位不够"，
+        //     而是**游客拿了账号的档案 id**（见下面的说明）。现在游客发负数编号。
         //
         //  ⚠️ 配置来源：`appsettings.json` 的 `Database` 段（SRV-01 起**真的读了**），
         //     密码走环境变量 `NBC_DB_PASSWORD` —— 见 `HostConfig` 与 `DatabaseOptions`。
@@ -200,13 +200,12 @@ internal static class Program
 
         DbConnectionFactory? dbFactory = null;
         BattleRecordDao? recordDao = null;
-        PlayerProfileSlots? slots = null;
         AccountDirectory? accounts = null;
         AccountDao? accountDao = null;
 
         if (string.IsNullOrEmpty(dbOptions.Password))
         {
-            Say("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；玩家编号退回计数器；**账号登录用不了**，只能游客进）。");
+            Say("[数据库] 未接：没设 NBC_DB_PASSWORD（战绩不落库；**账号登录用不了**，只能以游客进）。");
         }
         else
         {
@@ -219,20 +218,13 @@ internal static class Program
                 {
                     recordDao = new BattleRecordDao(dbFactory);
 
-                    // ⚠️ 槽位在**启动时读一次**（之后握手只查内存，不等 IO）。
-                    //    新建/删除档案要重启服务端 —— 刻意的取舍，见 `PlayerProfileDao` 文件头。
-                    var profileDao = new PlayerProfileDao(dbFactory);
-                    IReadOnlyList<long> profileIds = profileDao.LoadIdsAsync().GetAwaiter().GetResult();
-                    slots = new PlayerProfileSlots(profileIds);
-
-                    // ⚠️ 账号表同样在**启动时读一次**（M4-S3）：登录跑在网络泵的握手里，
+                    // ⚠️ 账号表在**启动时读一次**（M4-S3）：登录跑在网络泵的握手里，
                     //    在那里等一次 MySQL 往返会把整个服务端卡住。
-                    //    代价：**新注册的账号要重启服务端才认**（同上，见 `AccountDirectory` 文件头）。
+                    //    代价：**新注册的账号要重启服务端才认**（见 `AccountDirectory` 文件头）。
                     accounts = AccountDirectory.Load(dbFactory);
                     accountDao = new AccountDao(dbFactory);
 
                     Say($"[数据库] 已接：{dbOptions.Describe()}");
-                    Say($"[数据库] {slots.Describe()}");
                     Say($"[数据库] {accounts.Describe()}");
 
                     if (accounts.WithoutProfileCount > 0)
@@ -244,7 +236,7 @@ internal static class Program
                 }
                 else
                 {
-                    Say("[数据库] 连不上，**战绩不落库、玩家编号退回计数器、账号登录用不了**（服务端照常跑）：");
+                    Say("[数据库] 连不上，**战绩不落库、账号登录用不了**（服务端照常跑）：");
                     Say("         " + (ping.Reason ?? string.Empty).Replace("\n", "\n         "));
                 }
             }
@@ -252,13 +244,16 @@ internal static class Program
             {
                 Say("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
                 recordDao = null;
-                slots = null;
                 accounts = null;
                 accountDao = null;
             }
         }
 
-        var router = new ServerMessageRouter($"nbc-server/{version}", slots, accounts);
+        // ⚠️ 2026-09-27（SRV-17a）：这里**原来还有** `PlayerProfileSlots`（"领一个空闲档案槽位"）。
+        //    它随真实登录一起退役了 —— 游客现在拿**负数编号**，见 `ServerMessageRouter.HandleHandshake`。
+        //    一句话理由：那个池子发出去的 1~4 恰好是**账号的档案 id**，
+        //    于是游客的战绩被记进了别人的累计里（真实发生过的数据污染）。
+        var router = new ServerMessageRouter($"nbc-server/{version}", accounts);
         var pump = new ServerMessagePump(transport, router);
 
         // 心跳：显式注册（这就是 NET-02 要的"注册表"长什么样）
@@ -279,8 +274,8 @@ internal static class Program
         // ------------------------------------------------------------------
         //  SRV-13：把战绩接到数据层上
         // ------------------------------------------------------------------
-        //  ⚠️ 数据库的初始化已经**挪到上面**（和玩家档案槽位一起）——
-        //     两处各读一次配置迟早不一致（"为什么战绩能写、槽位读不到"）。
+        //  ⚠️ 数据库的初始化已经**挪到上面**（和账号表一起）——
+        //     两处各读一次配置迟早不一致（"为什么战绩能写、账号表读不到"）。
         //     这里只做**接线**：一局打完 → 入队 → 后台写。
         var recordWriter = new BattleRecordWriter(recordDao);
         recordWriter.Note += line => Log(quiet, "[战绩] " + line);
@@ -310,15 +305,12 @@ internal static class Program
 
         transport.SessionClosed += (session, reason) =>
         {
-            // ⚠️ **把档案槽位还回去**（SRV-06 最小版的关键一步）：
-            //    不还的话，反复连接会把 4 个槽位占满 ⇒ 后面的握手只能退回计数器
-            //    ⇒ 又撞上"战绩明细被外键拒绝"的老问题。
-            //    `Release` 对"不是它发出去的 id"是**无害**的（内部判断过），
-            //    所以这里不用先判断"握过手没有"。
-            slots?.Release(session.PlayerId);
-
+            // ⚠️ 2026-09-27（SRV-17a）：这里**原来有一句 `slots?.Release(session.PlayerId)`**。
+            //    现在**什么都不用做** —— 游客编号属于**连接**，连接没了就没了，不需要归还。
+            //    （旧写法必须记得还，漏一次就永久泄漏；"不需要还"是这次改动顺带买到的。
+            //     登录玩家的身份属于**账号**，本来就跟连接无关。）
             Log(quiet, $"[断开] 会话 {session.SessionId}" +
-                       (session.PlayerId > 0 ? $"（玩家 {session.PlayerId}）" : "（还没握手）") +
+                       (session.PlayerId != 0 ? $"（玩家 {session.PlayerId}）" : "（还没握手）") +
                        $"：{reason}");
         };
 
@@ -404,10 +396,6 @@ internal static class Program
                           $"普攻命中 {battles.AttacksLanded} 次（未打出去 {battles.AttacksRefused} 次）");
         Say($"[统计] 事件：伤害 {battles.HitsSent} 条、死亡 {battles.DeathsSent} 条、掉落 {battles.DropsSent} 条（M4-S1 起伤害/死亡也下发）");
         Say($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
-        if (slots != null)
-        {
-            Say($"[统计] {slots.Describe()}");
-        }
         if (accounts != null)
         {
             Say($"[统计] {accounts.Describe()}");

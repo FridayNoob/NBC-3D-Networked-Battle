@@ -89,7 +89,15 @@ ReconcileHeroes → ApplyInputs → Step → BroadcastCombatEvents（**先伤害
 | `CachingConditionProgressStore` | `IConditionProgressStore` 的**写回缓存**实现 |
 | `RewardLedgerDao` / `IRewardLedgerDao` | 已发奖励台账的 Dapper 读写 |
 | `MySqlRewardLedger` | `IRewardLedger` 的持久化实现 |
+| `BattleRecordDao` / `BattleRecordWriter` | 一局战绩落库（一次事务）+ 排队/单飞写（**只给 `player_id > 0` 写明细**） |
+| `AccountDirectory` / `AccountDao` / `LoginAuditWriter` | 账号登录（见 4.6） |
 | `DatabaseUnavailableException` / `PingResult` | 精确捕获"数据库不可用"（DB-10 降级用） |
+
+> ⚠️ **2026-09-27 退役**：`PlayerProfileDao` 与 `PlayerProfileSlots`（"玩家档案槽位"）
+> **已删除**。它们存在的唯一理由是"还没有账号系统"，而那个理由已被真实登录消掉；
+> 更关键的是**它们是一个数据污染源**：槽位发出去的 1~4 恰好是 4 个账号的档案 id
+> ⇒ 游客的战绩被记进了**别人**的累计里（见 `Docs\27` §二十）。
+> 现在游客拿**负数**编号，**`player_id > 0` ⟺ 真实账号档案**。
 
 ### 4.1 为什么**必须**是写回缓存
 
@@ -165,6 +173,20 @@ FlushAsync()  ← 按"落库时机"调（异步）
 
 ⚠️ 摘要**没有任何出口**：不进日志、不进 `HandshakeAck.Reason`、不进 `LoginResult`
 （`_net-probe`【十五】有一条专门翻遍所有服务端 Note 找它）。
+
+### 4.7 `player_id` 的取值约定（**一句话，全项目通用**）
+
+```
+player_id > 0   ← 真实账号的档案（player_profile.player_id）
+player_id < 0   ← 游客（从 -1 往下发，一连接一个；**没有档案**）
+player_id == 0  ← 还没有身份（还没握手 / 实体无主）
+```
+
+- **判据**：数据层所有"要不要落库"的判断**只看 `> 0`**；游戏层所有"这是不是某个玩家的东西"用 `!= 0`。
+- ⚠️ **别把 `> 0` / `<= 0` 当万能写法** —— 它们混了两个不同的意思，见 `Docs\00` **W15**
+  （改成负数之后，服务端 5 处旧比较立刻变成了 bug，是探针当场抓到的）。
+- 游客的战绩只写 `battle_record`（局汇总），**不写** `battle_player_detail` / 累计 / 进度 / 台账
+  （那三张表的外键都指向 `player_profile`，负数在那里不存在）。
 
 ---
 

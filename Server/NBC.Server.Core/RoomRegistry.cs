@@ -141,7 +141,12 @@ public sealed class Room
     /// <returns>席位或 null。</returns>
     public RoomSeat? FindByPlayerId(long playerId)
     {
-        if (playerId <= 0)
+        // ⚠️ `== 0`（"还没有身份"），**不是 `<= 0`**：
+        //    游客的 `player_id` 是**负数**（有身份，只是没有账号档案），
+        //    写成 `<= 0` 会找不到游客的席位 ⇒ 调用方以为"这个人走了"
+        //    ⇒ 他的英雄被反复移出/重建（而且看起来像个灵异 bug）。
+        //    见 `ServerMessageRouter.HandleHandshake` 里那条约定。
+        if (playerId == 0)
         {
             return null;
         }

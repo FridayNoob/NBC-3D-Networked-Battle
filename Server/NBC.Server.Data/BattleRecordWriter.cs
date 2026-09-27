@@ -59,8 +59,11 @@ namespace NBC.Server.Data
         /// <summary>累计写失败几局。</summary>
         private int m_failed;
 
-        /// <summary>累计被跳过的"无档案玩家"数（见 `BattleRecordDao` 文件头）。</summary>
-        private int m_skippedPlayers;
+        /// <summary>累计被跳过的"游客不记明细"数（**设计如此**，见 `BattleRecordDao` 文件头）。</summary>
+        private int m_skippedGuests;
+
+        /// <summary>累计被跳过的"有正数 id 却查不到档案"玩家数（⚠️ **数据问题**）。</summary>
+        private int m_skippedUnknownPlayers;
 
         /// <summary>Dispose 过没有。</summary>
         private bool m_disposed;
@@ -119,7 +122,8 @@ namespace NBC.Server.Data
             }
 
             return "战绩落库：提交 " + Submitted + "、成功 " + Written + "、失败 " + Failed +
-                   "（无档案跳过 " + Volatile.Read(ref m_skippedPlayers) + " 人）";
+                   "（游客不记明细 " + Volatile.Read(ref m_skippedGuests) + " 人、" +
+                   "⚠️有 id 无档案 " + Volatile.Read(ref m_skippedUnknownPlayers) + " 人）";
         }
 
         /// <summary>
@@ -239,23 +243,32 @@ namespace NBC.Server.Data
                 BattleRecordWriteResult result = await m_dao.SaveAsync(draft).ConfigureAwait(false);
 
                 Interlocked.Increment(ref m_written);
-                Interlocked.Add(ref m_skippedPlayers, result.SkippedPlayers);
+                Interlocked.Add(ref m_skippedGuests, result.SkippedGuests);
+                Interlocked.Add(ref m_skippedUnknownPlayers, result.SkippedUnknownPlayers);
 
                 // 失败过一次、现在好了 ⇒ 允许下次失败再报一次（见文件头 ③）
                 Interlocked.Exchange(ref m_reportedFailure, 0);
 
                 Note?.Invoke("战绩已落库：" + result);
 
-                if (result.SkippedPlayers > 0)
+                if (result.SkippedGuests > 0)
                 {
-                    // ⚠️ **这一条要显眼**：它意味着有玩家的战绩没进库。
-                    //    根因是"还没有账号系统"（见 `BattleRecordDao` 文件头）。
+                    // ✅ **这是设计，不是问题**：游客没有档案 ⇒ 没人可以记。
+                    //    ⚠️ 它必须**说得像正常**，否则"游客不记明细"会把真正的故障淹掉。
                     Note?.Invoke(
-                        "⚠️ 有 " + result.SkippedPlayers + " 个玩家的战绩**没写进库**：他的 player_id 在 " +
-                        "`player_profile` 里没有档案。\n" +
-                        "    原因：`player_id` 现在是**会话计数器**（第几个连上来的），不是账号 —— " +
-                        "而档案只种了 1~4。\n" +
-                        "    这是「还没有账号系统」的已知欠账（`ServerMessageRouter.cs:242` 原本就注明了）。");
+                        "游客 " + result.SkippedGuests + " 人**按设计不记明细**（`battle_record` 那条汇总照写）：\n" +
+                        "    游客的 `player_id` 是**负数**（没有账号 ⇒ 没有 `player_profile`），" +
+                        "而明细表有外键指向档案。\n" +
+                        "    想让战绩进库就**用账号登录**（M4-S3，见 `Docs\\27` §十九）。");
+                }
+
+                if (result.SkippedUnknownPlayers > 0)
+                {
+                    // ⚠️ **这一条要显眼**：正数 id 却在 `player_profile` 里查不到 = 数据不一致
+                    Note?.Invoke(
+                        "❌ 有 " + result.SkippedUnknownPlayers + " 个玩家的战绩**没写进库**：" +
+                        "他们拿着**正数** player_id，但 `player_profile` 里没有对应档案。\n" +
+                        "    这不是游客（游客是负数）—— 这是**数据不一致**：请查 `player_profile` 与账号绑定。");
                 }
             }
             catch (Exception ex)

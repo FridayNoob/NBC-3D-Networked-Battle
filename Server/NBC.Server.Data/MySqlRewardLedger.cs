@@ -79,7 +79,7 @@ namespace NBC.Server.Data
 
         /// <summary>造一个属于某个玩家的台账。</summary>
         /// <param name="dao">读写实现（不能为 null）。</param>
-        /// <param name="playerId">玩家编号（必须 &gt; 0）。</param>
+        /// <param name="playerId">玩家编号（必须 &gt; 0；**负数 = 游客，没有档案，建不了**）。</param>
         public MySqlRewardLedger(IRewardLedgerDao dao, long playerId)
         {
             if (dao == null)
@@ -89,9 +89,12 @@ namespace NBC.Server.Data
 
             if (playerId <= 0)
             {
-                // 同进度 store：静默放行会让所有玩家共用一个 0 号台账 ⇒ **串档**
+                // 同进度 store：静默放行会让所有玩家共用一个 0 号台账 ⇒ **串档**。
+                // ⚠️ 负数现在是**游客**（SRV-17a）：`reward_granted.player_id` 有外键指向
+                //    `player_profile`，游客没有档案 ⇒ 这里当场炸是**对的**。
                 throw new ArgumentOutOfRangeException(nameof(playerId),
-                    "[MySqlRewardLedger] 玩家编号必须 > 0（当前 " + playerId + "）。");
+                    "[MySqlRewardLedger] 玩家编号必须 > 0（当前 " + playerId + "）。" +
+                    "负数 = 游客：游客没有玩家档案，领奖台账无处可挂（先做注册流程才有）。");
             }
 
             m_dao = dao;

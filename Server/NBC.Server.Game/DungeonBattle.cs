@@ -837,12 +837,19 @@ public sealed class DungeonBattle
         //    否则会出现"伤害事件说 5、战绩说 100"这种对不上的两口账。
         BattleEntity? attackerEntity = attackerId == 0 ? null : Find(attackerId);
 
-        if (attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId > 0)
+        // ⚠️ 判据是 `PlayerId != 0`（"这是某个玩家的英雄"），**不是 `> 0`**：
+        //    `BattleEntity.PlayerId` 只有一个哨兵值 —— **0 = 无主**；
+        //    而**负数 = 游客**（也是有主的英雄，只是没有账号档案）。
+        //    写成 `> 0` 的后果：游客打出来的伤害/击杀**一条都不记**，
+        //    战绩草稿里干脆没有这个玩家（比"记了但不落库"更难查）。
+        //    ⚠️ 至于"能不能落库"，那是**数据层**的事（`BattleRecordDao` 按 `> 0` 过滤）——
+        //       战斗层不该知道账号/档案的存在。
+        if (attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId != 0)
         {
             StatOf(attackerEntity).DamageDealt += outcome.Applied;
         }
 
-        if (target.Kind == 0 && target.PlayerId > 0)
+        if (target.Kind == 0 && target.PlayerId != 0)
         {
             StatOf(target).DamageTaken += outcome.Applied;
         }
@@ -865,11 +872,11 @@ public sealed class DungeonBattle
             // SRV-13：死亡/击杀也记账。
             // ⚠️ 口径：**怪死算击杀、英雄死算死亡**；玩家自己死**不算**击杀
             //    （否则"自杀"或"被怪打死"会刷出击杀数）。
-            if (target.Kind == 0 && target.PlayerId > 0)
+            if (target.Kind == 0 && target.PlayerId != 0)
             {
                 StatOf(target).Death++;
             }
-            else if (target.Kind == 1 && attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId > 0)
+            else if (target.Kind == 1 && attackerEntity != null && attackerEntity.Kind == 0 && attackerEntity.PlayerId != 0)
             {
                 StatOf(attackerEntity).Kill++;
             }
@@ -886,9 +893,40 @@ public sealed class DungeonBattle
     }
 
     /// <summary>
+    /// 确保某个玩家在这一局的战绩里有位置（**英雄入场时调一次**）。`SRV-17a`
+    ///
+    /// <para>
+    /// ⚠️ 为什么不能只靠 <see cref="StatOf"/> 的"第一次记账时建"：
+    /// **一个玩家可能整局什么都没做**（没打到人、也没挨打 —— 比如站门口挂机），
+    /// 那他在草稿里就**根本不存在** ⇒ `battle_player_detail` 里连一行"0 杀 0 死"的记录都没有
+    /// ⇒ 事后无法回答"**这一局他在场吗**"。
+    /// </para>
+    /// <para>
+    /// ⚠️ `playerId == 0` 直接忽略（0 = 无主，不是玩家）；**负数（游客）照收** ——
+    /// "能不能落库"是数据层的判断，战斗层只管**如实记账**（见 `Docs\27` §二十）。
+    /// </para>
+    /// </summary>
+    /// <param name="playerId">玩家编号（0 = 忽略）。</param>
+    /// <param name="heroConfigId">英雄配置号（`Config_Hero.id`）。</param>
+    public void EnsurePlayerStat(long playerId, int heroConfigId)
+    {
+        if (playerId == 0 || _playerStats.ContainsKey(playerId))
+        {
+            return;
+        }
+
+        _playerStats[playerId] = new BattlePlayerStat
+        {
+            PlayerId = playerId,
+            HeroConfigId = heroConfigId,
+        };
+    }
+
+    /// <summary>
     /// 取这个玩家在这一局里的战绩累加器（没有就建一个）。`SRV-13`
     /// <para>⚠️ 建累加器时就把英雄配置号填上：他可能在**第一次受伤之前**就死了（被秒），
     /// 那时还没有任何伤害记账 —— 若只在"第一次记伤害"时建累加器，这个玩家就会漏掉。</para>
+    /// <para>⚠️ 而"整局什么都没做"的玩家由 <see cref="EnsurePlayerStat"/> 在**入场时**兜住。</para>
     /// </summary>
     /// <param name="entity">玩家控制的英雄实体（`Kind == 0`）。</param>
     /// <returns>累加器。</returns>

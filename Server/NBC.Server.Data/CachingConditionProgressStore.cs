@@ -118,11 +118,20 @@ namespace NBC.Server.Data
 
             if (playerId <= 0)
             {
-                // 0 或负数几乎总是"忘了传"或"还没登录就建了"。
+                // 0 或负数几乎总是"忘了传"、"还没登录就建了"，或者**游客想存进度**。
                 // 静默放行会让**所有玩家共用一个 0 号玩家的存档** —— 一个查起来极费劲的串档 bug。
+                //
+                // ⚠️ 2026-09-27（SRV-17a）起这条守卫**多了一层含义**，而且正好是我们要的：
+                //    游客的 `player_id` 是**负数**（见 `ServerMessageRouter.HandleHandshake`），
+                //    而 `condition_progress.player_id` 有外键指向 `player_profile`
+                //    ⇒ **游客在数据层根本没有可以挂靠的档案**。
+                //    所以"给游客建进度存放处"这件事会**当场炸**，而不是等到写库时被外键拒绝。
+                //    ⇒ 想让游客也能存进度，必须先给他一个真实档案（= 先做注册流程），
+                //       **不是**把这里放宽成 `== 0`。
                 throw new ArgumentOutOfRangeException(nameof(playerId),
                     "[CachingConditionProgressStore] 玩家编号必须 > 0（当前 " + playerId + "）。\n" +
-                    "多半是「还没登录就先建了存放处」—— 应当先拿到 player_profile.player_id 再建。");
+                    "多半是「还没登录就先建了存放处」或者「**游客想存进度**」——\n" +
+                    "前者应当先拿到 player_profile.player_id 再建；后者需要先有账号档案（本项目的游客没有档案）。");
             }
 
             m_dao = dao;

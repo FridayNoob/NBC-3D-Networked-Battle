@@ -29,19 +29,21 @@
 //  ⚠️ 解析不出来时（将来房号方案变了）退化成**稳定哈希**，并在 `result_json` 里留着原文。
 //
 //  ---------------------------------------------------------------------------
-//  ⚠️ 只给"有档案的玩家"写明细
+//  ⚠️ 只给"真实账号的档案"写明细（`player_id > 0`）
 //  ---------------------------------------------------------------------------
-//  `battle_player_detail.player_id` 有外键指向 `player_profile`。
-//  而 `session.PlayerId` 现在是**会话计数器**（服务器第几个连上来的），**不是账号**：
+//  `battle_player_detail.player_id` 有外键指向 `player_profile`，所以**能写进去的
+//  只有真实档案**。而玩家编号现在有两种（2026-09-27 SRV-17a 起）：
 //
-//      `ServerMessageRouter.cs:242` 的原注释：
-//          "M3 还没有账号系统：player_id 就是「第几个连上来的」。
-//           （S4 接数据库/账号时换成真实玩家 id —— 那时这个计数器就该删掉）"
+//      `player_id > 0`  = **账号自己的档案**（`AccountDirectory` 给的，见 `Docs\27` §十九）
+//      `player_id < 0`  = **游客**（负数，见 `ServerMessageRouter.HandleHandshake`）
 //
-//  ⇒ 连第 5 个人的 id 是 5，而 `player_profile` 只种了 1~4 ⇒ 外键会**拒绝**那一行。
-//    本 DAO 的处理是：**先问库里有哪些 player_id**，只给存在的写明细与累计，
-//    跳过的**如实报数**（不静默吞掉）。
-//  ⇒ 这是"账号系统还没做"的**已知欠账**，不是本片的疏漏；见 `Docs\27` §十四。
+//  ⇒ 本 DAO 的处理是：
+//      · **游客**（负数）：**按设计**不写明细与累计（他本来就没有档案）+ **如实报数**
+//      · **正数但库里查不到**：这是**数据问题**（账号有 id 却没档案？），单独报数、要响
+//  ⇒ 两种"没写进去"的原因**完全不同**，日志里必须分得开 ——
+//    否则"游客不记明细"（正常）会把"某人的战绩丢了"（故障）淹掉。
+//  ⇒ 历史：这里原来是"第 5 个连上来的人会被外键拒绝"的补丁（`Docs\27` §十四）；
+//     SRV-17a 把游客改成负数之后，那段欠账从根上消失了（游客**不可能**撞上档案 id）。
 // ============================================================================
 
 using System.Collections.Generic;
@@ -64,28 +66,50 @@ namespace NBC.Server.Data
         /// <summary>写了几条玩家明细。</summary>
         public readonly int DetailRows;
 
-        /// <summary>有几个玩家因为**没有档案**被跳过（> 0 就该看一眼，见文件头）。</summary>
-        public readonly int SkippedPlayers;
+        /// <summary>
+        /// 有几个**游客**（`player_id < 0`）没写明细。
+        /// <para>⚠️ 这是**设计如此**，不是故障：游客没有档案，就没人可以记（见文件头）。</para>
+        /// </summary>
+        public readonly int SkippedGuests;
+
+        /// <summary>
+        /// 有几个玩家**有正数 id 但库里没有他的档案** —— ⚠️ 这是**数据问题**，该响。
+        /// </summary>
+        public readonly int SkippedUnknownPlayers;
 
         /// <summary>造一个。</summary>
         /// <param name="recordId">记录编号。</param>
         /// <param name="detailRows">明细条数。</param>
-        /// <param name="skippedPlayers">跳过的玩家数。</param>
-        public BattleRecordWriteResult(long recordId, int detailRows, int skippedPlayers)
+        /// <param name="skippedGuests">跳过的游客数（设计如此）。</param>
+        /// <param name="skippedUnknownPlayers">跳过的"有 id 无档案"玩家数（数据问题）。</param>
+        public BattleRecordWriteResult(
+            long recordId, int detailRows, int skippedGuests, int skippedUnknownPlayers)
         {
             RecordId = recordId;
             DetailRows = detailRows;
-            SkippedPlayers = skippedPlayers;
+            SkippedGuests = skippedGuests;
+            SkippedUnknownPlayers = skippedUnknownPlayers;
         }
 
         /// <summary>一句人话。</summary>
-        /// <returns>例如 `record#12、明细 2 条（跳过 1 个无档案玩家）`。</returns>
+        /// <returns>例如 `record#12、明细 2 条（游客 1 人不记明细）`。</returns>
         public override string ToString()
         {
-            return "record#" + RecordId + "、明细 " + DetailRows + " 条" +
-                   (SkippedPlayers > 0
-                       ? "（**跳过 " + SkippedPlayers + " 个无档案玩家**）"
-                       : string.Empty);
+            var text = new StringBuilder();
+
+            text.Append("record#").Append(RecordId).Append("、明细 ").Append(DetailRows).Append(" 条");
+
+            if (SkippedGuests > 0)
+            {
+                text.Append("（游客 ").Append(SkippedGuests).Append(" 人按设计不记明细）");
+            }
+
+            if (SkippedUnknownPlayers > 0)
+            {
+                text.Append("（⚠️ ").Append(SkippedUnknownPlayers).Append(" 个玩家**有 id 却没有档案**）");
+            }
+
+            return text.ToString();
         }
     }
 
@@ -162,17 +186,28 @@ namespace NBC.Server.Data
                         transaction, commandTimeout: m_commandTimeoutSeconds,
                         cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-                    // ---- ③ battle_player_detail（只给有档案的玩家）----
+                    // ---- ③ battle_player_detail（**只给真实账号的档案**，见文件头）----
                     int detailRows = 0;
-                    int skipped = 0;
+                    int skippedGuests = 0;
+                    int skippedUnknown = 0;
 
                     for (int i = 0; i < draft.Players.Count; i++)
                     {
                         BattlePlayerDraft p = draft.Players[i];
 
+                        // ⚠️ 先按**约定**分流，再按**库里的真值**判断 —— 两种"没写进去"的原因
+                        //    完全不同（一个是设计，一个是故障），日志里必须分得开：
+                        //      ① `player_id < 0`  ⇒ **游客**（设计如此：没有档案就没人可记）
+                        //      ② `player_id > 0` 但库里查不到 ⇒ **数据问题**（该响）
+                        if (p.PlayerId < 0)
+                        {
+                            skippedGuests++;
+                            continue;
+                        }
+
                         if (!allowed.Contains(p.PlayerId))
                         {
-                            skipped++;
+                            skippedUnknown++;
                             continue;
                         }
 
@@ -230,7 +265,7 @@ namespace NBC.Server.Data
                     }
 
                     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                    return new BattleRecordWriteResult(recordId, detailRows, skipped);
+                    return new BattleRecordWriteResult(recordId, detailRows, skippedGuests, skippedUnknown);
                 }
                 catch
                 {
