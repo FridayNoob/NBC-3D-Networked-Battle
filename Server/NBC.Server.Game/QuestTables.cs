@@ -182,6 +182,9 @@ namespace NBC.Server.Game
         /// <summary>成就列表（**按编号升序**：登记的先后顺序会影响事件顺序，确定性优先）。</summary>
         private readonly List<OwnerRow> m_achievementList = new List<OwnerRow>();
 
+        /// <summary>任务列表（**按编号升序**，理由同成就列表）。</summary>
+        private readonly List<OwnerRow> m_questList = new List<OwnerRow>();
+
         /// <summary>条件个数。</summary>
         public int ConditionCount
         {
@@ -210,6 +213,24 @@ namespace NBC.Server.Game
         public IReadOnlyList<OwnerRow> Achievements
         {
             get { return m_achievementList; }
+        }
+
+        /// <summary>全部任务（升序）；服务端任务权威按它枚举（§二十五）。</summary>
+        public IReadOnlyList<OwnerRow> Quests
+        {
+            get { return m_questList; }
+        }
+
+        /// <summary>取一个任务（没有则 null）。</summary>
+        /// <param name="id">任务编号。</param>
+        /// <returns>行；没有则 null。</returns>
+        public OwnerRow? FindQuest(int id)
+        {
+            // ⚠️ 必须声明成**可空**：`TryGetValue` 的 `out` 参数在"没找到"时写 null，
+            //    写成 `OwnerRow value` 会让编译器报 CS8600（本项目的闸门是 0 警告）。
+            //    同族：`AccountDirectory.Login` 里同一个坑（那里我改成 `AccountRow? row`）。
+            OwnerRow? value;
+            return m_quests.TryGetValue(id, out value) ? value : null;
         }
 
         /// <summary>取一条条件。</summary>
@@ -304,6 +325,15 @@ namespace NBC.Server.Game
             }
 
             result.m_achievementList.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+            // ⚠️ 任务列表同样按编号升序（§二十五 加的）：服务端权威要给**已接取**的任务
+            //    登记条件，登记顺序会决定"同一条事实喂给谁先" ⇒ 必须确定，不能靠字典顺序。
+            foreach (KeyValuePair<int, OwnerRow> pair in result.m_quests)
+            {
+                result.m_questList.Add(pair.Value);
+            }
+
+            result.m_questList.Sort((a, b) => a.Id.CompareTo(b.Id));
 
             // 跨表引用校验（**加载时**就查，理由见文件头）
             if (!result.ValidateReferences(out error))
@@ -434,7 +464,7 @@ namespace NBC.Server.Game
             return true;
         }
 
-        /// <summary>校验跨表引用（条件 / 奖励必须在各自表里存在）。</summary>
+        /// <summary>校验跨表引用（条件 / 奖励必须在各自表里存在 + **条件不许被两类 owner 共用**）。</summary>
         /// <param name="error">失败原因。</param>
         /// <returns>全部有效返回 true。</returns>
         private bool ValidateReferences(out string error)
@@ -446,7 +476,98 @@ namespace NBC.Server.Game
                 return false;
             }
 
-            return ValidateOwnerReferences("Achievement", m_achievements, out error);
+            if (!ValidateOwnerReferences("Achievement", m_achievements, out error))
+            {
+                return false;
+            }
+
+            return ValidateNoSharedConditions(out error);
+        }
+
+        /// <summary>
+        /// ⚠️ **同一个条件编号不许同时被"任务"和"成就"引用**（M4-S3 §二十五 加）。
+        ///
+        /// <para>为什么这是**加载时**就要挡住的一条（而不是运行期容忍）：</para>
+        /// <para>
+        /// 条件进度是按「玩家 + **条件编号**」存在**一张表**里的（`condition_progress`），
+        /// 而任务权威与成就权威是**两个类**，各自为同一个玩家建**自己那份**
+        /// `IPlayerProgressStore`（= 一份写回缓存）。
+        /// </para>
+        /// <para>
+        /// 一旦某个条件被两边共用，两个缓存就会覆盖**同一批行**、各写各的绝对值：
+        /// 一边算 0→1、另一边也算 0→1，最后库里停在 **1**（本该是 2）——
+        /// 这就是 **lost update**。⚠️ 而它**不报错**：两边日志都正常、
+        /// 只是进度**少涨**。数值悄悄不对、日志全绿，正是本项目最怕的一类 bug。
+        /// </para>
+        /// <para>
+        /// ⇒ 想共用不是不行，但**得先让两者共用一个进度存放处**（那样才只有一个缓存、
+        /// 一份权威）—— 那是**另一刀**的事，在那之前这条配置必须被拒绝，
+        /// 而且要在**加载时**就拒绝，不能等玩家打怪时才发现进度对不上。
+        /// </para>
+        /// </summary>
+        /// <param name="error">失败原因（会点名那个条件编号）。</param>
+        /// <returns>没有共用返回 true。</returns>
+        private bool ValidateNoSharedConditions(out string error)
+        {
+            error = string.Empty;
+
+            // 条件编号 → 先看到它的那个 owner 的**标签**（例如「任务 3003」）
+            var seen = new Dictionary<int, string>(m_conditions.Count);
+
+            if (!CollectOwnerConditions(m_quests, "任务", seen, out error))
+            {
+                return false;
+            }
+
+            return CollectOwnerConditions(m_achievements, "成就", seen, out error);
+        }
+
+        /// <summary>把一类 owner 的条件收进 `seen`；发现被另一类先占就失败。</summary>
+        /// <param name="owners">owner 集合。</param>
+        /// <param name="kindName">这一类的名字（「任务」/「成就」）。</param>
+        /// <param name="seen">已经见过的条件（条件编号 → 先占者的标签）。</param>
+        /// <param name="error">失败原因。</param>
+        /// <returns>没有冲突返回 true。</returns>
+        private static bool CollectOwnerConditions(
+            Dictionary<int, OwnerRow> owners, string kindName, Dictionary<int, string> seen, out string error)
+        {
+            error = string.Empty;
+
+            foreach (KeyValuePair<int, OwnerRow> pair in owners)
+            {
+                OwnerRow owner = pair.Value;
+                string label = kindName + " " + owner.Id + "（" + owner.Name + "）";
+
+                for (int i = 0; i < owner.ConditionIds.Length; i++)
+                {
+                    int key = owner.ConditionIds[i];
+                    string? firstLabel;
+
+                    if (seen.TryGetValue(key, out firstLabel))
+                    {
+                        // 标签以类名开头（「任务 3003…」/「成就 9002…」），所以"不是这一类"
+                        // 就等于"被另一类先占了"。用 StartsWith 而不是取首字符：
+                        // 空串不会炸，而且意图一眼看得懂。
+                        if (!firstLabel.StartsWith(kindName, System.StringComparison.Ordinal))
+                        {
+                            error =
+                                "条件 " + key + " **被任务和成就共用了**：" + firstLabel + " 与 " + label + "。\n" +
+                                "    为什么必须挡住：条件进度按「玩家 + 条件编号」存在**同一张表**里，\n" +
+                                "    而任务权威与成就权威**各自**为同一玩家建一份写回缓存 ⇒\n" +
+                                "    两个缓存覆盖同一批行、各写各的绝对值 ⇒ **丢更新**（进度少涨，而且不报错）。\n" +
+                                "    要共用就得先让两者**共用一个进度存放处**（另一刀），在那之前本表拒绝加载。";
+                            return false;
+                        }
+
+                        // 同一类内部共用是允许的（那件事归配置检查 CFG0023）
+                        continue;
+                    }
+
+                    seen.Add(key, label);
+                }
+            }
+
+            return true;
         }
 
         /// <summary>校验一批 owner（任务或成就）的条件与奖励引用。</summary>

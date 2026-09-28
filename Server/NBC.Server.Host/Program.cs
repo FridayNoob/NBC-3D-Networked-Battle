@@ -306,6 +306,9 @@ internal static class Program
         //  ⚠️ 没接数据库时**故意不接**（`Track` 直接返回 false）：只判不记会让人以为成就系统好了。
         AchievementAuthority? achievements = null;
 
+        // M4-S3 收口（§21.4 未做#3 的第一刀）：**任务权威**（接取/完成/交付 + 发奖）
+        QuestAuthority? quests = null;
+
         // M4-S3 收口（未做#2）：把权威进度推给客户端的那条线（**Host 与探针共用**）
         ProgressBroadcaster? progress = null;
 
@@ -322,6 +325,22 @@ internal static class Program
             battles.Achievements = achievements;
 
             // ================================================================
+            //  §二十五：任务权威（接取 / 完成 / 交付 + 发奖）
+            //  ⚠️ 它要的是**同一批战斗事实** —— 通过 `IProgressFactSink` 注册，
+            //     而不是在 `RoomBattleService` 里再写一遍 `ApplyFact`（加消费者不用改那个类）。
+            //  ⚠️ 三个存放处缺一不可：进度（条件累计）、台账（发奖幂等）、**任务状态**（到哪一步了）。
+            //     少一个就退化成"判定说完成了、重启就没"。
+            // ================================================================
+            quests = new QuestAuthority(
+                questTables,
+                playerId => new CachingConditionProgressStore(new ConditionProgressDao(liveFactory), playerId),
+                playerId => new MySqlRewardLedger(new RewardLedgerDao(liveFactory), playerId),
+                playerId => new CachingQuestStateStore(new QuestStateDao(liveFactory), playerId));
+
+            quests.Note += line => Log(quiet, "[任务] " + line);
+            battles.AddFactSink(quests);
+
+            // ================================================================
             //  M4-S3 收口（§21.4 未做#2）：把**权威进度**推给客户端
             //  —— 收掉"两个账房"：在此之前任务/成就进度**客户端自己也算一份**，
             //     两边一致只是"碰巧"，一旦不一致**不报错**。
@@ -334,7 +353,11 @@ internal static class Program
             // 一局结束就冲一次库（**fire-and-forget**：这里是 Tick 线程，绝不能等 IO）
             // ⚠️ lambda 的参数**不能叫 `_`** —— 那样里面的 `_ = 任务` 会被解析成"给这个参数赋值"，
             //    报一句完全看不懂的 `无法将 Task<bool> 转换为 BattleRecordDraft`（本次实测踩到）。
-            battles.BattleFinished += draft => { _ = achievements.FlushAllAsync(2000); };
+            battles.BattleFinished += draft =>
+            {
+                _ = achievements.FlushAllAsync(2000);
+                _ = quests.FlushAllAsync(2000);
+            };
 
             Say($"[成就] 服务端权威判定已接：{questTables.Describe()}");
         }
@@ -362,6 +385,9 @@ internal static class Program
 
             // M4-S3 权威：开始追踪这个玩家的成就（**异步读进度**，中间收到的事实会排队 —— 见那个类的文件头）
             achievements?.Track(result.PlayerId, result.Nickname);
+
+            // 任务权威同理（游客不会走到这里：登录才有档案）
+            quests?.Track(result.PlayerId, result.Nickname);
         };
 
         // 后续切片的消息先不注册 —— 客户端真发了会得到一句"还没实现 X"（不是静默丢弃）
@@ -377,6 +403,7 @@ internal static class Program
             //     登录玩家的身份属于**账号**，本来就跟连接无关。）
             // M4-S3 权威：断开就停止追踪（内部会**异步**把脏进度冲回库，不在断开回调里等 IO）
             achievements?.Untrack(session.PlayerId);
+            quests?.Untrack(session.PlayerId);
 
             Log(quiet, $"[断开] 会话 {session.SessionId}" +
                        (session.PlayerId != 0 ? $"（玩家 {session.PlayerId}）" : "（还没握手）") +
@@ -460,6 +487,13 @@ internal static class Program
             Say("[收尾] 成就进度落库" + (drained ? "已排空。" : "**超时**（还有没写完的）。"));
         }
 
+        // 任务同理：状态 + 进度 + 台账都要冲干净（最后那个是"发了奖要留下记录"）
+        if (quests != null && quests.TrackedPlayers > 0)
+        {
+            bool drained = quests.FlushAllAsync(3000).GetAwaiter().GetResult();
+            Say("[收尾] 任务状态落库" + (drained ? "已排空。" : "**超时**（还有没写完的）。"));
+        }
+
         // 登录审计同理：别把"谁登录过"丢在队列里
         if (loginAudit.PendingCount > 0 || loginAudit.Submitted > 0)
         {
@@ -485,6 +519,10 @@ internal static class Program
         if (achievements != null)
         {
             Say($"[统计] {achievements.Describe()}");
+        }
+        if (quests != null)
+        {
+            Say($"[统计] {quests.Describe()}");
         }
         Say($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +

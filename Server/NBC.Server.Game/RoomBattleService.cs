@@ -97,11 +97,53 @@ public sealed class RoomBattleService
     private readonly List<ProgressFact> _factBuffer = new();
 
     /// <summary>
+    /// 战斗事实的消费者（§二十五 抽的缝：成就权威、任务权威……）。
+    /// <para>⚠️ 用**注册表**而不是"每个消费者一个属性"：每加一个消费者就改一次本类，
+    /// 很容易漏掉一处，而漏掉的表现是"某个系统**永远**不涨"、日志全绿。</para>
+    /// </summary>
+    private readonly List<IProgressFactSink> _factSinks = new();
+
+    /// <summary>成就权威（**已接上的话**；保留这个属性是为了兼容既有调用点与探针）。</summary>
+    private AchievementAuthority? _achievements;
+
+    /// <summary>
     /// 服务端权威的成就判定（**可空**：没接数据库 / 没读表时为 null ⇒ 事实就没人消费）。
     /// <para>⚠️ 用属性而不是构造参数：它与战斗服务的生命周期不同（战斗先建、权威后接），
     /// 而且**探针里可以只接一半**（只想验战斗时不接权威）。</para>
+    /// <para>📌 赋值时**自动注册**成事实消费者（§二十五），所以既有调用点
+    /// （`Program.cs` / `_net-probe` 的 `h.Battles.Achievements = authority`）**一行都不用改**。</para>
     /// </summary>
-    public AchievementAuthority? Achievements { get; set; }
+    public AchievementAuthority? Achievements
+    {
+        get { return _achievements; }
+        set
+        {
+            _achievements = value;
+
+            if (value != null)
+            {
+                AddFactSink(value);
+            }
+        }
+    }
+
+    /// <summary>现在接了哪几个事实消费者（只读，排查/探针用）。</summary>
+    public IReadOnlyList<IProgressFactSink> FactSinks
+    {
+        get { return _factSinks; }
+    }
+
+    /// <summary>接一个事实消费者（重复接同一个不会加两次）。</summary>
+    /// <param name="sink">消费者（null 忽略）。</param>
+    public void AddFactSink(IProgressFactSink? sink)
+    {
+        if (sink == null || _factSinks.Contains(sink))
+        {
+            return;
+        }
+
+        _factSinks.Add(sink);
+    }
 
     /// <summary>每个玩家**最近一条**输入（移动是"状态"，所以只留最新的一条，见文件头第二节）。</summary>
     private readonly Dictionary<long, PendingInput> _inputs = new();
@@ -605,17 +647,20 @@ public sealed class RoomBattleService
     /// 这样"同一局里两边算出来的进度"不会因为处理次序不同而出现差异。
     /// </para>
     /// <para>
-    /// ⚠️ `Achievements == null`（没接数据库 / 探针里没接）时**事实直接被丢掉**：
+    /// ⚠️ **一个事实消费者都没接**时（没接数据库 / 探针里没接）**事实直接被丢掉**：
     /// 这是**有意的**（权威不存在 = 没有记账的地方），但 `AchievementAuthority` 里
     /// 不会因此报"没人认领"——那一类告警只对"接了权威却没追踪这个玩家"报。
+    /// </para>
+    /// <para>
+    /// 📌 §二十五：事实**只从战斗里取一次**，然后分发给**所有**注册的消费者
+    /// （`AddFactSink`）—— 这样"谁先看到"不影响"取到了什么"。
     /// </para>
     /// </summary>
     /// <param name="battle">这一局的世界。</param>
     private void ApplyProgressFacts(DungeonBattle battle)
     {
-        AchievementAuthority? authority = Achievements;
-
-        if (authority == null)
+        // 没有消费者就别去掏事实：与改造前 `Achievements == null` 的行为逐字一致
+        if (_factSinks.Count == 0)
         {
             return;
         }
@@ -624,7 +669,10 @@ public sealed class RoomBattleService
 
         for (int i = 0; i < _factBuffer.Count; i++)
         {
-            authority.ApplyFact(_factBuffer[i]);
+            for (int s = 0; s < _factSinks.Count; s++)
+            {
+                _factSinks[s].ApplyFact(_factBuffer[i]);
+            }
         }
 
         _factBuffer.Clear();

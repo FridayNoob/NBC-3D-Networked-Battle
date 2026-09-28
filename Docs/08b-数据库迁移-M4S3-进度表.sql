@@ -21,7 +21,7 @@
 --    cd /d "E:\U3D Projects\0_MyFile\3D联网战斗Demo"
 --    mysql -u root -p --default-character-set=utf8mb4 < "Docs\08b-数据库迁移-M4S3-进度表.sql"
 --
---  验证（应看到 6 张表）：
+--  验证（应看到 7 张表 —— 含后来 §二十五 加的 `quest_state`）：
 --    mysql -u root -p nbc_db -e "SHOW TABLES;"
 --
 --  文件本身：UTF-8 **无 BOM**、LF 换行 —— 有 BOM 会让第一条语句报 1064，别加。
@@ -80,6 +80,6 @@ CREATE TABLE IF NOT EXISTS `reward_granted` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已发奖励台账（防重启重复发奖）';
 
 -- ============================================================================
---  自检：把加完之后的表列出来（跑完应当看到 6 张表）
+--  自检：把加完之后的表列出来（跑完应当看到 7 张表 —— 含后来 §二十五 加的 `quest_state`）
 -- ============================================================================
 SHOW TABLES;

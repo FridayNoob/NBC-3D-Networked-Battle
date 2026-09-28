@@ -59,7 +59,9 @@ using NBC.Shared.Reward;
 namespace NBC.Server.Game
 {
     /// <summary>服务端权威的成就判定（见文件头）。</summary>
-    public sealed class AchievementAuthority : IDisposable
+    /// <remarks>实现 `IProgressFactSink`（§二十五）：与任务权威**共用同一条事实分发**，
+    /// 所以它只是把已有的 `ApplyFact` 声明出来，行为零改动。</remarks>
+    public sealed class AchievementAuthority : IProgressFactSink, IDisposable
     {
         /// <summary>一个已追踪玩家的全部状态。</summary>
         private sealed class PlayerState : IDisposable

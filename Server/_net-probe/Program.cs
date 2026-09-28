@@ -2830,7 +2830,9 @@ namespace NBC.NetProbe
 
                         h.TickBattles(2);
 
-                        ServerMessage? sync = null;
+                        // ⚠️ 这里**不写** `ServerMessage?`：本文件没有 `#nullable` 上下文，
+                        //    那个 `?` 会报 CS8632（纯噪音）。引用类型赋 null 在本文件是合法的。
+                        ServerMessage sync = null;
 
                         for (int i = 0; i < a.Received.Count; i++)
                         {
@@ -2840,7 +2842,7 @@ namespace NBC.NetProbe
                             }
                         }
 
-                        ConditionProgressEntry? entry4010 = null;
+                        ConditionProgressEntry entry4010 = null;
 
                         if (sync != null)
                         {

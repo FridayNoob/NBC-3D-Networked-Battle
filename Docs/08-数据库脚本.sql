@@ -173,6 +173,37 @@ CREATE TABLE `reward_granted` (
   CONSTRAINT `fk_granted_player` FOREIGN KEY (`player_id`)
       REFERENCES `player_profile` (`player_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已发奖励台账（防重启重复发奖）';
+
+-- ---------------------------------------------------------------------------
+-- 7. 任务状态表：一个玩家**接过哪些任务、到哪一步了**（M4-S3 §二十五）
+--
+--    ⚠️ 为什么必须落库：在此之前"接取/交付"只活在**客户端内存**里，
+--       服务端根本不知道玩家接过什么 ⇒ 任务进度**没有权威值**可发。
+--       成就没有"接取"这个动作，所以它先做完了（§二十一）；任务有状态机，留到了这一刀。
+--
+--    ⚠️ 与第 5 张表（`condition_progress`）的分工：
+--       次数那件事归 `condition_progress`（主键「玩家 + 条件」）；
+--       这张表只管**状态机**：1=Accepted 2=Completed 3=Submitted。
+--       **故意没有 0**：0 = "表里没这一行" = 未接取 ——
+--       把"没有记录"和一个具体状态混成一个值，是这类表最常见的坑。
+--
+--    ⚠️ 主键「玩家 + 任务」⇒ `ON DUPLICATE KEY UPDATE` 天然幂等：
+--       重复交付不会写出第二行（再配合 `reward_granted` 台账，两道保险）。
+--
+--    📌 幂等迁移版（已建过库、只想加这张表）：`Docs\08d-数据库迁移-M4S3-任务状态表.sql`
+-- ---------------------------------------------------------------------------
+CREATE TABLE `quest_state` (
+  `player_id`    BIGINT UNSIGNED NOT NULL,
+  `quest_id`     INT             NOT NULL COMMENT '对应 Config_Quest.id',
+  `state`        TINYINT         NOT NULL COMMENT '1=Accepted 2=Completed 3=Submitted；0 不存（没有行=未接取）',
+  `accepted_at`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `submitted_at` DATETIME        NULL     DEFAULT NULL COMMENT '交付时间；未交付为 NULL',
+  `updated_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`player_id`, `quest_id`),
+  KEY `idx_state` (`state`),
+  CONSTRAINT `fk_quest_state_player` FOREIGN KEY (`player_id`)
+      REFERENCES `player_profile` (`player_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务状态机（接取/完成/交付）';
 -- ============================================================================
 --  初始数据：测试账号
 --
@@ -214,7 +245,8 @@ VALUES
 --  验证查询（执行后人工确认结果）
 -- ============================================================================
 
--- 4 张表是否都在
+-- 7 张表是否都在（account / player_profile / battle_record / battle_player_detail
+--                / condition_progress / reward_granted / quest_state）
 SELECT TABLE_NAME, TABLE_COMMENT
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'nbc_db'
