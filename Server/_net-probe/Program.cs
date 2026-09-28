@@ -193,6 +193,11 @@ namespace NBC.NetProbe
             Authority_GuestFactsAreNotRecorded();
             Authority_NoDatabaseSaysWhyInsteadOfPretending();
 
+            Console.WriteLine();
+            Console.WriteLine("【十七】M4-S3 §二十五：任务权威的**加载时校验**（共用条件必须被挡住）");
+            Quest_SharedConditionIsRejected_ButCleanTablesLoad();
+            Quest_SubmitUnregisters_SoBothPathsAgree();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -2986,6 +2991,252 @@ namespace NBC.NetProbe
 
         /// <summary>读真表（`Configs\Design`）—— 判据用的是**真源**，不是探针自己编的表。</summary>
         /// <returns>四张表。</returns>
+        /// <summary>
+        /// ⚠️ **共用条件必须在加载时被挡住**（阴性/阳性对照，§二十五）。
+        ///
+        /// <para>为什么值得一条对照：条件进度按「玩家 + 条件编号」存在**同一张表**里，
+        /// 而任务权威与成就权威**各自**为同一玩家建一份写回缓存 ⇒ 一个条件被两边共用
+        /// 就是 **丢更新**（各写各的绝对值，进度少涨，**而且不报错**）。</para>
+        ///
+        /// <para>📌 **阳性对照不可省**：它证明"真的读到了东西"。
+        /// 本项目今天已经出现两次"没读到被判成没问题"的假绿，所以先证明读到了，再看阴性。</para>
+        ///
+        /// <para>⚠️ **不改真源**：把 4 张 CSV 拷到临时目录，只动那一份。</para>
+        /// </summary>
+        private static void Quest_SharedConditionIsRejected_ButCleanTablesLoad()
+        {
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§25 加载校验：找得到配置表目录（否则下面全是假绿）", false, "找不到配置表目录");
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "nbc_shared_cond_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string[] files = { "Quest.csv", "QuestCondition.csv", "Achievement.csv", "Reward.csv" };
+
+                for (int i = 0; i < files.Length; i++)
+                {
+                    File.Copy(Path.Combine(sourceDir, files[i]), Path.Combine(tempDir, files[i]), true);
+                }
+
+                // ---- 阳性：原样 ⇒ 必须加载成功，而且**真的读到了表** ----
+                QuestTables clean;
+                string cleanError;
+
+                bool cleanOk = QuestTables.TryLoad(tempDir, out clean, out cleanError);
+
+                Check("§25 加载校验·阳性：不共用 ⇒ `TryLoad` **成功**", cleanOk, "居然失败：" + cleanError);
+
+                Check("§25 加载校验·阳性：而且**真的读到了**任务/成就/条件（防假绿）",
+                    cleanOk && clean.QuestCount > 0 && clean.AchievementCount > 0 && clean.ConditionCount > 0,
+                    cleanOk
+                        ? "任务 " + clean.QuestCount + "、成就 " + clean.AchievementCount +
+                          "、条件 " + clean.ConditionCount
+                        : "上面那条已经失败了");
+
+                // ---- 阴性：让成就 9002 也引用任务 3003 的条件 4005 ⇒ 必须加载失败 ----
+                string achievementPath = Path.Combine(tempDir, "Achievement.csv");
+                string text = File.ReadAllText(achievementPath);
+
+                const string before = "9002,狼王终结者,击杀狼王,4010,5003";
+                const string after = "9002,狼王终结者,击杀狼王,\"4010,4005\",5003";
+
+                if (!text.Contains(before))
+                {
+                    // ⚠️ 源表改了要让这条**红**，而不是静默跳过（静默跳过 = 用例假绿）
+                    Check("§25 加载校验·阴性：找得到要改的那一行成就配置", false,
+                        "Achievement.csv 里没有「" + before + "」—— 源表变了，请同步这条用例");
+                    return;
+                }
+
+                File.WriteAllText(achievementPath, text.Replace(before, after));
+
+                QuestTables dirty;
+                string dirtyError;
+
+                bool dirtyOk = QuestTables.TryLoad(tempDir, out dirty, out dirtyError);
+
+                Check("§25 加载校验·阴性⭐：条件被任务+成就共用 ⇒ `TryLoad` **失败**",
+                    !dirtyOk, "居然成功了 —— 共用条件会**丢更新**，必须在加载时就挡住");
+
+                Check("§25 加载校验·阴性⭐：报错**点名**那个条件编号（4005）",
+                    !dirtyOk && dirtyError.Contains("4005"),
+                    "报错里没有 4005：" + dirtyError);
+
+                Check("§25 加载校验·阴性：报错说清了**为什么**（丢更新 / 写回缓存）",
+                    !dirtyOk && (dirtyError.Contains("丢更新") || dirtyError.Contains("缓存")),
+                    "报错没说原因：" + dirtyError);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, true); } catch { /* 删不掉不影响结论 */ }
+            }
+        }
+
+        /// <summary>假的任务状态存放处：**跨"重启"共用同一份 backing**（模拟库）。</summary>
+        private sealed class FakeQuestStateStore : IQuestStateStore
+        {
+            /// <summary>模拟"库"（多个实例共用同一份 = 同一个玩家同一张表）。</summary>
+            private readonly Dictionary<int, int> _backing;
+
+            /// <summary>内存里的权威值。</summary>
+            private readonly Dictionary<int, int> _memory = new Dictionary<int, int>();
+
+            /// <summary>脏键。</summary>
+            private readonly HashSet<int> _dirty = new HashSet<int>();
+
+            /// <summary>造一个。</summary>
+            /// <param name="backing">模拟库。</param>
+            public FakeQuestStateStore(Dictionary<int, int> backing)
+            {
+                _backing = backing;
+            }
+
+            /// <summary>读盘次数（证明真的读了）。</summary>
+            public int LoadCount { get; private set; }
+
+            /// <inheritdoc/>
+            public int DirtyCount { get { return _dirty.Count; } }
+
+            /// <inheritdoc/>
+            public EQuestStage GetState(int questId)
+            {
+                int v;
+                return _memory.TryGetValue(questId, out v) ? (EQuestStage)v : EQuestStage.None;
+            }
+
+            /// <inheritdoc/>
+            public void SetState(int questId, EQuestStage state)
+            {
+                _memory[questId] = (int)state;
+                _dirty.Add(questId);
+            }
+
+            /// <inheritdoc/>
+            public Task<int> LoadAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                LoadCount++;
+                _memory.Clear();
+
+                foreach (KeyValuePair<int, int> pair in _backing)
+                {
+                    _memory[pair.Key] = pair.Value;
+                }
+
+                return Task.FromResult(_backing.Count);
+            }
+
+            /// <inheritdoc/>
+            public Task<int> FlushAsync(CancellationToken cancellationToken = default(CancellationToken))
+            {
+                int written = 0;
+
+                foreach (int key in _dirty)
+                {
+                    _backing[key] = _memory[key];
+                    written++;
+                }
+
+                _dirty.Clear();
+                return Task.FromResult(written);
+            }
+
+            /// <inheritdoc/>
+            public string DescribeFlushStats()
+            {
+                return "假任务状态：脏 " + _dirty.Count;
+            }
+
+            /// <inheritdoc/>
+            public void Dispose()
+            {
+            }
+        }
+
+        /// <summary>
+        /// ⚠️ **"刚交付"与"重启读盘后"两条路径必须一致**（§二十五的最有价值的一条）。
+        ///
+        /// <para>不注销条件时：刚交付 ⇒ 条件**还登记着**（之后每次击杀还喂给它）；
+        /// 重启读盘后 ⇒ `LoadThenRegisterAsync` 跳过 `Submitted` ⇒ **不登记**。
+        /// 同一个玩家状态，行为取决于"服务端有没有重启过" —— 而 `TrackedConditionCount`
+        /// 正是这条不变式的**可观测形式**。</para>
+        ///
+        /// <para>📌 判据必须是"**两边相等**"：只测一边**测不出**这个 bug。</para>
+        /// </summary>
+        private static void Quest_SubmitUnregisters_SoBothPathsAgree()
+        {
+            QuestTables tables = LoadQuestTables();
+
+            var backing = new Dictionary<int, int>();       // 模拟库（跨"重启"共用）
+            var progress = new FakeProgressStore();
+            var ledger = new FakeRewardLedger();
+
+            using (var first = new QuestAuthority(tables, _ => progress, _ => ledger,
+                                                  _ => new FakeQuestStateStore(backing)))
+            {
+                Task loading;
+                first.Track(1, "爱丽丝", out loading);
+
+                if (loading != null)
+                {
+                    loading.GetAwaiter().GetResult();
+                }
+
+                Check("§25 注销不变式：登录后还没接任务 ⇒ 登记 0 条条件",
+                    first.TrackedConditionCount == 0, "实际 " + first.TrackedConditionCount);
+
+                string reason;
+                bool accepted = first.Accept(1, 3003, out reason);
+
+                Check("§25 注销不变式：接取 3003 成功", accepted, reason);
+
+                int afterAccept = first.TrackedConditionCount;
+
+                Check("§25 注销不变式：接取后**登记数上升**（说明条件真的登记了）",
+                    afterAccept > 0, "接取后 " + afterAccept + "（本用例靠这个数才有意义）");
+
+                first.ApplyFact(new ProgressFact(1, NBC.Shared.Condition.EConditionEvent.KillMonster, 6003, 1));
+
+                bool submitted = first.Submit(1, 3003, out reason);
+
+                Check("§25 注销不变式：条件打满后**交付成功**", submitted, reason);
+
+                int afterSubmit = first.TrackedConditionCount;
+
+                Check("§25 注销不变式⭐：交付后**登记数下降**（条件已注销）",
+                    afterSubmit < afterAccept,
+                    "交付前 " + afterAccept + " → 交付后 " + afterSubmit);
+
+                // ---- 模拟重启：新权威 + **全新的状态 store**（从同一份 backing 读回来）----
+                var secondState = new FakeQuestStateStore(backing);
+
+                using (var second = new QuestAuthority(tables, _ => progress, _ => ledger, _ => secondState))
+                {
+                    Task loading2;
+                    second.Track(1, "爱丽丝", out loading2);
+
+                    if (loading2 != null)
+                    {
+                        loading2.GetAwaiter().GetResult();
+                    }
+
+                    Check("§25 注销不变式：重启后**真的读了库**（不是空跑）",
+                        secondState.LoadCount > 0, "LoadCount=" + secondState.LoadCount);
+
+                    Check("§25 注销不变式⭐：**重启读盘后**的登记数 == 未重启时交付后的登记数",
+                        second.TrackedConditionCount == afterSubmit,
+                        "未重启交付后 " + afterSubmit + " vs 重启后 " + second.TrackedConditionCount +
+                        "（两边不等 = 两条路径行为不一致）");
+                }
+            }
+        }
+
         private static QuestTables LoadQuestTables()
         {
             string dir;

@@ -120,6 +120,10 @@ namespace NBC.DbProbe
             await RewardPayoutSection().ConfigureAwait(false);
 
             Console.WriteLine();
+            Console.WriteLine("【十一】M4-S3 §二十五：**任务状态机**（接取 → 进度 → 交付 → 重启 → 幂等）");
+            await QuestStateSection().ConfigureAwait(false);
+
+            Console.WriteLine();
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有失败");
             return s_failed == 0 ? 0 : 1;
@@ -2111,6 +2115,319 @@ namespace NBC.DbProbe
                     "还剩进度 " + await CountProgressAsync(factory, playerId).ConfigureAwait(false) +
                     " 条、台账 " + await CountLedgerAsync(factory, playerId).ConfigureAwait(false) + " 条");
             }
+        }
+
+        /// <summary>
+        /// 【十一】M4-S3 §二十五：**任务状态机**端到端（真库）。
+        ///
+        /// <para>接取 → 打怪进度涨 → 条件全满 ⇒ Completed → 交付 ⇒ **发奖（exp/gold 真的加）**
+        /// → 重启后状态还在 → 再交付一次**不重复发奖**。</para>
+        ///
+        /// <para>⚠️ W18：改过的状态**先记后还原**；判据是"**连跑两次值不变**"。
+        /// 这一节会真改 `player_profile.exp/gold`、`quest_state`、`condition_progress`、
+        /// `reward_granted` 四张表，`finally` 里按快照还原并**断言还原到位**。</para>
+        /// </summary>
+        private static async Task QuestStateSection()
+        {
+            var options = new DatabaseOptions();
+            options.ApplyPasswordFromEnvironment();
+
+            if (string.IsNullOrEmpty(options.Password))
+            {
+                Console.WriteLine("  ⏭️  **跳过**（没给数据库密码）—— 同【二】。");
+                return;
+            }
+
+            var factory = new DbConnectionFactory(options);
+            PingResult ping = await factory.PingAsync().ConfigureAwait(false);
+
+            if (!ping.Ok)
+            {
+                Console.WriteLine("  ⏭️  连不上，跳过。");
+                return;
+            }
+
+            QuestTables tables = LoadQuestTables();
+            const long playerId = 1;
+            const int questId = 3003;       // 条件 4005（KillMonster 6003 ×1），奖励 5003
+
+            OwnerRow? quest = tables.FindQuest(questId);
+
+            if (quest == null || quest.RewardId == 0)
+            {
+                Check("任务状态：任务 3003 读得到且带奖励", false, "读不到 3003 或它没有奖励");
+                return;
+            }
+
+            RewardRow? reward = tables.FindReward(quest.RewardId);
+
+            if (reward == null)
+            {
+                Check("任务状态：奖励 " + quest.RewardId + " 读得到", false, "读不到奖励");
+                return;
+            }
+
+            // ---- ⓵ 快照（先记后还原）----
+            ExpGold before = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+            int? stateBefore = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+            Console.WriteLine("      · 前置：player 1 exp=" + before.exp + " gold=" + before.gold +
+                              "；任务 3003 状态=" + (stateBefore.HasValue ? stateBefore.Value.ToString() : "（没有行）") +
+                              "；奖励 " + quest.RewardId + " = exp +" + reward.Exp + " / gold +" + reward.Gold);
+
+            await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+            await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+            await ClearQuestStateAsync(factory, playerId).ConfigureAwait(false);
+
+            int afterSubmitCount = -1;
+            int afterRestartCount = -2;
+
+            try
+            {
+                using (var authority = NewQuestAuthority(tables, factory, out _))
+                {
+                    Task? loading;
+                    authority.Track(playerId, "测试玩家一", out loading);
+
+                    if (loading != null)
+                    {
+                        await loading.ConfigureAwait(false);
+                    }
+
+                    // ---- ⓶ 接取 ⇒ Accepted ----
+                    string reason;
+
+                    Check("真库⭐：接取 3003 成功", authority.Accept(playerId, questId, out reason), reason);
+
+                    // ⚠️ **必须冲库再读**：状态是**写回缓存**（`CachingQuestStateStore`），
+                    //    `Accept` 只改内存 + 标脏。不冲库去读库，读到的是"上一版"——
+                    //    第一版就是这么写的，两条检查当场红了，而**红的是我的读法不是产品**。
+                    await authority.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    int? state = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+                    Check("真库⭐：`quest_state` 落了 Accepted（=1）", state == 1, "读到 " + DescribeState(state));
+
+                    // ---- ⓷ 喂事实 ⇒ Completed ----
+                    authority.ApplyFact(new ProgressFact(playerId, EConditionEvent.KillMonster, 6003, 1));
+
+                    await authority.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    state = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+                    Check("真库⭐：条件打满 ⇒ 状态走到 Completed（=2）", state == 2, "读到 " + DescribeState(state));
+
+                    // ---- ⓸ 交付 ⇒ Submitted + 发奖 ----
+                    Check("真库⭐：交付 3003 成功", authority.Submit(playerId, questId, out reason), reason);
+
+                    await authority.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    state = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+                    Check("真库⭐：`quest_state.state` = Submitted（=3）", state == 3, "读到 " + DescribeState(state));
+
+                    int? granted = await ReadQuestGrantedCountAsync(factory, playerId, questId).ConfigureAwait(false);
+
+                    Check("真库⭐：`reward_granted` 里有**任务**那一行（owner_kind=1）",
+                        granted == 1, "读到 " + (granted.HasValue ? granted.Value.ToString() : "0") + " 行");
+
+                    ExpGold paid = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+                    Check("真库⭐：交付后 `player_profile.exp` **真的加了**",
+                        paid.exp - before.exp == reward.Exp,
+                        "exp " + before.exp + " → " + paid.exp + "（期望 +" + reward.Exp + "）");
+
+                    Check("真库⭐：交付后 `gold` **也真的加了**",
+                        paid.gold - before.gold == reward.Gold,
+                        "gold " + before.gold + " → " + paid.gold + "（期望 +" + reward.Gold + "）");
+
+                    // ---- ⓹ 再交付一次 ⇒ 幂等，不重复发 ----
+                    Check("真库：重复交付**被当成成功**（幂等语义）",
+                        authority.Submit(playerId, questId, out reason), reason);
+
+                    await authority.FlushAllAsync(3000).ConfigureAwait(false);
+
+                    ExpGold again = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+
+                    Check("真库⭐：重复交付后 exp/gold **一点没变**（不重复发奖）",
+                        again.exp == paid.exp && again.gold == paid.gold,
+                        "exp " + paid.exp + " → " + again.exp + "；gold " + paid.gold + " → " + again.gold);
+
+                    afterSubmitCount = authority.TrackedConditionCount;
+                }
+
+                // ---- ⓺ 模拟重启：新权威 + **全新的三个 store**（重新从库里读）----
+                using (var restarted = NewQuestAuthority(tables, factory, out _))
+                {
+                    Task? loading2;
+                    restarted.Track(playerId, "测试玩家一", out loading2);
+
+                    if (loading2 != null)
+                    {
+                        await loading2.ConfigureAwait(false);
+                    }
+
+                    int? state = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+                    Check("真库⭐：**重启后** `quest_state` 还在，且仍是 Submitted",
+                        state == 3, "读到 " + DescribeState(state));
+
+                    afterRestartCount = restarted.TrackedConditionCount;
+
+                    Check("真库⭐：**重启前后登记数相等**（「刚交付」与「读盘后」两条路径一致）",
+                        afterRestartCount == afterSubmitCount,
+                        "未重启交付后 " + afterSubmitCount + " vs 重启后 " + afterRestartCount +
+                        "（不等 = 行为取决于服务端有没有重启过）");
+                }
+
+                // ---- ⓻ 游客（负 id）不写库 ----
+                using (var guest = NewQuestAuthority(tables, factory, out _))
+                {
+                    Task? loading3;
+                    guest.Track(-777, "游客", out loading3);
+
+                    if (loading3 != null)
+                    {
+                        await loading3.ConfigureAwait(false);
+                    }
+
+                    guest.ApplyFact(new ProgressFact(-777, EConditionEvent.KillMonster, 6003, 5));
+                    await guest.FlushAllAsync(3000).ConfigureAwait(false);
+                }
+
+                int? guestState = await ReadQuestStateAsync(factory, -777, questId).ConfigureAwait(false);
+
+                Check("真库：游客（负 id）**一条都没写**（没档案 ⇒ 悬挂外键也进不去）",
+                    guestState == null, "居然写了 " + DescribeState(guestState));
+            }
+            finally
+            {
+                // ---- 收尾：按快照还原（W18）----
+                await ClearProgressAsync(factory, playerId).ConfigureAwait(false);
+                await ClearLedgerAsync(factory, playerId).ConfigureAwait(false);
+                await ClearQuestStateAsync(factory, playerId).ConfigureAwait(false);
+                await RestoreExpGoldAsync(factory, playerId, before.exp, before.gold).ConfigureAwait(false);
+
+                if (stateBefore.HasValue)
+                {
+                    await UpsertQuestStateAsync(factory, playerId, questId, stateBefore.Value).ConfigureAwait(false);
+                }
+            }
+
+            // ---- ⓼ 还原到位 + "连跑两次值不变" ----
+            ExpGold restored = await ReadExpGoldAsync(factory, playerId).ConfigureAwait(false);
+            int? stateRestored = await ReadQuestStateAsync(factory, playerId, questId).ConfigureAwait(false);
+
+            Check("真库⭐：收尾还原后 exp/gold 与快照一致（W18：下次再跑数值不变）",
+                restored.exp == before.exp && restored.gold == before.gold,
+                "exp " + before.exp + " → " + restored.exp + "；gold " + before.gold + " → " + restored.gold);
+
+            Check("真库：收尾还原后 `quest_state` 与快照一致",
+                Nullable.Equals(stateRestored, stateBefore),
+                "快照 " + DescribeState(stateBefore) + " → 还原后 " + DescribeState(stateRestored));
+        }
+
+        /// <summary>造一个**接了真库**的任务权威（每个会话一套，用来模拟重启）。</summary>
+        /// <param name="tables">四张表。</param>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="notes">收到的说明（断言用）。</param>
+        /// <returns>任务权威。</returns>
+        private static QuestAuthority NewQuestAuthority(
+            QuestTables tables, DbConnectionFactory factory, out List<string> notes)
+        {
+            var collected = new List<string>();
+
+            // ⚠️ 三个工厂都建**新的** store ⇒ 这就是"重启"（重新从库里读，内存里什么都没有）
+            var authority = new QuestAuthority(
+                tables,
+                pid => new CachingConditionProgressStore(new ConditionProgressDao(factory), pid),
+                pid => new MySqlRewardLedger(new RewardLedgerDao(factory), pid),
+                pid => new CachingQuestStateStore(new QuestStateDao(factory), pid));
+
+            authority.Note += line => collected.Add(line);
+            notes = collected;
+
+            return authority;
+        }
+
+        /// <summary>读一个玩家的某个任务状态（没有这一行时返回 null）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>状态数字；没有行时 null。</returns>
+        private static async Task<int?> ReadQuestStateAsync(
+            DbConnectionFactory factory, long playerId, int questId)
+        {
+            const string sql =
+                "SELECT `state` FROM `quest_state` WHERE `player_id` = @playerId AND `quest_id` = @questId";
+
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.QueryFirstOrDefaultAsync<int?>(
+                    new CommandDefinition(sql, new { playerId, questId }, commandTimeout: 30)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>读一个玩家的某个任务发了奖没有（`owner_kind = 1` = 任务）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>行数。</returns>
+        private static async Task<int?> ReadQuestGrantedCountAsync(
+            DbConnectionFactory factory, long playerId, int questId)
+        {
+            const string sql =
+                "SELECT COUNT(*) FROM `reward_granted` " +
+                "WHERE `player_id` = @playerId AND `owner_kind` = 1 AND `owner_id` = @questId";
+
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.QuerySingleAsync<int>(
+                    new CommandDefinition(sql, new { playerId, questId }, commandTimeout: 30)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>清掉一个玩家的任务状态（收尾用）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <returns>删了几行。</returns>
+        private static async Task<int> ClearQuestStateAsync(DbConnectionFactory factory, long playerId)
+        {
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition("DELETE FROM `quest_state` WHERE `player_id` = @playerId",
+                                          new { playerId }, commandTimeout: 30)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>把一行任务状态写回去（**还原快照**用）。</summary>
+        /// <param name="factory">连接工厂。</param>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="state">状态。</param>
+        /// <returns>影响行数。</returns>
+        private static async Task<int> UpsertQuestStateAsync(
+            DbConnectionFactory factory, long playerId, int questId, int state)
+        {
+            const string sql =
+                "INSERT INTO `quest_state` (`player_id`, `quest_id`, `state`) VALUES (@playerId, @questId, @state) " +
+                "ON DUPLICATE KEY UPDATE `state` = VALUES(`state`)";
+
+            using (var connection = await factory.OpenAsync().ConfigureAwait(false))
+            {
+                return await connection.ExecuteAsync(
+                    new CommandDefinition(sql, new { playerId, questId, state }, commandTimeout: 30))
+                    .ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>状态的一句话（日志/断言用）。</summary>
+        /// <param name="state">状态数字（可空）。</param>
+        /// <returns>文案。</returns>
+        private static string DescribeState(int? state)
+        {
+            return state.HasValue ? state.Value.ToString() : "（没有这一行）";
         }
 
         /// <summary>造一个**接了真库**的权威（每个会话一套，用来模拟重启）。</summary>
