@@ -253,6 +253,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【三十】M4-S4 S4-d 收尾：**真实路径**（假 ITRANSPORT 驱真 NetSession）上的胜负复算");
             NetSession_MatchResultPath();
 
+            Console.WriteLine();
+            Console.WriteLine("【三十一】M4-S4 S4-e：锁步世界 → `WorldSnapshot` 适配器（喂真 `SnapshotView`）");
+            LockstepSnapshotAdapter_Checks();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5871,6 +5875,90 @@ namespace NBC.NetProbe
 
             session.Dispose();
             lonelySession.Dispose();
+        }
+
+        /// <summary>
+        /// 【三十一】锁步世界 → `WorldSnapshot` 的适配器（S4-e 第 ② 件，**纯转换 ⇒ 可直驱验**）。
+        ///
+        /// <para>⭐ 最强的一条：把它喂给**真的 `SnapshotView`** ⇒ 证明**两种模式共用同一套渲染**是通的。</para>
+        /// </summary>
+        private static void LockstepSnapshotAdapter_Checks()
+        {
+            var world = new WorldState();
+            world.Add(1, new FixVector3(1, 0, 2), 100);      // 「我」（玩家 1）
+            world.Add(2, new FixVector3(-1, 0, 3), 0);       // 已死
+            world.SetTick(5);
+
+            var adapter = new NBC.Game.Net.LockstepSnapshotAdapter();
+            var snapshot = new WorldSnapshot();
+
+            bool ok = adapter.ApplyTo(world, 7, 1, snapshot);
+
+            Check("§S4e⭐ 转换成功 + 实体数对得上",
+                ok && snapshot.Entities.Count == 2 && adapter.LastFrame == 7,
+                "ok=" + ok + "；实体=" + snapshot.Entities.Count);
+
+            int alive = 0;
+
+            for (int i = 0; i < snapshot.Entities.Count; i++)
+            {
+                if (snapshot.Entities[i].Alive)
+                {
+                    alive++;
+                }
+            }
+
+            Check("§S4e⭐：**存活标记**按 `Hp > 0` 算（活 1 / 死 1）",
+                alive == 1, "活着=" + alive);
+
+            EntitySnapshot me = null;
+            EntitySnapshot other = null;
+
+            for (int i = 0; i < snapshot.Entities.Count; i++)
+            {
+                if (snapshot.Entities[i].EntityId == 1) { me = snapshot.Entities[i]; }
+                if (snapshot.Entities[i].EntityId == 2) { other = snapshot.Entities[i]; }
+            }
+
+            Check("§S4e⭐ **`owner_player_id`**：我的实体带我的编号、别人的是 0（猜错会「操纵别人的角色」）",
+                me != null && other != null && me.OwnerPlayerId == 1 && other.OwnerPlayerId == 0,
+                me == null || other == null ? "缺实体" : ("我=" + me.OwnerPlayerId + " 他=" + other.OwnerPlayerId));
+
+            Check("§S4e⭐：**位置从「米（定点）」换成「毫米（整数）」**、不引浮点（1 米 ⇒ 1000）",
+                me != null && me.PosXMm == 1000 && me.PosZMm == 2000 && other != null && other.PosXMm == -1000,
+                me == null ? "缺实体" : ("我 X=" + me.PosXMm + " Z=" + me.PosZMm));
+
+            Check("§S4e：血量/上限逐项带过来",
+                me != null && me.Hp == 100 && me.MaxHp == 100 && other != null && other.Hp == 0,
+                me == null ? "缺实体" : ("我 hp=" + me.Hp + "/" + me.MaxHp));
+
+            // ⭐ 喂给**真的 `SnapshotView`** ⇒ 证明「两模式共用一套渲染」是通的
+            var view = new NBC.Game.Net.SnapshotView();
+            view.Apply(snapshot);
+
+            Check("§S4e⭐ **喂给真 `SnapshotView`**：被接受（`Applied == 1`、**没被当过过期丢掉**）",
+                view.Applied == 1 && view.StaleIgnored == 0 && view.EntityCount == 2 &&
+                view.AliveCount == 1 && view.ServerTick == 7,
+                "Applied=" + view.Applied + " Stale=" + view.StaleIgnored +
+                " 实体=" + view.EntityCount + " 帧=" + view.ServerTick);
+
+            // ⭐ 帧号**不递增** ⇒ 必须被我自己挡下（否则会被 `SnapshotView` 静静丢掉 ⇒ 假故障）
+            bool again = adapter.ApplyTo(world, 7, 1, snapshot);
+
+            Check("§S4e⭐ **帧号不递增会被挡下**（重复帧 ⇒ false + 计数涨；不挡就会被渲染静静丢掉）",
+                !again && adapter.NonMonotonicBlocked == 1 && adapter.LastFrame == 7,
+                "返回=" + again + "；挡下=" + adapter.NonMonotonicBlocked);
+
+            // 阳性对照：空世界 ⇒ 不炸、清空
+            var emptyAdapter = new NBC.Game.Net.LockstepSnapshotAdapter();
+            var emptySnapshot = new WorldSnapshot();
+            emptySnapshot.Entities.Add(new EntitySnapshot { EntityId = 99 });
+
+            bool emptyOk = emptyAdapter.ApplyTo(null, 1, 1, emptySnapshot);
+
+            Check("§S4e：阳性对照 —— **空世界 ⇒ 不炸**、且把目标清空（`EntityCount == 0`）",
+                emptyOk && emptySnapshot.Entities.Count == 0,
+                "ok=" + emptyOk + "；实体=" + emptySnapshot.Entities.Count);
         }
 
         private static QuestTables LoadQuestTables()
