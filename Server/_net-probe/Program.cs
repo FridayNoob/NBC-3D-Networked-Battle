@@ -4623,6 +4623,40 @@ namespace NBC.NetProbe
 
                 Check("§S4c2：**单飞闸一次都没挡**（主循环单线程 ⇒ 正常应恒为 0）",
                     service.GuardBlocked == 0, "GuardBlocked=" + service.GuardBlocked + "；" + service.Describe());
+
+                // ================================================================
+                //  开局实体表那个**纯函数**（`LockstepRoster.Build`，在共享层 ⇒ 能在这里验）
+                // ================================================================
+                var messy = new List<long> { 42, 7, 7, 0, -3, 19 };
+                List<SimEntity> built = LockstepRoster.Build(messy);
+
+                Check("§S4c3⭐ 实体表：**按 id 升序** + **非正数跳过** + **重号去重**（42,7,7,0,-3,19 ⇒ 7/19/42）",
+                    built.Count == 3 && built[0].Id == 7 && built[1].Id == 19 && built[2].Id == 42,
+                    "条数 " + built.Count +
+                    (built.Count > 0 ? ("；首个 id=" + built[0].Id) : ""));
+
+                Check("§S4c3：出生点按**排序后的序号**分配（第一个人永远在槽位 0）",
+                    built.Count == 3 &&
+                    built[0].Position.X.RawValue == SpawnLayout.PointAt(0).X.RawValue &&
+                    built[0].Position.Z.RawValue == SpawnLayout.PointAt(0).Z.RawValue &&
+                    built[1].Position.X.RawValue == SpawnLayout.PointAt(1).X.RawValue,
+                    built.Count == 0 ? "空" : ("第 0 个 X=" + built[0].Position.X.ToDouble()));
+
+                // ⭐ 顺序无关：同一批成员**反过来**给
+                var forward = new List<long> { -3, 19, 7, 0, 42 };
+                List<SimEntity> built2 = LockstepRoster.Build(forward);
+
+                Check("§S4c3⭐ **顺序无关**：反过来给同一批成员 ⇒ 逐字段相同（id 与出生点都一致）",
+                    built.Count == built2.Count && built.Count == 3 &&
+                    built[0].Id == built2[0].Id && built[1].Id == built2[1].Id && built[2].Id == built2[2].Id &&
+                    built[0].Position.X.RawValue == built2[0].Position.X.RawValue &&
+                    built[2].Position.Z.RawValue == built2[2].Position.Z.RawValue,
+                    "条数 " + built.Count + " vs " + built2.Count);
+
+                Check("§S4c3：血量/上限/冷却都来自**共享常量**（两端同一个值 ⇒ 第 0 帧哈希才可能相同）",
+                    built.Count == 3 && built[0].Hp == SpawnLayout.SpawnHp &&
+                    built[0].MaxHp == SpawnLayout.SpawnHp && built[0].AttackReadyTick == 0,
+                    built.Count == 0 ? "空" : ("hp=" + built[0].Hp + " max=" + built[0].MaxHp));
             }
         }
 
@@ -5925,6 +5959,10 @@ namespace NBC.NetProbe
 
             s_failed++;
             Console.WriteLine("  ❌ " + name + "   —— " + detail);
+
+            // ⭐ ASCII 标记（控制台把 ✅/❌ 吐成 `?` 时靠它抓）：
+            //    `[FAIL] <检查名>`。**全绿时一行都不该出现** —— 否则这个标记本身就是噪音。
+            Console.WriteLine("[FAIL] " + name);
         }
 
         /// <summary>两段字节是否相同。</summary>
