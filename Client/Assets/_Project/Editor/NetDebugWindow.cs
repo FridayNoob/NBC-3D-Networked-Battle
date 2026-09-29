@@ -175,6 +175,9 @@ namespace NBC.EditorTools
         /// <summary>任务面板已经接到哪个联网会话上（换了会话就要重接；见 `WireQuestPanelToServer`）。</summary>
         private NetSession m_questWiredSession;
 
+        /// <summary>§二十八：把"跟随权威"施加到本地任务运行时的出口（只改状态）。</summary>
+        private RuntimeQuestFollowSink m_questFollowSink;
+
         /// <summary>真面板用的**同一个视图模型**（`QuestPanel` 也用它）—— 窗口与面板一套逻辑。</summary>
         private QuestPanelModel m_questModel;
 
@@ -340,6 +343,9 @@ namespace NBC.EditorTools
             //     面板退回本地判断并标「（本地预测）」。
             m_questModel.StateAuthority = new NetSessionQuestStateAuthority(m_session);
 
+            // ①″ §二十八：本地状态机**跟随**权威的出口（只改状态：不发奖/不重置/不提示）
+            m_questFollowSink = new RuntimeQuestFollowSink(m_questSession.Quests);
+
             // ② 服务端表态（无论"接了""已交付"还是"没接过"）⇒ 清掉「待确认」
             m_session.QuestStateReceived += sync =>
             {
@@ -347,6 +353,9 @@ namespace NBC.EditorTools
                 {
                     m_questModel.ClearPending(sync.Entries[i].QuestId);
                 }
+
+                // §二十八：本地状态机也跟着走（决策是引擎无关的纯逻辑，见 `QuestStateReconciler`）
+                FollowLocalQuestState(sync);
             };
 
             // ③ 被拒 ⇒ 落定 + 原因原文（错误包里没有任务编号 ⇒ 只能一起落定，见 `FailAllPending`）
@@ -365,6 +374,48 @@ namespace NBC.EditorTools
             };
 
             AddLog("[任务] 面板已接到联网会话：点「接取 / 交付」会发给服务端（本地不再自己改状态）");
+        }
+
+        /// <summary>
+        /// §二十八：**本地状态机跟随权威** —— 服务端那份状态 ⇒ 本地该做什么。
+        /// <para>⚠️ 决策在 `QuestStateReconciler`（引擎无关、探针能跑能变异）；这里只负责
+        /// 喂数据与施加，**不自己判断**。</para>
+        /// <para>⚠️ 只跟随**同步里出现的**任务；"全量表里没有它"= 未接取，由面板分区去表达
+        /// （见 `QuestStateReconciler.Plan` 的注释）—— 这里不越权发明任务。</para>
+        /// </summary>
+        /// <param name="sync">服务端发来的全量任务状态。</param>
+        private void FollowLocalQuestState(QuestStateSync sync)
+        {
+            if (m_questSession == null || m_questFollowSink == null || sync == null)
+            {
+                return;
+            }
+
+            // 输入：同步里每条 = 「任务编号 + 服务端状态」
+            //（`QuestSectionPlanner.Entry.LocalState` 那一栏在这里装的是**服务端**状态 —— 见 Plan 的注释）
+            var entries = new List<QuestSectionPlanner.Entry>(sync.Entries.Count);
+
+            for (int i = 0; i < sync.Entries.Count; i++)
+            {
+                entries.Add(new QuestSectionPlanner.Entry(sync.Entries[i].QuestId, sync.Entries[i].State));
+            }
+
+            List<QuestSyncDecision> plan = QuestStateReconciler.Plan(
+                entries,
+                questId => (int)m_questSession.Quests.StateOf(questId),
+                questId => m_questModel != null && m_questModel.IsPending(questId));
+
+            if (plan.Count == 0)
+            {
+                return;
+            }
+
+            int applied = QuestStateReconciler.Apply(plan, m_questFollowSink);
+
+            if (applied > 0)
+            {
+                AddLog("[任务] 本地状态跟随权威：" + applied + " 个任务（只改状态：不发奖/不重置/不提示）");
+            }
         }
 
         private static int FirstHeroId()

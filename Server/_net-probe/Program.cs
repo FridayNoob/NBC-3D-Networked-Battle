@@ -206,6 +206,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【十九】M4-S3 §二十七：面板**分桶**（不丢行不变式 + 三值语义；纯逻辑，不碰库）");
             QuestSectionPlanner_BucketsAndNeverLosesRows();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十】M4-S3 §二十八：**本地跟随权威**（幂等 / 不回路 / 无副作用；纯逻辑）");
+            QuestStateReconciler_FollowsAuthorityWithoutSideEffects();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -3560,6 +3564,109 @@ namespace NBC.NetProbe
 
             Check("§27⭐ **不丢行**：并集 == 输入集合（5 个任务一个不少）",
                 allPresent, "缺了任务（见上面两个逐号检查）");
+        }
+
+        /// <summary>
+        /// 记录"跟随"调用的假出口（§二十八）。
+        /// <para>⚠️ **它故意只记"跟随到哪"，没有任何发送能力** —— 这正是"不许回路"的结构性保证。</para>
+        /// </summary>
+        private sealed class FollowSink : IQuestFollowSink
+        {
+            /// <summary>每次跟随的参数（任务号, 状态）。</summary>
+            public readonly List<string> Calls = new List<string>();
+
+            /// <inheritdoc/>
+            public void FollowToState(int questId, int state)
+            {
+                Calls.Add(questId + "→" + state);
+            }
+        }
+
+        /// <summary>
+        /// 【二十】本地跟随权威（§二十八）。
+        ///
+        /// <para>⚠️ 这一节盯的是三条**静默**错误（都不会报错，只会让本地与服务端长期对不上）：</para>
+        /// <list type="number">
+        ///   <item><description>**不许把服务端状态当成本地操作** ⇒ 跟随只改状态，没有副作用
+        ///   （出口 `IQuestFollowSink` **没有**发奖/重置/提示，也没有发请求）</description></item>
+        ///   <item><description>**幂等** ⇒ 同一份同步施加两次，第二次 `Apply` 必须返回 0</description></item>
+        ///   <item><description>**不许回路** ⇒ 跟随路径上**没有任何发送**（结构性：接口上没有那个方法）</description></item>
+        /// </list>
+        /// </summary>
+        private static void QuestStateReconciler_FollowsAuthorityWithoutSideEffects()
+        {
+            // ---- ① 服务端说"已接取(1)"，本地是"未接取(0)" ⇒ 跟随到 1 ----
+            QuestSyncDecision adopt = QuestStateReconciler.Decide(3003, 1, 0, false);
+
+            Check("§28⭐：服务端说已接取 ⇒ 本地**跟随**到 1（Adopt）",
+                adopt.Action == EQuestSyncAction.Adopt && adopt.TargetState == 1,
+                "Action=" + adopt.Action + "；Target=" + adopt.TargetState);
+
+            // ---- ② 幂等：本地已经等于权威 ⇒ **什么都不做** ----
+            QuestSyncDecision same = QuestStateReconciler.Decide(3003, 1, 1, false);
+
+            Check("§28⭐ **幂等**：本地已等于权威 ⇒ `None`（重复下发**什么都不做**）",
+                same.Action == EQuestSyncAction.None,
+                "Action=" + same.Action + "（不是 None 就会「接取两次」且不报错）");
+
+            // ---- ③ 服务端**明确说未接取(0)**、本地接过 ⇒ **回退**（含往回退，取舍见文件头）----
+            QuestSyncDecision revert = QuestStateReconciler.Decide(3003, 0, 1, false);
+
+            Check("§28⭐：服务端**明确说未接取**而本地已接 ⇒ **回退**到 0（以服务端为准含往回退）",
+                revert.Action == EQuestSyncAction.Revert && revert.TargetState == 0,
+                "Action=" + revert.Action + "；Target=" + revert.TargetState);
+
+            // ---- ④ 请求在飞（待确认）⇒ **先别回退**（免得"刚点完就弹回去"）----
+            QuestSyncDecision pending = QuestStateReconciler.Decide(3003, 0, 1, true);
+
+            Check("§28：**请求在飞时不回退**（否则玩家刚点完就被弹回去，界面闪一下）",
+                pending.Action == EQuestSyncAction.None,
+                "Action=" + pending.Action);
+
+            // ---- ⑤ 离线/单机：没有权威 ⇒ 根本没有条目 ⇒ 一条决定都不产生 ----
+            var empty = new List<QuestSectionPlanner.Entry>();
+            List<QuestSyncDecision> none = QuestStateReconciler.Plan(empty, _ => 1, _ => false);
+
+            Check("§28：**离线/单机**（没有权威、同步为空）⇒ 一条决定都不产生（行为与以前逐字一致）",
+                none.Count == 0, "decisions=" + none.Count);
+
+            // ---- ⑥ 施加：只跟随、且**第二次是 0**（幂等到"施加"这一层）----
+            var entries = new List<QuestSectionPlanner.Entry>
+            {
+                new QuestSectionPlanner.Entry(3003, 1),     // 服务端说已接取
+                new QuestSectionPlanner.Entry(3004, 0),     // 服务端明确说未接取
+            };
+
+            // 本地：3003 未接、3004 已接 ⇒ 一个要 Adopt、一个要 Revert
+            var local = new Dictionary<int, int> { { 3003, 0 }, { 3004, 1 } };
+
+            List<QuestSyncDecision> plan = QuestStateReconciler.Plan(
+                entries, id => local.TryGetValue(id, out int s) ? s : 0, _ => false);
+
+            var sink = new FollowSink();
+            int applied = QuestStateReconciler.Apply(plan, sink);
+
+            Check("§28：阳性对照 —— 计划里真的有要做的事（否则下面全是空话）",
+                applied > 0, "applied=" + applied);
+
+            Check("§28⭐：跟随**只调 `FollowToState`**，而且参数就是权威状态（无副作用可言）",
+                sink.Calls.Count == applied &&
+                sink.Calls.Contains("3003→1") && sink.Calls.Contains("3004→0"),
+                "调用：" + string.Join("、", sink.Calls.ToArray()));
+
+            // 把本地更新到"跟随之后"的样子，再施加**同一份**同步 ⇒ 必须是 0（幂等）
+            local[3003] = 1;
+            local[3004] = 0;
+
+            List<QuestSyncDecision> plan2 = QuestStateReconciler.Plan(
+                entries, id => local.TryGetValue(id, out int s2) ? s2 : 0, _ => false);
+
+            var sink2 = new FollowSink();
+            int applied2 = QuestStateReconciler.Apply(plan2, sink2);
+
+            Check("§28⭐ **幂等（端到端）**：同一份同步施加第二次 ⇒ **0 次跟随**",
+                applied2 == 0 && sink2.Calls.Count == 0,
+                "applied2=" + applied2 + "；调用：" + string.Join("、", sink2.Calls.ToArray()));
         }
 
         private static QuestTables LoadQuestTables()

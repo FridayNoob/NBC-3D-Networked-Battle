@@ -209,13 +209,37 @@ namespace NBC.Game.Quest
                 return Reject(questId, blocked);
             }
 
-            // -------- 第一步：把全部条件都解析出来（**先校验，再登记**） --------
+            // 解析 + 登记（**先校验，再登记**）。接取要清零；"跟随权威"那条路不清零
+            // —— 两份实现迟早漂移，所以这里共用一个帮手（`resetProgress` 是开关）。
+            string reason = ResolveAndRegisterConditions(quest, questId, true);
+
+            if (reason != null)
+            {
+                return Reject(questId, reason);
+            }
+
+            m_states[questId] = EQuestState.Accepted;
+            m_active.Add(questId);
+
+            EventCenter.Instance.Trigger(QuestEvents.Accepted, questId);
+            return QuestActionResult.Success();
+        }
+
+        /// <summary>
+        /// 解析一个任务的全部条件并登记。**先全部校验、再统一登记**（校验失败时不留半截状态）。
+        /// </summary>
+        /// <param name="quest">任务（配置行）。</param>
+        /// <param name="questId">任务编号（报错文案用）。</param>
+        /// <param name="resetProgress">要不要清零进度（接取 = true；跟随权威 = false）。</param>
+        /// <returns>成功返回 null；失败返回一句人话原因（调用方决定是 `Reject` 还是静默放弃）。</returns>
+        private string ResolveAndRegisterConditions(Config_Quest quest, int questId, bool resetProgress)
+        {
             int[] conditionIds = quest.conditionIds;
 
             if (conditionIds == null || conditionIds.Length == 0)
             {
-                return Reject(questId, "任务 " + questId + " 在配置表里**一条条件都没有**。\n" +
-                                       "这种任务接了就永远做不完（没有任何东西能推进它），所以这里直接拒绝。");
+                return "任务 " + questId + " 在配置表里**一条条件都没有**。\n" +
+                       "这种任务接了就永远做不完（没有任何东西能推进它），所以这里直接拒绝。";
             }
 
             ConditionDef[] defs = new ConditionDef[conditionIds.Length];
@@ -226,8 +250,8 @@ namespace NBC.Game.Quest
 
                 if (!m_conditions.TryGet(conditionIds[i], out row))
                 {
-                    return Reject(questId, "任务 " + questId + " 的第 " + (i + 1) + " 条条件 " + conditionIds[i] +
-                                           " 在 QuestCondition 表里找不到。");
+                    return "任务 " + questId + " 的第 " + (i + 1) + " 条条件 " + conditionIds[i] +
+                           " 在 QuestCondition 表里找不到。";
                 }
 
                 ConditionDef def;
@@ -235,24 +259,100 @@ namespace NBC.Game.Quest
 
                 if (!ConditionDef.TryCreate(row.eventType, row.targetId, row.requiredCount, out def, out error))
                 {
-                    return Reject(questId, "任务 " + questId + " 的条件 " + conditionIds[i] + " 配置有错：" + error);
+                    return "任务 " + questId + " 的条件 " + conditionIds[i] + " 配置有错：" + error;
                 }
 
                 defs[i] = def;
             }
 
-            // -------- 第二步：统一登记 --------
             for (int i = 0; i < conditionIds.Length; i++)
             {
-                m_tracker.Register(conditionIds[i], defs[i], true);
+                m_tracker.Register(conditionIds[i], defs[i], resetProgress);
                 m_ownerOfCondition[conditionIds[i]] = questId;
             }
 
-            m_states[questId] = EQuestState.Accepted;
-            m_active.Add(questId);
+            return null;
+        }
 
-            EventCenter.Instance.Trigger(QuestEvents.Accepted, questId);
-            return QuestActionResult.Success();
+        /// <summary>
+        /// **跟随权威**：把本地这个任务的状态改成服务端说的那个（M4-S3 `Docs\27` §二十八）。
+        ///
+        /// <para>⚠️ 它**只改状态**，绝不做本地动作：**不发奖**、**不触发**「接取/交付成功」事件、
+        /// **不给玩家任何提示**、而且**不重置进度**（`resetProgress: false`）。
+        /// 那些都是服务端的事 —— 本地再做一遍就是"客户端自己当权威"（§二十一修掉的洞）。</para>
+        ///
+        /// <para>⚠️ **幂等**：本地已经等于目标状态就直接返回 0（"同一件事做两遍"是这一片要防的
+        /// 静默错误：不报错，只让玩家状态慢慢跑偏）。</para>
+        ///
+        /// <para>⚠️ 与 `Accept`/`Submit` 的关系：那两个是"**玩家动作**"（要清零/发奖/触发事件），
+        /// 这个是"**追随权威**"（只对齐状态）。别用它去顶替玩家动作。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="authoritativeState">服务端说的状态：1=已接 2=已完成 3=已交付；**0=回退成未接取**。</param>
+        /// <returns>真的改变了本地状态返回 1；已经一致、或本地没这个任务返回 0。</returns>
+        public int FollowState(int questId, int authoritativeState)
+        {
+            EnsureNotDisposed();
+
+            Config_Quest quest;
+
+            if (!m_quests.TryGet(questId, out quest))
+            {
+                return 0;       // 本地配置表里没有 ⇒ 什么都不做（**不许猜**）
+            }
+
+            EQuestState target = ToState(authoritativeState);
+            EQuestState current = StateOf(questId);
+
+            if (target == current)
+            {
+                return 0;       // ⚠️ 幂等：这一条就是"同一份同步施加两次 ⇒ 0 次跟随"的保证
+            }
+
+            if (target == EQuestState.None)
+            {
+                // 回退：**只**改状态 + 注销条件登记，**不动进度行**（与"放弃任务没做"同源，见 §28）
+                UnregisterConditions(quest);
+                m_states[questId] = EQuestState.None;
+                m_active.Remove(questId);
+                return 1;
+            }
+
+            if (current == EQuestState.None)
+            {
+                // 从"没接过"往上跟随：条件要登记，但**绝不清零**（进度按服务端那份算）
+                if (ResolveAndRegisterConditions(quest, questId, false) != null)
+                {
+                    return 0;   // 配置有问题 ⇒ 静默不跟随（**不触发 Rejected 事件**，那也是一种副作用）
+                }
+
+                m_active.Add(questId);
+            }
+
+            m_states[questId] = target;
+
+            if (target == EQuestState.Submitted)
+            {
+                // 与 `Submit` 的收尾一致（注销条件、移出进行中），但**不发奖、不触发事件**
+                m_active.Remove(questId);
+                UnregisterConditions(quest);
+            }
+
+            return 1;
+        }
+
+        /// <summary>把协议里的状态数字翻成枚举（0..3；其余一律当 0 = 未接取）。</summary>
+        /// <param name="state">状态数字。</param>
+        /// <returns>状态。</returns>
+        private static EQuestState ToState(int state)
+        {
+            switch (state)
+            {
+                case 1: return EQuestState.Accepted;
+                case 2: return EQuestState.Completed;
+                case 3: return EQuestState.Submitted;
+                default: return EQuestState.None;
+            }
         }
 
         /// <summary>交付一个**已完成**的任务并发奖励。</summary>

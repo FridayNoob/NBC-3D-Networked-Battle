@@ -90,6 +90,12 @@
       ⚠️ 同样**只列文件**，别用目录通配（理由见上面那段）。
     -->
     <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestSectionPlanner.cs" />
+
+    <!--
+      ★ M4-S3 §二十八：「权威状态 ⇒ 本地该怎么办」的**纯决策**，同样只依赖 BCL
+        ⇒ 探针能编、能跑、**能变异**。抽出来的理由与上面的 planner 一致。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestStateReconciler.cs" />
   </ItemGroup>
 
   <ItemGroup>
