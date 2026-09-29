@@ -161,6 +161,13 @@ namespace NBC.Game.UI
         /// <summary>复用的临时列表（避免每次刷新都分配）。</summary>
         private readonly List<QuestTracking> m_trackings = new List<QuestTracking>();
 
+        /// <summary>分桶用的临时输入（本地已接那一组）。</summary>
+        private readonly List<QuestSectionPlanner.Entry> m_plannedTracked =
+            new List<QuestSectionPlanner.Entry>();
+
+        /// <summary>分桶用的临时输入（本地可接那一组）。</summary>
+        private readonly List<int> m_plannedOffers = new List<int>();
+
         /// <summary>造一个视图模型。</summary>
         /// <param name="quests">任务运行时（不能为 null）。</param>
         public QuestPanelModel(QuestRuntime quests)
@@ -384,40 +391,94 @@ namespace NBC.Game.UI
             m_quests.CopyActiveTrackings(m_trackings);
             m_quests.CopyOffers(m_offers);
 
-            // ⚠️ 这个集合就是"不挪丢"的保证：每个任务只落一个区
-            var placed = new HashSet<int>();
+            // ⚠️ **分桶决策在 `QuestSectionPlanner`**（引擎无关的纯逻辑 ⇒ 探针能编、能跑、**能变异**）；
+            //    本方法只负责把"谁去哪个桶"翻译成**给玩家看的行**。
+            //    这段 `placed` 逻辑以前长在这里 ⇒ 探针编不进去 ⇒ "不丢行"只能靠 EditMode 验、**做不出变异**。
+            List<QuestSectionPlanner.Entry> tracked = m_plannedTracked;
+            tracked.Clear();
 
-            // 先走"已接"（它带着条件行，信息更全），再走"可接"
             for (int i = 0; i < m_trackings.Count; i++)
             {
-                QuestTracking tracking = m_trackings[i];
-
-                if (!placed.Add(tracking.QuestId))
-                {
-                    continue;
-                }
-
-                Place(BufferOf(offerBuffer, activeBuffer, readyBuffer, doneBuffer,
-                               SectionOf(tracking.QuestId, tracking.State)),
-                      BuildTrackingRow(tracking, SectionOf(tracking.QuestId, tracking.State)));
+                tracked.Add(new QuestSectionPlanner.Entry(m_trackings[i].QuestId, (int)m_trackings[i].State));
             }
+
+            List<int> offers = m_plannedOffers;
+            offers.Clear();
 
             for (int i = 0; i < m_offers.Count; i++)
             {
-                QuestOffer offer = m_offers[i];
-
-                if (!placed.Add(offer.QuestId))
-                {
-                    continue;       // 已经落过区了（例如本地既有 tracking 又是 offer）
-                }
-
-                // ⚠️ 服务端可能说它**已经接过**（本地却把它当"可接"）⇒ 靠 `SectionOf` 挪到正确的区，
-                //    并且**照样产出一行**（哪怕本地没有 tracking）—— 这就是"挪进来"的那一半。
-                int section = SectionOf(offer.QuestId, EQuestState.None);
-
-                Place(BufferOf(offerBuffer, activeBuffer, readyBuffer, doneBuffer, section),
-                      BuildOfferRow(offer, section));
+                offers.Add(m_offers[i].QuestId);
             }
+
+            List<QuestSectionPlanner.Placement> placements =
+                QuestSectionPlanner.Plan(tracked, offers, QueryStateAuthority);
+
+            for (int i = 0; i < placements.Count; i++)
+            {
+                QuestSectionPlanner.Placement placement = placements[i];
+
+                List<QuestRow> target = BufferOf(offerBuffer, activeBuffer, readyBuffer, doneBuffer,
+                                                 (int)placement.Section);
+
+                // 本地状态 != 0 ⇒ 本地**有**它的 tracking（那种构造带条件行）
+                if (placement.LocalState != 0)
+                {
+                    Place(target, BuildTrackingRow(FindTracking(placement.QuestId), (int)placement.Section));
+                }
+                else
+                {
+                    // ⚠️ 服务端可能说它**已经接过**（本地却只有"可接"）⇒ 靠 `placement.Section` 挪到正确的区，
+                    //    并且**照样产出一行**（哪怕本地没有 tracking）—— 这就是"挪进来"的那一半。
+                    Place(target, BuildOfferRow(FindOffer(placement.QuestId), (int)placement.Section));
+                }
+            }
+        }
+
+        /// <summary>把面板的权威缝接成 planner 要的那个查询委托（`StateAuthority == null` ⇒ 全按本地）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="state">状态。</param>
+        /// <returns>服务端表态过时返回 true。</returns>
+        private bool QueryStateAuthority(int questId, out int state)
+        {
+            if (StateAuthority == null)
+            {
+                state = 0;
+                return false;
+            }
+
+            return StateAuthority.TryGetState(questId, out state);
+        }
+
+        /// <summary>按编号找本地 tracking（调用方保证存在）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>tracking。</returns>
+        private QuestTracking FindTracking(int questId)
+        {
+            for (int i = 0; i < m_trackings.Count; i++)
+            {
+                if (m_trackings[i].QuestId == questId)
+                {
+                    return m_trackings[i];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>按编号找本地 offer（调用方保证存在）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>offer。</returns>
+        private QuestOffer FindOffer(int questId)
+        {
+            for (int i = 0; i < m_offers.Count; i++)
+            {
+                if (m_offers[i].QuestId == questId)
+                {
+                    return m_offers[i];
+                }
+            }
+
+            return default(QuestOffer);
         }
 
         /// <summary>按区号取对应的列表。</summary>

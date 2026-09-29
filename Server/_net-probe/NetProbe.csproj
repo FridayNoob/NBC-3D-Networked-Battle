@@ -80,6 +80,16 @@
     <Compile Include="..\..\Client\Assets\_Project\Game\Quest\IQuestProgressAuthority.cs" />
     <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestProgressOverlay.cs" />
     <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestTypes.cs" />
+
+    <!--
+      ★ M4-S3 §二十七：任务面板**分桶**那层也是**纯 BCL**（不引 UnityEngine / EventCenter /
+        QuestRuntime）⇒ 能在探针里真跑。抽出来的**唯一理由**就是这条：
+        "每个任务恰好落一个桶、一个都不许丢"这条不变式原本只能靠 EditMode 验，
+        **做不出可运行的变异**；抽到这里之后它当场能红。
+
+      ⚠️ 同样**只列文件**，别用目录通配（理由见上面那段）。
+    -->
+    <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestSectionPlanner.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -202,6 +202,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
+            Console.WriteLine();
+            Console.WriteLine("【十九】M4-S3 §二十七：面板**分桶**（不丢行不变式 + 三值语义；纯逻辑，不碰库）");
+            QuestSectionPlanner_BucketsAndNeverLosesRows();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -3452,6 +3456,110 @@ namespace NBC.NetProbe
                         "台账：" + ledger.Describe());
                 }
             }
+        }
+
+        /// <summary>分桶结果里某个任务的归属（找不到时返回一个明确的哨兵）。</summary>
+        /// <param name="plan">分桶结果。</param>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>归属（找不到时 Section = Done+100，见断言里的提示）。</returns>
+        private static QuestSectionPlanner.Placement FindPlacement(
+            List<QuestSectionPlanner.Placement> plan, int questId)
+        {
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (plan[i].QuestId == questId)
+                {
+                    return plan[i];
+                }
+            }
+
+            // 哨兵：调用方用 `Section` 断言时它会明显不等于任何期望值
+            return new QuestSectionPlanner.Placement(questId, (EQuestSection)99, false, -1);
+        }
+
+        /// <summary>
+        /// 【十九】任务面板**分桶**的纯逻辑（§二十七）。
+        ///
+        /// <para>⚠️ 这一节存在的意义：这条"不丢行"不变式原本长在 Unity 侧的
+        /// `QuestPanelModel` 里 ⇒ **探针编不进去** ⇒ 只能靠 EditMode 验、**做不出可运行的变异**。
+        /// 抽成 `QuestSectionPlanner`（纯 BCL）之后，它**当场能红**（见 §27.4 的变异）。</para>
+        ///
+        /// <para>📌 阳性对照不可省：`N > 0` 否则"一个都不丢"是空话。</para>
+        /// </summary>
+        private static void QuestSectionPlanner_BucketsAndNeverLosesRows()
+        {
+            // 输入：本地已接 2 个（1001 进行中、1002 已完成），本地认为可接 3 个（2001/2002/2003）
+            var tracked = new List<QuestSectionPlanner.Entry>
+            {
+                new QuestSectionPlanner.Entry(1001, 1),
+                new QuestSectionPlanner.Entry(1002, 2),
+            };
+
+            var offers = new List<int> { 2001, 2002, 2003 };
+
+            // 权威：2001 说"已接"、2002 说"已交付"、2003 **明确说未接取(0)**；**1001/1002 一律沉默**
+            var said = new Dictionary<int, int> { { 2001, 1 }, { 2002, 3 }, { 2003, 0 } };
+
+            QuestSectionPlanner.StateQuery query = (int id, out int st) => said.TryGetValue(id, out st);
+
+            const int expected = 5;     // 2 个本地已接 + 3 个本地可接
+
+            List<QuestSectionPlanner.Placement> plan = QuestSectionPlanner.Plan(tracked, offers, query);
+
+            Check("§27 分桶：**阳性对照** —— 输入不是空的（N > 0）",
+                plan.Count > 0, "plan=" + plan.Count + "（空的话下面全是空话）");
+
+            Check("§27⭐ **不丢行**：产出的条数 == 输入个数（" + expected + "）",
+                plan.Count == expected, "plan=" + plan.Count + "（少于输入 = 有任务被挪丢了）");
+
+            var seen = new HashSet<int>();
+            bool duplicated = false;
+
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (!seen.Add(plan[i].QuestId))
+                {
+                    duplicated = true;
+                }
+            }
+
+            Check("§27⭐ **不丢行**：每个任务**恰好出现一次**（没有重复）",
+                !duplicated && seen.Count == expected,
+                "去重后 " + seen.Count + " 个；有重复=" + duplicated);
+
+            // ---- 三值分桶 ----
+            Check("§27：服务端说 1 ⇒ 进行中",
+                FindPlacement(plan, 2001).Section == EQuestSection.Active,
+                "Section=" + FindPlacement(plan, 2001).Section);
+
+            Check("§27：服务端说 3 ⇒ 已交付",
+                FindPlacement(plan, 2002).Section == EQuestSection.Done,
+                "Section=" + FindPlacement(plan, 2002).Section);
+
+            Check("§27⭐：服务端**明确说 0**（未接取）⇒ 可接，而且**算权威说的**（不标预测）",
+                FindPlacement(plan, 2003).Section == EQuestSection.Offer &&
+                FindPlacement(plan, 2003).FromAuthority,
+                "Section=" + FindPlacement(plan, 2003).Section +
+                "；FromAuthority=" + FindPlacement(plan, 2003).FromAuthority);
+
+            Check("§27⭐：服务端**没说** ⇒ 按**本地**（本地已接且进行中 ⇒ 进行中）",
+                FindPlacement(plan, 1001).Section == EQuestSection.Active,
+                "Section=" + FindPlacement(plan, 1001).Section);
+
+            Check("§27⭐：而且标成**本地预测**（`FromAuthority == false`）—— `null` 不许当成 `0`",
+                !FindPlacement(plan, 1001).FromAuthority,
+                "FromAuthority=" + FindPlacement(plan, 1001).FromAuthority);
+
+            Check("§27：本地已接且已完成 ⇒ 可交付（同样按本地，因为服务端沉默）",
+                FindPlacement(plan, 1002).Section == EQuestSection.Ready,
+                "Section=" + FindPlacement(plan, 1002).Section);
+
+            // ---- 一个都不许丢：并集 == 输入集合 ----
+            bool allPresent = seen.Contains(1001) && seen.Contains(1002) &&
+                              seen.Contains(2001) && seen.Contains(2002) && seen.Contains(2003);
+
+            Check("§27⭐ **不丢行**：并集 == 输入集合（5 个任务一个不少）",
+                allPresent, "缺了任务（见上面两个逐号检查）");
         }
 
         private static QuestTables LoadQuestTables()
