@@ -118,5 +118,52 @@ namespace NBC.Shared.Sim
 
             return entities;
         }
+
+        /// <summary>
+        /// **规范化成员名单**：非正数**跳过**、重号**去重**、**按 id 升序**。
+        /// <para>⚠️ 抽出来是为了**只此一份**：队伍分配（`LockstepTeams`）与实体表（`Build`）
+        /// 必须用**同一个**顺序规则 —— 各写一份就是两处会不一致的地方。</para>
+        /// </summary>
+        /// <param name="members">成员编号（顺序无所谓；可以为 null = 空）。</param>
+        /// <returns>规范化后的编号表（升序、去重、全为正）。</returns>
+        public static List<long> SortIds(IReadOnlyList<long> members)
+        {
+            var ids = new List<long>();
+
+            if (members != null)
+            {
+                for (int i = 0; i < members.Count; i++)
+                {
+                    long id = members[i];
+
+                    // ① 非正数（游客 / 未登录）**跳过**
+                    if (id <= 0)
+                    {
+                        continue;
+                    }
+
+                    // ② **去重**
+                    bool seen = false;
+
+                    for (int k = 0; k < ids.Count; k++)
+                    {
+                        if (ids[k] == id)
+                        {
+                            seen = true;
+                            break;
+                        }
+                    }
+
+                    if (!seen)
+                    {
+                        ids.Add(id);
+                    }
+                }
+            }
+
+            // ③ **按 id 升序**（不许依赖调用方给的顺序）
+            ids.Sort();
+            return ids;
+        }
     }
 }
