@@ -228,6 +228,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十四】M4-S4 S4-c 第二半·第 1 步：`LockstepService` 开局（直驱，不接 Host）");
             LockstepService_StartAndInitialHash();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十五】M4-S4 S4-c 收尾：**客户端锁步运行器 + 三方对账**（含阳性对照）");
+            LockstepClient_ThreeWayReconcile();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -4657,6 +4661,257 @@ namespace NBC.NetProbe
                     built.Count == 3 && built[0].Hp == SpawnLayout.SpawnHp &&
                     built[0].MaxHp == SpawnLayout.SpawnHp && built[0].AttackReadyTick == 0,
                     built.Count == 0 ? "空" : ("hp=" + built[0].Hp + " max=" + built[0].MaxHp));
+            }
+        }
+
+        /// <summary>把开局消息里的一个实体转成**普通数据**（这正是 `NetSession` 要做的转换）。</summary>
+        /// <param name="raw">协议实体。</param>
+        /// <returns>普通实体。</returns>
+        private static SimEntity ToPlainEntity(LockstepStartEntity raw)
+        {
+            SimEntity e;
+            e.Id = (int)raw.EntityId;
+            e.Position = new FixVector3(
+                Fix64.FromRaw(raw.PosXRaw), Fix64.FromRaw(raw.PosYRaw), Fix64.FromRaw(raw.PosZRaw));
+            e.Hp = raw.Hp;
+            e.MaxHp = raw.MaxHp;
+            e.AttackReadyTick = raw.AttackReadyTick;
+            return e;
+        }
+
+        /// <summary>把帧消息里的一条输入转成**普通数据**。</summary>
+        /// <param name="raw">协议输入。</param>
+        /// <returns>普通输入。</returns>
+        private static FrameInput ToPlainInput(LockstepFrameInput raw)
+        {
+            FrameInput f;
+            f.PlayerId = raw.PlayerId;
+            f.MoveDirection = new FixVector3(Fix64.FromRaw(raw.MoveXRaw), Fix64.FromRaw(raw.MoveYRaw), Fix64.Zero);
+            f.Buttons = raw.Buttons;
+            f.TargetEntityId = raw.TargetEntityId;
+            f.Missing = raw.Missing;
+            return f;
+        }
+
+        /// <summary>
+        /// 【二十五】客户端锁步运行器 + **三方对账**（S4-c 收尾的核心）。
+        ///
+        /// <para>⚠️ 核心是**阳性对照**：让其中一个客户端**漏应用一帧** ⇒ **它自己**必须报出分歧
+        /// （帧号 + 两哈希），而**服务端与另一个客户端仍然一致**。
+        /// 没有这条，"三方相等"可能只是哈希恒为常量（假绿）。</para>
+        /// </summary>
+        private static void LockstepClient_ThreeWayReconcile()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                var service = new LockstepService(h.Server, h.Registry);
+                service.RegisterHandlers(h.Router);
+
+                Client a = h.ConnectAndLogin("alice", "pw-alice");
+                long aliceId = AckOf(a, "alice 登录").PlayerId;
+                h.JoinSameRoom(a);
+
+                Room room = null;
+
+                foreach (Room r in h.Registry.Rooms)
+                {
+                    room = r;
+                    break;
+                }
+
+                if (room == null)
+                {
+                    Check("§S4c4：阳性对照 —— 拿到房间", false, "房间表为空");
+                    return;
+                }
+
+                var entities = new List<SimEntity>
+                {
+                    MakeEntity((int)aliceId, 0, 100),
+                    MakeEntity((int)aliceId + 1, 1, 100),
+                };
+
+                service.StartRoom(room.RoomId, entities, 2);
+
+                const int framesToRun = 6;
+                ClientSession mine = h.Sessions[h.Sessions.Count - 1];
+
+                for (int f = 0; f < framesToRun; f++)
+                {
+                    h.Router.Dispatch(mine, new ClientMessage
+                    {
+                        LockstepInput = new LockstepInput
+                        {
+                            Frame = f, Seq = f, MoveXRaw = Fix64.One.RawValue, MoveYRaw = 0,
+                            Buttons = 0, TargetEntityId = 0,
+                        }
+                    });
+                }
+
+                for (int t = 0; t < framesToRun + 2; t++)
+                {
+                    service.Tick();     // ⚠️ **单次**（外面绝不套 while）
+                }
+
+                h.PumpFor(300);
+
+                LockstepStart startMsg = FindLockstepStart(a);
+                var framesMsg = new List<LockstepFrame>();
+
+                for (int i = 0; i < a.Received.Count; i++)
+                {
+                    if (a.Received[i].LockstepFrame != null)
+                    {
+                        framesMsg.Add(a.Received[i].LockstepFrame);
+                    }
+                }
+
+                Check("§S4c4：阳性对照 —— 拿到了开局 + 至少一帧（否则下面全是空话）",
+                    startMsg != null && framesMsg.Count > 0,
+                    "start=" + (startMsg != null) + "；帧数=" + framesMsg.Count);
+
+                if (startMsg == null || framesMsg.Count == 0)
+                {
+                    return;
+                }
+
+                var plainStart = new List<SimEntity>();
+
+                for (int i = 0; i < startMsg.Entities.Count; i++)
+                {
+                    plainStart.Add(ToPlainEntity(startMsg.Entities[i]));
+                }
+
+                ulong finalServerHash = framesMsg[framesMsg.Count - 1].ServerHash;
+
+                // ---- ① 两个客户端都完整应用 ⇒ 三方一致 ----
+                var clientA = new LockstepClient();
+                var clientB = new LockstepClient();
+
+                bool startedA = clientA.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart);
+                bool startedB = clientB.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart);
+
+                Check("§S4c4⭐ 开局：两个客户端都**开始成功**（`initialHash` 对得上）",
+                    startedA && startedB, "A=" + startedA + " B=" + startedB);
+
+                for (int i = 0; i < framesMsg.Count; i++)
+                {
+                    var plain = new List<FrameInput>();
+
+                    for (int k = 0; k < framesMsg[i].Inputs.Count; k++)
+                    {
+                        plain.Add(ToPlainInput(framesMsg[i].Inputs[k]));
+                    }
+
+                    clientA.ApplyFrame(framesMsg[i].Frame, plain, framesMsg[i].ServerHash);
+                    clientB.ApplyFrame(framesMsg[i].Frame, plain, framesMsg[i].ServerHash);
+                }
+
+                Check("§S4c4⭐ **三方一致**：完整应用后两个客户端都**零分歧**",
+                    clientA.DesyncCount == 0 && clientB.DesyncCount == 0,
+                    "A=" + clientA.DesyncCount + " B=" + clientB.DesyncCount + "；" + clientA.Describe());
+
+                Check("§S4c4⭐：两个客户端的终局哈希 == 服务端最后一帧广播里的哈希",
+                    clientA.World != null && clientB.World != null &&
+                    WorldStateHash.Compute(clientA.World) == WorldStateHash.Compute(clientB.World) &&
+                    WorldStateHash.Compute(clientA.World) == finalServerHash,
+                    "A=" + (clientA.World == null ? 0UL : WorldStateHash.Compute(clientA.World)) +
+                    " B=" + (clientB.World == null ? 0UL : WorldStateHash.Compute(clientB.World)) +
+                    " 服务端=" + finalServerHash);
+
+                Check("§S4c4：推进次数 == 收到的帧数（没多推/少推）",
+                    clientA.StepsExecuted == framesMsg.Count && clientB.StepsExecuted == framesMsg.Count,
+                    "A=" + clientA.StepsExecuted + " B=" + clientB.StepsExecuted + " 帧数=" + framesMsg.Count);
+
+                // ---- ② ⭐ 阳性对照：其中一个客户端**漏应用一帧** ----
+                var lame = new LockstepClient();
+                var spared = new LockstepClient();
+
+                Check("§S4c4：阳性对照 —— 两个客户端开局都成功（否则测的不是我们要的分支）",
+                    lame.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart) &&
+                    spared.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart),
+                    "开局失败");
+
+                for (int i = 0; i < framesMsg.Count; i++)
+                {
+                    var plain = new List<FrameInput>();
+
+                    for (int k = 0; k < framesMsg[i].Inputs.Count; k++)
+                    {
+                        plain.Add(ToPlainInput(framesMsg[i].Inputs[k]));
+                    }
+
+                    spared.ApplyFrame(framesMsg[i].Frame, plain, framesMsg[i].ServerHash);
+
+                    if (i == 2)
+                    {
+                        continue;       // ⚠️ 故意漏掉第 2 帧
+                    }
+
+                    lame.ApplyFrame(framesMsg[i].Frame, plain, framesMsg[i].ServerHash);
+                }
+
+                Check("§S4c4⭐ **阳性对照**：漏应用一帧的那个客户端**自己报出了分歧**",
+                    lame.DesyncCount > 0, "DesyncCount=" + lame.DesyncCount);
+
+                Check("§S4c4⭐：`LastDesync` 里**帧号 + 两个哈希**都可读（否则排查不动）",
+                    lame.HasDesync && lame.LastDesync.Mine != lame.LastDesync.Server &&
+                    lame.LastDesync.Frame >= 0 && !lame.LastDesync.AtStart,
+                    lame.HasDesync ? lame.LastDesync.ToString() : "没有分歧记录");
+
+                Check("§S4c4⭐：而**另一个客户端仍与服务端一致**（不许把两边带歪）",
+                    spared.DesyncCount == 0 && spared.World != null &&
+                    WorldStateHash.Compute(spared.World) == finalServerHash,
+                    "spared 分歧 " + spared.DesyncCount +
+                    "；终局 " + (spared.World == null ? 0UL : WorldStateHash.Compute(spared.World)) +
+                    " vs 服务端 " + finalServerHash);
+
+                // ---- ③ 开局哈希故意错 ⇒ **不许开始** ----
+                var victim = new LockstepClient();
+                bool badStart = victim.ApplyStart(startMsg.Frame, startMsg.InitialHash ^ 1UL, plainStart);
+
+                Check("§S4c4⭐ 开局哈希不对 ⇒ **不许开始**（`Started` 保持 false）",
+                    !badStart && !victim.Started, "返回 " + badStart + "；Started=" + victim.Started);
+
+                Check("§S4c4⭐：而且报了一条**帧 0 的分歧**并计数",
+                    victim.HasDesync && victim.DesyncCount == 1 && victim.LastDesync.AtStart &&
+                    victim.LastDesync.Mine != victim.LastDesync.Server,
+                    victim.HasDesync ? victim.LastDesync.ToString() : "没有分歧记录");
+
+                var preStart = new List<FrameInput>();
+                bool applied = victim.ApplyFrame(framesMsg[0].Frame, preStart, framesMsg[0].ServerHash);
+
+                Check("§S4c4⭐ 未开局收到帧 ⇒ **忽略 + `IgnoredBeforeStart` 涨**（不拿空世界去算）",
+                    !applied && victim.IgnoredBeforeStart == 1 && victim.StepsExecuted == 0,
+                    "applied=" + applied + "；忽略 " + victim.IgnoredBeforeStart + "；Step " + victim.StepsExecuted);
+
+                // ---- ④ 重复帧 / 倒退帧 ⇒ 不重复 Step、计数涨 ----
+                var dup = new LockstepClient();
+                dup.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart);
+
+                var firstPlain = new List<FrameInput>();
+
+                for (int k = 0; k < framesMsg[0].Inputs.Count; k++)
+                {
+                    firstPlain.Add(ToPlainInput(framesMsg[0].Inputs[k]));
+                }
+
+                bool ok1 = dup.ApplyFrame(framesMsg[0].Frame, firstPlain, framesMsg[0].ServerHash);
+                int afterFirst = dup.StepsExecuted;
+
+                bool again = dup.ApplyFrame(framesMsg[0].Frame, firstPlain, framesMsg[0].ServerHash);
+                bool backwards = dup.ApplyFrame(framesMsg[0].Frame, firstPlain, framesMsg[0].ServerHash);
+
+                Check("§S4c4⭐：**重复帧 / 倒退帧** ⇒ 拒绝且**不重复 `Step`**、`RejectedFrames` 涨",
+                    ok1 && dup.StepsExecuted == afterFirst && afterFirst == 1 &&
+                    !again && !backwards && dup.RejectedFrames >= 2,
+                    "Step 0→" + afterFirst + "→" + dup.StepsExecuted + "；拒 " + dup.RejectedFrames);
+
+                bool restart = dup.ApplyStart(startMsg.Frame, startMsg.InitialHash, plainStart);
+
+                Check("§S4c4⭐：**重复开局** ⇒ 拒绝、**不重建世界**（已推进的帧不被抹掉）",
+                    !restart && dup.StepsExecuted == afterFirst && dup.World != null,
+                    "返回 " + restart + "；Step " + dup.StepsExecuted);
             }
         }
 
