@@ -75,26 +75,32 @@ namespace NBC.Protocol {
             "BCABKAUSGAoQdGFyZ2V0X2VudGl0eV9pZBgFIAEoBRIPCgdtaXNzaW5nGAYg",
             "ASgIIl8KDUxvY2tzdGVwRnJhbWUSDQoFZnJhbWUYASABKAUSKgoGaW5wdXRz",
             "GAIgAygLMhoubmJjLm0zLkxvY2tzdGVwRnJhbWVJbnB1dBITCgtzZXJ2ZXJf",
-            "aGFzaBgDIAEoBCKYAwoNU2VydmVyTWVzc2FnZRItCg1oYW5kc2hha2VfYWNr",
-            "GAEgASgLMhQubmJjLm0zLkhhbmRzaGFrZUFja0gAEhwKBHBvbmcYAiABKAsy",
-            "DC5uYmMubTMuUG9uZ0gAEicKCnJvb21fc3RhdGUYAyABKAsyES5uYmMubTMu",
-            "Um9vbVN0YXRlSAASKQoIc25hcHNob3QYBCABKAsyFS5uYmMubTMuV29ybGRT",
-            "bmFwc2hvdEgAEiQKBWV2ZW50GAUgASgLMhMubmJjLm0zLlNlcnZlckV2ZW50",
-            "SAASJgoFZXJyb3IYBiABKAsyFS5uYmMubTMuRXJyb3JSZXNwb25zZUgAEi0K",
-            "DXByb2dyZXNzX3N5bmMYByABKAsyFC5uYmMubTMuUHJvZ3Jlc3NTeW5jSAAS",
-            "LQoLcXVlc3Rfc3RhdGUYCCABKAsyFi5uYmMubTMuUXVlc3RTdGF0ZVN5bmNI",
-            "ABIvCg5sb2Nrc3RlcF9mcmFtZRgJIAEoCzIVLm5iYy5tMy5Mb2Nrc3RlcEZy",
-            "YW1lSABCCQoHcGF5bG9hZCLJAgoNQ2xpZW50TWVzc2FnZRImCgloYW5kc2hh",
-            "a2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtlSAASHAoEcGluZxgCIAEoCzIM",
-            "Lm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29tGAMgASgLMhcubmJjLm0zLkpv",
-            "aW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQgASgLMhMubmJjLm0zLlBsYXll",
-            "cklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEoCzIYLm5iYy5tMy5MZWF2ZVJv",
-            "b21SZXF1ZXN0SAASMgoMcXVlc3RfYWN0aW9uGAYgASgLMhoubmJjLm0zLlF1",
-            "ZXN0QWN0aW9uUmVxdWVzdEgAEi8KDmxvY2tzdGVwX2lucHV0GAcgASgLMhUu",
-            "bmJjLm0zLkxvY2tzdGVwSW5wdXRIAEIJCgdwYXlsb2FkKlQKCVJvb21QaGFz",
-            "ZRIWChJST09NX1BIQVNFX1dBSVRJTkcQABIWChJST09NX1BIQVNFX1JVTk5J",
-            "TkcQARIXChNST09NX1BIQVNFX0ZJTklTSEVEEAJCD6oCDE5CQy5Qcm90b2Nv",
-            "bGIGcHJvdG8z"));
+            "aGFzaBgDIAEoBCKYAQoTTG9ja3N0ZXBTdGFydEVudGl0eRIRCgllbnRpdHlf",
+            "aWQYASABKAMSEQoJcG9zX3hfcmF3GAIgASgDEhEKCXBvc195X3JhdxgDIAEo",
+            "AxIRCglwb3Nfel9yYXcYBCABKAMSCgoCaHAYBSABKAUSDgoGbWF4X2hwGAYg",
+            "ASgFEhkKEWF0dGFja19yZWFkeV90aWNrGAcgASgFImMKDUxvY2tzdGVwU3Rh",
+            "cnQSDQoFZnJhbWUYASABKAUSLQoIZW50aXRpZXMYAiADKAsyGy5uYmMubTMu",
+            "TG9ja3N0ZXBTdGFydEVudGl0eRIUCgxpbml0aWFsX2hhc2gYAyABKAQiyQMK",
+            "DVNlcnZlck1lc3NhZ2USLQoNaGFuZHNoYWtlX2FjaxgBIAEoCzIULm5iYy5t",
+            "My5IYW5kc2hha2VBY2tIABIcCgRwb25nGAIgASgLMgwubmJjLm0zLlBvbmdI",
+            "ABInCgpyb29tX3N0YXRlGAMgASgLMhEubmJjLm0zLlJvb21TdGF0ZUgAEikK",
+            "CHNuYXBzaG90GAQgASgLMhUubmJjLm0zLldvcmxkU25hcHNob3RIABIkCgVl",
+            "dmVudBgFIAEoCzITLm5iYy5tMy5TZXJ2ZXJFdmVudEgAEiYKBWVycm9yGAYg",
+            "ASgLMhUubmJjLm0zLkVycm9yUmVzcG9uc2VIABItCg1wcm9ncmVzc19zeW5j",
+            "GAcgASgLMhQubmJjLm0zLlByb2dyZXNzU3luY0gAEi0KC3F1ZXN0X3N0YXRl",
+            "GAggASgLMhYubmJjLm0zLlF1ZXN0U3RhdGVTeW5jSAASLwoObG9ja3N0ZXBf",
+            "ZnJhbWUYCSABKAsyFS5uYmMubTMuTG9ja3N0ZXBGcmFtZUgAEi8KDmxvY2tz",
+            "dGVwX3N0YXJ0GAogASgLMhUubmJjLm0zLkxvY2tzdGVwU3RhcnRIAEIJCgdw",
+            "YXlsb2FkIskCCg1DbGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIR",
+            "Lm5iYy5tMy5IYW5kc2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBp",
+            "bmdIABIsCglqb2luX3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1",
+            "ZXN0SAASJAoFaW5wdXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIu",
+            "CgpsZWF2ZV9yb29tGAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RI",
+            "ABIyCgxxdWVzdF9hY3Rpb24YBiABKAsyGi5uYmMubTMuUXVlc3RBY3Rpb25S",
+            "ZXF1ZXN0SAASLwoObG9ja3N0ZXBfaW5wdXQYByABKAsyFS5uYmMubTMuTG9j",
+            "a3N0ZXBJbnB1dEgAQgkKB3BheWxvYWQqVAoJUm9vbVBoYXNlEhYKElJPT01f",
+            "UEhBU0VfV0FJVElORxAAEhYKElJPT01fUEhBU0VfUlVOTklORxABEhcKE1JP",
+            "T01fUEhBU0VfRklOSVNIRUQQAkIPqgIMTkJDLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -122,7 +128,9 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepInput), global::NBC.Protocol.LockstepInput.Parser, new[]{ "Frame", "Seq", "MoveXRaw", "MoveYRaw", "Buttons", "TargetEntityId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepFrameInput), global::NBC.Protocol.LockstepFrameInput.Parser, new[]{ "PlayerId", "MoveXRaw", "MoveYRaw", "Buttons", "TargetEntityId", "Missing" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepFrame), global::NBC.Protocol.LockstepFrame.Parser, new[]{ "Frame", "Inputs", "ServerHash" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepStartEntity), global::NBC.Protocol.LockstepStartEntity.Parser, new[]{ "EntityId", "PosXRaw", "PosYRaw", "PosZRaw", "Hp", "MaxHp", "AttackReadyTick" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepStart), global::NBC.Protocol.LockstepStart.Parser, new[]{ "Frame", "Entities", "InitialHash" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame", "LockstepStart" }, new[]{ "Payload" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction", "LockstepInput" }, new[]{ "Payload" }, null, null, null)
           }));
     }
@@ -7350,6 +7358,721 @@ namespace NBC.Protocol {
   }
 
   /// <summary>
+  //// 开局时一个实体的**完整初始状态**（M4-S4 S4-c 第二半）。
+  ////
+  //// ⚠️⚠️ **这个消息的全部意义：让客户端能逐位复现"第 0 帧哈希"。**
+  ////     `WorldStateHash` 的字段清单是**契约**，它读 9 样东西：
+  ////         实体个数 / Id / Position.X,Y,Z(RawValue) / Hp / **MaxHp** / **AttackReadyTick** / Tick
+  ////     所以这里**全部都要发** —— 一个都不许靠"约定默认值"。
+  ////
+  ////     ⚠️ 为什么"不许靠默认"：现有 `WorldState.Add` 恰好把 `MaxHp = hp`、
+  ////        `AttackReadyTick = 0`，所以此刻这两个值**推得出来**。但只要将来任何一处改一下
+  ////        （某个实体**带伤出生**、或开局先给一段冷却），发的一方与收的一方就会
+  ////        **各自按不同假设建世界** ⇒ 第 0 帧哈希就不同 ⇒ 表现是**满屏假分歧**，
+  ////        而且排查方向全错（会去查"哪一帧算错了"，其实是"起点就不一样"）。
+  /// </summary>
+  public sealed partial class LockstepStartEntity : pb::IMessage<LockstepStartEntity>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LockstepStartEntity> _parser = new pb::MessageParser<LockstepStartEntity>(() => new LockstepStartEntity());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LockstepStartEntity> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[24]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStartEntity() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStartEntity(LockstepStartEntity other) : this() {
+      entityId_ = other.entityId_;
+      posXRaw_ = other.posXRaw_;
+      posYRaw_ = other.posYRaw_;
+      posZRaw_ = other.posZRaw_;
+      hp_ = other.hp_;
+      maxHp_ = other.maxHp_;
+      attackReadyTick_ = other.attackReadyTick_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStartEntity Clone() {
+      return new LockstepStartEntity(this);
+    }
+
+    /// <summary>Field number for the "entity_id" field.</summary>
+    public const int EntityIdFieldNumber = 1;
+    private long entityId_;
+    /// <summary>
+    //// ⚠️ 与 `SimEntity.Id`（内存里是 **`int`**）说清并一致：
+    ////    **wire 上取宽的一侧（`int64`）**，转换处必须**显式**并带一句注释 ——
+    ////    否则将来 Id 真的超过 `int` 范围时会**静默窄化**（两边算出不同实体）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long EntityId {
+      get { return entityId_; }
+      set {
+        entityId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "pos_x_raw" field.</summary>
+    public const int PosXRawFieldNumber = 2;
+    private long posXRaw_;
+    /// <summary>
+    //// 位置（`Fix64.RawValue`，Q32.32）。⚠️ 与 S4-c 其余部分同一套：**传 raw 整数、不传浮点**。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long PosXRaw {
+      get { return posXRaw_; }
+      set {
+        posXRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "pos_y_raw" field.</summary>
+    public const int PosYRawFieldNumber = 3;
+    private long posYRaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long PosYRaw {
+      get { return posYRaw_; }
+      set {
+        posYRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "pos_z_raw" field.</summary>
+    public const int PosZRawFieldNumber = 4;
+    private long posZRaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long PosZRaw {
+      get { return posZRaw_; }
+      set {
+        posZRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hp" field.</summary>
+    public const int HpFieldNumber = 5;
+    private int hp_;
+    /// <summary>
+    //// ⚠️ 下面三个**就是 `SimEntity` 里那个 `int` 字段本身**，
+    ////    **不是**"tick 编号的另一种解释"、也**不是**毫米 —— 别在这里换单位。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Hp {
+      get { return hp_; }
+      set {
+        hp_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_hp" field.</summary>
+    public const int MaxHpFieldNumber = 6;
+    private int maxHp_;
+    /// <summary>
+    /// ⚠️ 哈希读它（别省）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int MaxHp {
+      get { return maxHp_; }
+      set {
+        maxHp_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "attack_ready_tick" field.</summary>
+    public const int AttackReadyTickFieldNumber = 7;
+    private int attackReadyTick_;
+    /// <summary>
+    /// ⚠️ 哈希读它（别省）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int AttackReadyTick {
+      get { return attackReadyTick_; }
+      set {
+        attackReadyTick_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LockstepStartEntity);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LockstepStartEntity other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (EntityId != other.EntityId) return false;
+      if (PosXRaw != other.PosXRaw) return false;
+      if (PosYRaw != other.PosYRaw) return false;
+      if (PosZRaw != other.PosZRaw) return false;
+      if (Hp != other.Hp) return false;
+      if (MaxHp != other.MaxHp) return false;
+      if (AttackReadyTick != other.AttackReadyTick) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (EntityId != 0L) hash ^= EntityId.GetHashCode();
+      if (PosXRaw != 0L) hash ^= PosXRaw.GetHashCode();
+      if (PosYRaw != 0L) hash ^= PosYRaw.GetHashCode();
+      if (PosZRaw != 0L) hash ^= PosZRaw.GetHashCode();
+      if (Hp != 0) hash ^= Hp.GetHashCode();
+      if (MaxHp != 0) hash ^= MaxHp.GetHashCode();
+      if (AttackReadyTick != 0) hash ^= AttackReadyTick.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (EntityId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(EntityId);
+      }
+      if (PosXRaw != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(PosXRaw);
+      }
+      if (PosYRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(PosYRaw);
+      }
+      if (PosZRaw != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(PosZRaw);
+      }
+      if (Hp != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Hp);
+      }
+      if (MaxHp != 0) {
+        output.WriteRawTag(48);
+        output.WriteInt32(MaxHp);
+      }
+      if (AttackReadyTick != 0) {
+        output.WriteRawTag(56);
+        output.WriteInt32(AttackReadyTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (EntityId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(EntityId);
+      }
+      if (PosXRaw != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(PosXRaw);
+      }
+      if (PosYRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(PosYRaw);
+      }
+      if (PosZRaw != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(PosZRaw);
+      }
+      if (Hp != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Hp);
+      }
+      if (MaxHp != 0) {
+        output.WriteRawTag(48);
+        output.WriteInt32(MaxHp);
+      }
+      if (AttackReadyTick != 0) {
+        output.WriteRawTag(56);
+        output.WriteInt32(AttackReadyTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (EntityId != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(EntityId);
+      }
+      if (PosXRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(PosXRaw);
+      }
+      if (PosYRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(PosYRaw);
+      }
+      if (PosZRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(PosZRaw);
+      }
+      if (Hp != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Hp);
+      }
+      if (MaxHp != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(MaxHp);
+      }
+      if (AttackReadyTick != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(AttackReadyTick);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LockstepStartEntity other) {
+      if (other == null) {
+        return;
+      }
+      if (other.EntityId != 0L) {
+        EntityId = other.EntityId;
+      }
+      if (other.PosXRaw != 0L) {
+        PosXRaw = other.PosXRaw;
+      }
+      if (other.PosYRaw != 0L) {
+        PosYRaw = other.PosYRaw;
+      }
+      if (other.PosZRaw != 0L) {
+        PosZRaw = other.PosZRaw;
+      }
+      if (other.Hp != 0) {
+        Hp = other.Hp;
+      }
+      if (other.MaxHp != 0) {
+        MaxHp = other.MaxHp;
+      }
+      if (other.AttackReadyTick != 0) {
+        AttackReadyTick = other.AttackReadyTick;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            EntityId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            PosXRaw = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            PosYRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            PosZRaw = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            Hp = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            MaxHp = input.ReadInt32();
+            break;
+          }
+          case 56: {
+            AttackReadyTick = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            EntityId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            PosXRaw = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            PosYRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            PosZRaw = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            Hp = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            MaxHp = input.ReadInt32();
+            break;
+          }
+          case 56: {
+            AttackReadyTick = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 服务端 → 客户端：**开局**（把第 0 帧的世界交给客户端）。
+  ////
+  //// ⚠️ 顺序契约：**`LockstepStart` 必须先于任何 `lockstep_frame`**（服务端保证）。
+  ////    客户端在收到它之前处于"**未开局**"状态：此时收到 `lockstep_frame`
+  ////    必须**忽略并计数**（不是"先跑起来再说"）—— 否则它会拿一个**空世界**去算，
+  ////    结果是满屏假分歧，而真正的原因（开局没到）反而被淹没。
+  /// </summary>
+  public sealed partial class LockstepStart : pb::IMessage<LockstepStart>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LockstepStart> _parser = new pb::MessageParser<LockstepStart>(() => new LockstepStart());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LockstepStart> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[25]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStart() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStart(LockstepStart other) : this() {
+      frame_ = other.frame_;
+      entities_ = other.entities_.Clone();
+      initialHash_ = other.initialHash_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepStart Clone() {
+      return new LockstepStart(this);
+    }
+
+    /// <summary>Field number for the "frame" field.</summary>
+    public const int FrameFieldNumber = 1;
+    private int frame_;
+    /// <summary>
+    //// 开局帧号。客户端把它设成世界的 `Tick` ⇒ 哈希清单里的第 9 项（`Tick`）也**被发**了。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Frame {
+      get { return frame_; }
+      set {
+        frame_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "entities" field.</summary>
+    public const int EntitiesFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::NBC.Protocol.LockstepStartEntity> _repeated_entities_codec
+        = pb::FieldCodec.ForMessage(18, global::NBC.Protocol.LockstepStartEntity.Parser);
+    private readonly pbc::RepeatedField<global::NBC.Protocol.LockstepStartEntity> entities_ = new pbc::RepeatedField<global::NBC.Protocol.LockstepStartEntity>();
+    /// <summary>
+    //// ⚠️ 元素**可能以任意顺序到达** ⇒ 客户端建世界时**按 `entity_id` 排序**再 `Add`
+    ////    （照 `WorldState.SnapshotSorted` 那套）。这条是 §29.2 判据② 在协议层的形态。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::NBC.Protocol.LockstepStartEntity> Entities {
+      get { return entities_; }
+    }
+
+    /// <summary>Field number for the "initial_hash" field.</summary>
+    public const int InitialHashFieldNumber = 3;
+    private ulong initialHash_;
+    /// <summary>
+    //// ⭐ 服务端算出的**开局哈希**（同 `WorldStateHash` 的算法）。
+    ////    客户端建完世界**先自己算一遍再比**：不等 ⇒ **不许开始**，报一条帧 0 的分歧（带两个哈希）。
+    ////    这是"**能不能开始**"的判据 —— 它比后面逐帧对账更靠前。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong InitialHash {
+      get { return initialHash_; }
+      set {
+        initialHash_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LockstepStart);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LockstepStart other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Frame != other.Frame) return false;
+      if(!entities_.Equals(other.entities_)) return false;
+      if (InitialHash != other.InitialHash) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Frame != 0) hash ^= Frame.GetHashCode();
+      hash ^= entities_.GetHashCode();
+      if (InitialHash != 0UL) hash ^= InitialHash.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      entities_.WriteTo(output, _repeated_entities_codec);
+      if (InitialHash != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(InitialHash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      entities_.WriteTo(ref output, _repeated_entities_codec);
+      if (InitialHash != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(InitialHash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Frame != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Frame);
+      }
+      size += entities_.CalculateSize(_repeated_entities_codec);
+      if (InitialHash != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(InitialHash);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LockstepStart other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Frame != 0) {
+        Frame = other.Frame;
+      }
+      entities_.Add(other.entities_);
+      if (other.InitialHash != 0UL) {
+        InitialHash = other.InitialHash;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 18: {
+            entities_.AddEntriesFrom(input, _repeated_entities_codec);
+            break;
+          }
+          case 24: {
+            InitialHash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 18: {
+            entities_.AddEntriesFrom(ref input, _repeated_entities_codec);
+            break;
+          }
+          case 24: {
+            InitialHash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   //// 服务端 → 客户端。
   /// </summary>
   public sealed partial class ServerMessage : pb::IMessage<ServerMessage>
@@ -7366,7 +8089,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[24]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[26]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7413,6 +8136,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.LockstepFrame:
           LockstepFrame = other.LockstepFrame.Clone();
+          break;
+        case PayloadOneofCase.LockstepStart:
+          LockstepStart = other.LockstepStart.Clone();
           break;
       }
 
@@ -7545,6 +8271,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "lockstep_start" field.</summary>
+    public const int LockstepStartFieldNumber = 10;
+    /// <summary>
+    /// M4-S4 S4-c 第二半 追加（兼容：同上）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.LockstepStart LockstepStart {
+      get { return payloadCase_ == PayloadOneofCase.LockstepStart ? (global::NBC.Protocol.LockstepStart) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.LockstepStart;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -7558,6 +8299,7 @@ namespace NBC.Protocol {
       ProgressSync = 7,
       QuestState = 8,
       LockstepFrame = 9,
+      LockstepStart = 10,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7597,6 +8339,7 @@ namespace NBC.Protocol {
       if (!object.Equals(ProgressSync, other.ProgressSync)) return false;
       if (!object.Equals(QuestState, other.QuestState)) return false;
       if (!object.Equals(LockstepFrame, other.LockstepFrame)) return false;
+      if (!object.Equals(LockstepStart, other.LockstepStart)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -7614,6 +8357,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.ProgressSync) hash ^= ProgressSync.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.QuestState) hash ^= QuestState.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LockstepFrame) hash ^= LockstepFrame.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.LockstepStart) hash ^= LockstepStart.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -7669,6 +8413,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(74);
         output.WriteMessage(LockstepFrame);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepStart) {
+        output.WriteRawTag(82);
+        output.WriteMessage(LockstepStart);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7715,6 +8463,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(74);
         output.WriteMessage(LockstepFrame);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepStart) {
+        output.WriteRawTag(82);
+        output.WriteMessage(LockstepStart);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7751,6 +8503,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(LockstepFrame);
+      }
+      if (payloadCase_ == PayloadOneofCase.LockstepStart) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(LockstepStart);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7818,6 +8573,12 @@ namespace NBC.Protocol {
             LockstepFrame = new global::NBC.Protocol.LockstepFrame();
           }
           LockstepFrame.MergeFrom(other.LockstepFrame);
+          break;
+        case PayloadOneofCase.LockstepStart:
+          if (LockstepStart == null) {
+            LockstepStart = new global::NBC.Protocol.LockstepStart();
+          }
+          LockstepStart.MergeFrom(other.LockstepStart);
           break;
       }
 
@@ -7917,6 +8678,15 @@ namespace NBC.Protocol {
             LockstepFrame = subBuilder;
             break;
           }
+          case 82: {
+            global::NBC.Protocol.LockstepStart subBuilder = new global::NBC.Protocol.LockstepStart();
+            if (payloadCase_ == PayloadOneofCase.LockstepStart) {
+              subBuilder.MergeFrom(LockstepStart);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepStart = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -8013,6 +8783,15 @@ namespace NBC.Protocol {
             LockstepFrame = subBuilder;
             break;
           }
+          case 82: {
+            global::NBC.Protocol.LockstepStart subBuilder = new global::NBC.Protocol.LockstepStart();
+            if (payloadCase_ == PayloadOneofCase.LockstepStart) {
+              subBuilder.MergeFrom(LockstepStart);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepStart = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -8037,7 +8816,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[25]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[27]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

@@ -363,6 +363,58 @@ message LockstepFrame
     uint64 server_hash = 3;
 }
 
+/// 开局时一个实体的**完整初始状态**（M4-S4 S4-c 第二半）。
+///
+/// ⚠️⚠️ **这个消息的全部意义：让客户端能逐位复现"第 0 帧哈希"。**
+///     `WorldStateHash` 的字段清单是**契约**，它读 9 样东西：
+///         实体个数 / Id / Position.X,Y,Z(RawValue) / Hp / **MaxHp** / **AttackReadyTick** / Tick
+///     所以这里**全部都要发** —— 一个都不许靠"约定默认值"。
+///
+///     ⚠️ 为什么"不许靠默认"：现有 `WorldState.Add` 恰好把 `MaxHp = hp`、
+///        `AttackReadyTick = 0`，所以此刻这两个值**推得出来**。但只要将来任何一处改一下
+///        （某个实体**带伤出生**、或开局先给一段冷却），发的一方与收的一方就会
+///        **各自按不同假设建世界** ⇒ 第 0 帧哈希就不同 ⇒ 表现是**满屏假分歧**，
+///        而且排查方向全错（会去查"哪一帧算错了"，其实是"起点就不一样"）。
+message LockstepStartEntity
+{
+    /// ⚠️ 与 `SimEntity.Id`（内存里是 **`int`**）说清并一致：
+    ///    **wire 上取宽的一侧（`int64`）**，转换处必须**显式**并带一句注释 ——
+    ///    否则将来 Id 真的超过 `int` 范围时会**静默窄化**（两边算出不同实体）。
+    int64 entity_id = 1;
+
+    /// 位置（`Fix64.RawValue`，Q32.32）。⚠️ 与 S4-c 其余部分同一套：**传 raw 整数、不传浮点**。
+    int64 pos_x_raw = 2;
+    int64 pos_y_raw = 3;
+    int64 pos_z_raw = 4;
+
+    /// ⚠️ 下面三个**就是 `SimEntity` 里那个 `int` 字段本身**，
+    ///    **不是**"tick 编号的另一种解释"、也**不是**毫米 —— 别在这里换单位。
+    int32 hp = 5;
+    int32 max_hp = 6;             // ⚠️ 哈希读它（别省）
+    int32 attack_ready_tick = 7;  // ⚠️ 哈希读它（别省）
+}
+
+/// 服务端 → 客户端：**开局**（把第 0 帧的世界交给客户端）。
+///
+/// ⚠️ 顺序契约：**`LockstepStart` 必须先于任何 `lockstep_frame`**（服务端保证）。
+///    客户端在收到它之前处于"**未开局**"状态：此时收到 `lockstep_frame`
+///    必须**忽略并计数**（不是"先跑起来再说"）—— 否则它会拿一个**空世界**去算，
+///    结果是满屏假分歧，而真正的原因（开局没到）反而被淹没。
+message LockstepStart
+{
+    /// 开局帧号。客户端把它设成世界的 `Tick` ⇒ 哈希清单里的第 9 项（`Tick`）也**被发**了。
+    int32 frame = 1;
+
+    /// ⚠️ 元素**可能以任意顺序到达** ⇒ 客户端建世界时**按 `entity_id` 排序**再 `Add`
+    ///    （照 `WorldState.SnapshotSorted` 那套）。这条是 §29.2 判据② 在协议层的形态。
+    repeated LockstepStartEntity entities = 2;
+
+    /// ⭐ 服务端算出的**开局哈希**（同 `WorldStateHash` 的算法）。
+    ///    客户端建完世界**先自己算一遍再比**：不等 ⇒ **不许开始**，报一条帧 0 的分歧（带两个哈希）。
+    ///    这是"**能不能开始**"的判据 —— 它比后面逐帧对账更靠前。
+    uint64 initial_hash = 3;
+}
+
 /// 服务端 → 客户端。
 message ServerMessage
 {
@@ -377,6 +429,7 @@ message ServerMessage
         ProgressSync  progress_sync = 7;   // M4-S3 收口追加（兼容：同上）
         QuestStateSync quest_state  = 8;   // M4-S3 §二十六 追加（兼容：同上）
         LockstepFrame lockstep_frame = 9;  // M4-S4 S4-c 追加（兼容：同上）
+        LockstepStart lockstep_start = 10; // M4-S4 S4-c 第二半 追加（兼容：同上）
     }
 }
 
