@@ -173,6 +173,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools\Verify-PluginDlls.ps1 
 | `Check-DocLinks.ps1` | 只读校验 | 分类文档引用：计划中 / 待创建 / 已退役 / **真断链** |
 | `Check-ScriptEncoding.ps1` | 只读校验 | **扫全仓库 `.ps1`**：非 ASCII 有没有 BOM（W7）+ 走真实 `Parser::ParseFile` 报语法错误 |
 | `Check-DocAnchors.ps1` | 只读校验 | 文档里的 `文件.cs:行号` 引用**是否还指向它声称的东西**（行号会静默腐烂） |
+| `Check-FloatFree.ps1` | 只读校验 | **逻辑层不许出现 `float`/`double`/`Mathf`/`Vector3`/`Time.deltaTime`**（帧同步确定性的地基，`Docs\27` §29.2 判据①）—— ⚠️ **先去掉注释再匹配**，否则全是噪音 |
 
 ---
 
