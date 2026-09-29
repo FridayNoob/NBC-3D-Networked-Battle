@@ -89,17 +89,90 @@ public sealed class Room
     /// </summary>
     public RoomPhase Phase { get; set; } = RoomPhase.Waiting;
 
-    /// <summary>现在几个人。</summary>
+    /// <summary>现在几个真人。</summary>
     public int SeatCount => _seats.Count;
 
     /// <summary>席位（按**进房顺序**，所以 `Seats[0]` 是房主）。</summary>
     public IReadOnlyList<RoomSeat> Seats => _seats;
 
+    /// <summary>补进来的机器人（⚠️ **不在 `Seats` 里** —— 见 `BotCount` 的说明）。</summary>
+    public IReadOnlyList<RoomBot> Bots => _bots;
+
+    /// <summary>几个机器人。</summary>
+    public int BotCount => _bots.Count;
+
+    /// <summary>机器人名单（⚠️ **独立于 `_seats`** —— 见 `AddBot` 的说明）。</summary>
+    private readonly List<RoomBot> _bots = new List<RoomBot>();
+
+    /// <summary>
+    /// 机器人编号的**保留段起点**（`9001…`）。
+    /// <para>⚠️ 与真实账号的编号段**必须不重叠**：撞了就会出现"机器人占了真人的 id"
+    /// —— 队伍映射与实体表都会指向同一个 id，症状是**两端算出的世界不同**（很难查）。</para>
+    /// </summary>
+    public const long BotIdBase = 9001;
+
     /// <summary>没人了（`RoomRegistry` 会把它删掉）。</summary>
     public bool IsEmpty => _seats.Count == 0;
 
-    /// <summary>满了。</summary>
-    public bool IsFull => _seats.Count >= Capacity;
+    /// <summary>
+    /// 满了（**真人 + 机器人**都算）。
+    /// <para>⚠️ `_bots.Count == 0` 时与"只看真人"**逐位等价** ⇒ 默认路径零行为变化。</para>
+    /// </summary>
+    public bool IsFull => (_seats.Count + _bots.Count) >= Capacity;
+
+    /// <summary>
+    /// **开局用的名单**：真人的 id + 机器人的 id。
+    /// <para>⭐ 存在的唯一理由：让"服务端开局用的名单"与"`ToState()` 下发给客户端的名单"
+    /// **是同一份**。两边不一致 ⇒ 两端用同一个纯函数推出**不同**的队伍 ⇒ 客户端报"分歧"
+    /// （假警报，且很难查）。</para>
+    /// </summary>
+    /// <returns>编号表（真人在前、机器人在后）。</returns>
+    public List<long> RosterIds
+    {
+        get
+        {
+            var ids = new List<long>(_seats.Count + _bots.Count);
+
+            for (int i = 0; i < _seats.Count; i++)
+            {
+                ids.Add(_seats[i].Session.PlayerId);
+            }
+
+            for (int i = 0; i < _bots.Count; i++)
+            {
+                ids.Add(_bots[i].PlayerId);
+            }
+
+            return ids;
+        }
+    }
+
+    /// <summary>
+    /// 补一个**机器人席位**（调试用：让一个人也能把房间填满 ⇒ 相位置 `Running` ⇒ 锁步开局）。
+    ///
+    /// <para>⚠️ 为什么不塞进 `Seats`：`RoomSeat` 持有**非空** `ClientSession`（合成席位没有会话），
+    /// 而 `seat.Session` 在状态同步链里有 6 处直接解引用（`RoomService` / `RoomBattleService` /
+    /// 两个 broadcaster）⇒ 要么动那条链、要么留可空警告，两条都不该走。
+    /// 放独立名单后：那条链遍历 `Seats` ⇒ **机器人对它们不存在** ⇒ 零改动、零新警告。</para>
+    /// <para>⚠️ 它对会话是**查不到**的：`Find(ClientSession)` / `FindByPlayerId` 都只看 `Seats`
+    /// —— 这正是"机器人不可被会话查找"。</para>
+    /// </summary>
+    /// <param name="playerId">机器人编号（**用保留段 `BotIdBase` 起**）。</param>
+    /// <param name="playerName">名字（显示用）。</param>
+    /// <returns>加进去的机器人。</returns>
+    public RoomBot AddBot(long playerId, string playerName)
+    {
+        var bot = new RoomBot(playerId, string.IsNullOrEmpty(playerName) ? "Bot" + playerId : playerName);
+        _bots.Add(bot);
+
+        // ⚠️ 与"真人加进来"用**同一个**满员判据 ⇒ 相位机也在这里被触发（见 `Room.Add` 的说明）
+        if (IsFull && Phase == RoomPhase.Waiting)
+        {
+            Phase = RoomPhase.Running;
+        }
+
+        return bot;
+    }
 
     /// <summary>造一个房间。</summary>
     /// <param name="roomId">房间号。</param>
@@ -242,7 +315,46 @@ public sealed class Room
             });
         }
 
+        // ⚠️ M4-S4 S4-e：**机器人也要下发** —— 客户端是从这份成员名单推队伍的
+        //    （`SortedTeamMap`）。不下发 ⇒ 服务端开局名单里有它们、客户端推出来的没有
+        //    ⇒ **两端队伍映射不同** ⇒ 客户端报"分歧"（假警报，且很难查）。
+        for (int i = 0; i < _bots.Count; i++)
+        {
+            state.Members.Add(new RoomMember
+            {
+                PlayerId = _bots[i].PlayerId,
+                PlayerName = _bots[i].PlayerName,
+                IsHost = false,
+                Ready = _bots[i].Ready,
+            });
+        }
+
         return state;
+    }
+}
+
+/// <summary>
+/// 一个**机器人席位**（调试用：把房间填满，让一个人也能验锁步）。
+/// <para>⚠️ 与 `RoomSeat` 分开正是为了**不碰状态同步链**（见 `Room.AddBot` 的说明）。</para>
+/// </summary>
+public sealed class RoomBot
+{
+    /// <summary>机器人编号（**保留段 `Room.BotIdBase` 起**）。</summary>
+    public long PlayerId { get; }
+
+    /// <summary>名字（显示用）。</summary>
+    public string PlayerName { get; }
+
+    /// <summary>就绪（机器人恒就绪 —— 它们不会自己去点按钮）。</summary>
+    public bool Ready => true;
+
+    /// <summary>造一个。</summary>
+    /// <param name="playerId">编号。</param>
+    /// <param name="playerName">名字。</param>
+    public RoomBot(long playerId, string playerName)
+    {
+        PlayerId = playerId;
+        PlayerName = playerName;
     }
 }
 

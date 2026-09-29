@@ -257,6 +257,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【三十一】M4-S4 S4-e：锁步世界 → `WorldSnapshot` 适配器（喂真 `SnapshotView`）");
             LockstepSnapshotAdapter_Checks();
 
+            Console.WriteLine();
+            Console.WriteLine("【三十二】M4-S4 S4-e：机器人席位（`--fill-seats` 的底座）+ **开局名单 == 下发名单**");
+            RoomBots_FillSeats();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5959,6 +5963,132 @@ namespace NBC.NetProbe
             Check("§S4e：阳性对照 —— **空世界 ⇒ 不炸**、且把目标清空（`EntityCount == 0`）",
                 emptyOk && emptySnapshot.Entities.Count == 0,
                 "ok=" + emptyOk + "；实体=" + emptySnapshot.Entities.Count);
+        }
+
+        /// <summary>
+        /// 【三十二】`--fill-seats` 的底座：**机器人席位**（S4-e 第 ① 件）。
+        ///
+        /// <para>⚠️ 只验**能验的部分**：机器人在 `Room`/`RoomRegistry` 这一层的行为 + ⭐
+        /// "开局名单 == 下发名单"那条等式。**`--fill-seats` 的参数解析在 Host 里、探针够不到** ——
+        /// 那一条靠 `§35.0` 的人工步骤。</para>
+        /// </summary>
+        private static void RoomBots_FillSeats()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    h.ConnectAndHandshake("补位" + i);
+                }
+
+                if (h.Sessions.Count < 4)
+                {
+                    Check("§S4e2：阳性对照 —— 备齐 4 个会话", false, "会话数=" + h.Sessions.Count);
+                    return;
+                }
+
+                int n = h.Sessions.Count;
+                var room = new Room("bot-probe", 0, 4);
+
+                // ---- ① 机器人 = 0 时：`IsFull` 与"只看真人"**逐位等价**（默认零行为变化）----
+                room.Add(h.Sessions[n - 4], "p0");
+                room.Add(h.Sessions[n - 3], "p1");
+                room.Add(h.Sessions[n - 2], "p2");
+
+                Check("§S4e2⭐ **机器人 = 0 时行为不变**：3/4 真人 ⇒ 没满、相位仍是 `Waiting`",
+                    !room.IsFull && room.Phase == RoomPhase.Waiting && room.BotCount == 0,
+                    "满=" + room.IsFull + "；相位=" + room.Phase + "；机器人=" + room.BotCount);
+
+                // ---- ② 补到 4 ⇒ 满员 ⇒ `Running`（这就是"一个人也能开局"的机制）----
+                room.AddBot(Room.BotIdBase, "Bot1");
+
+                Check("§S4e2⭐ **机器人也计入满员**：补 1 个 ⇒ 4/4 ⇒ 满、相位置 `Running`",
+                    room.IsFull && room.Phase == RoomPhase.Running && room.BotCount == 1 &&
+                    room.SeatCount == 3,
+                    "满=" + room.IsFull + "；相位=" + room.Phase + "；真人=" + room.SeatCount +
+                    "；机器人=" + room.BotCount);
+
+                // ---- ③ 保留段 + 不与真人撞 ----
+                bool inRange = true;
+                bool clash = false;
+
+                for (int i = 0; i < room.Bots.Count; i++)
+                {
+                    if (room.Bots[i].PlayerId < Room.BotIdBase)
+                    {
+                        inRange = false;
+                    }
+
+                    for (int s = 0; s < room.Seats.Count; s++)
+                    {
+                        if (room.Seats[s].Session.PlayerId == room.Bots[i].PlayerId)
+                        {
+                            clash = true;
+                        }
+                    }
+                }
+
+                Check("§S4e2⭐ 机器人编号落在**保留段**（`>= BotIdBase`）且**不与真人撞**",
+                    inRange && !clash && Room.BotIdBase > 0,
+                    "段起点=" + Room.BotIdBase + "；越界=" + (!inRange) + "；撞=" + clash);
+
+                // ---- ④ 机器人**不可被会话查找**（`Find`/`FindByPlayerId` 只看 `Seats`）----
+                Check("§S4e2：机器人**不可被会话查找**（`FindByPlayerId` 只看 `Seats`）",
+                    room.FindByPlayerId(Room.BotIdBase) == null,
+                    "居然查到了 ⇒ 说明机器人混进了 `Seats`");
+
+                // ---- ⑤ ⭐⭐ 本轮最重要的一条：**开局名单 == 下发名单**（同一个集合）----
+                List<long> roster = room.RosterIds;                 // Host 开局用的
+                RoomState state = room.ToState();                   // 下发给客户端的
+
+                var fromRoster = new List<long>(roster);
+                var fromState = new List<long>(state.Members.Count);
+
+                for (int i = 0; i < state.Members.Count; i++)
+                {
+                    fromState.Add(state.Members[i].PlayerId);
+                }
+
+                fromRoster.Sort();
+                fromState.Sort();
+
+                bool same = fromRoster.Count == fromState.Count;
+
+                if (same)
+                {
+                    for (int i = 0; i < fromRoster.Count; i++)
+                    {
+                        if (fromRoster[i] != fromState[i])
+                        {
+                            same = false;
+                        }
+                    }
+                }
+
+                Check("§S4e2⭐⭐ **开局名单 == 下发名单**（同一个集合）—— 不一致 ⇒ 两端队伍映射不同 ⇒ **假分歧**",
+                    same && fromRoster.Count == 4,
+                    "roster=" + string.Join(",", fromRoster.ConvertAll(x => x.ToString()).ToArray()) +
+                    " 下发=" + string.Join(",", fromState.ConvertAll(x => x.ToString()).ToArray()));
+
+                // ⭐ 而且两端用**同一个纯函数**推出的队伍也一致（这才是"假分歧"真正要防的）
+                var teamFromRoster = new SortedTeamMap(roster);
+                var teamFromState = new SortedTeamMap(fromState);
+
+                bool teamsSame = true;
+
+                for (int i = 0; i < fromState.Count; i++)
+                {
+                    int id = (int)fromState[i];
+
+                    if (teamFromRoster.TeamOf(id) != teamFromState.TeamOf(id))
+                    {
+                        teamsSame = false;
+                    }
+                }
+
+                Check("§S4e2⭐⭐：而且两端推出的**队伍映射逐项相同**（同一个 `SortedTeamMap` + 同一份名单）",
+                    teamsSame, "两端队伍映射不一致 ⇒ 客户端会报假分歧");
+            }
         }
 
         private static QuestTables LoadQuestTables()

@@ -89,6 +89,9 @@ internal static class Program
         AppDomain.CurrentDomain.ProcessExit += (_, _) => s_log.Flush();
         int port = config.ListenPort;
         int tickLimit = ReadIntArg(args, "--ticks", 0);          // 0 = 一直跑
+
+            // ⚠️ M4-S4 S4-e：调试用 —— 房间进第一个真人后补足到 N 个机器人席位（**默认 0 = 零行为变化**）。
+            int fillSeats = ReadIntArg(args, "--fill-seats", 0);
         bool quiet = HasFlag(args, "--quiet") || config.QuietByConfig;
 
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
@@ -485,6 +488,31 @@ internal static class Program
             {
                 battles.Tick();
 
+                // ---- ②″ 调试开关：`--fill-seats=N`（**默认 0 = 零行为变化**）----------------
+                // ⚠️ M4-S4 S4-e：房间里有**第一个真人**之后，补足到 N 个**机器人席位**
+                //    （进 `Room.Bots`，**不进 `Seats`** —— 见 `Room.AddBot` 的说明）。
+                //    目的：一个人也能把房间填满 ⇒ 相位置 `Running` ⇒ 锁步开局 ⇒
+                //    **"帧号在推进"这条判据对负责人真能验到**（否则他只会看到"未创建"）。
+                // ⚠️ 机器人只走"房间表"这一层（`ToState` 下发 + `RosterIds` 开局名单），
+                //    **状态同步链（`RoomBattleService` 等）遍历的是 `Seats` ⇒ 对它们不可见** ⇒ 零改动。
+                if (fillSeats > 0)
+                {
+                    foreach (Room fillRoom in rooms.Registry.Rooms)
+                    {
+                        if (fillRoom.SeatCount == 0)
+                        {
+                            continue;   // 没有真人 ⇒ 不补（别凭空把空房间填满）
+                        }
+
+                        // ⚠️ 编号用**保留段** `Room.BotIdBase` 起，且只在本房内唯一
+                        //    （队伍映射与锁步世界都是**按房**算的 ⇒ 跨房重号无害）
+                        for (int slot = fillRoom.SeatCount + fillRoom.BotCount; slot < fillSeats; slot++)
+                        {
+                            fillRoom.AddBot(Room.BotIdBase + slot, "Bot" + slot);
+                        }
+                    }
+                }
+
                 // ---- ②′ 锁步：同一格里推进（每 tick **一次**）----------------
                 // ⚠️ **不要**在外面套 `while`：`LockstepService.Tick()` 内部已按房间各调一次
                 //    `AdvanceTick`，而 `AdvanceTick` 自己会把服务端时钟 ++ ⇒ 稳态恒返回 true
@@ -502,14 +530,11 @@ internal static class Program
                         continue;
                     }
 
-                    var members = new List<long>(lockstepRoom.SeatCount);
-
-                    for (int s = 0; s < lockstepRoom.Seats.Count; s++)
-                    {
-                        members.Add(lockstepRoom.Seats[s].Session.PlayerId);
-                    }
-
-                    lockstep.StartRoom(lockstepRoom.RoomId, LockstepRoster.Build(members), lockstepDelayTicks);
+                    // ⭐ 用 `RosterIds`（真人 + 机器人）—— **必须与 `ToState()` 下发给客户端的
+                    //    那份名单是同一个集合**，否则两端用同一个纯函数推出**不同**的队伍
+                    //    ⇒ 客户端报"分歧"（假警报，很难查）。探针里有专门一条断言这个等式。
+                    lockstep.StartRoom(
+                        lockstepRoom.RoomId, LockstepRoster.Build(lockstepRoom.RosterIds), lockstepDelayTicks);
                 }
 
                 lockstep.Tick();
