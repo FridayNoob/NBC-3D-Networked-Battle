@@ -63,6 +63,10 @@ namespace NBC.Server.Game
         private readonly List<RoomLockstep> m_rooms = new List<RoomLockstep>();
 
         /// <summary>累计广播出去的帧数。</summary>
+        private long m_duplicateStarts;
+
+        private long m_roomsDropped;
+
         private long m_broadcastFrames;
 
         /// <summary>累计被单飞闸挡下来的 tick 次数（⚠️ 见文件头 ②：闸要看得见）。</summary>
@@ -90,6 +94,34 @@ namespace NBC.Server.Game
         public event Action<string>? Note;
 
         /// <summary>累计广播了几帧。</summary>
+        /// <summary>这个房号是不是已经开过局了（主循环据此**先问再开**，避免每 tick 撞闸）。</summary>
+        /// <param name="roomId">房号。</param>
+        /// <returns>已经在跑返回 true。</returns>
+        public bool HasRoom(string roomId)
+        {
+            for (int i = 0; i < m_rooms.Count; i++)
+            {
+                if (m_rooms[i].RoomId == roomId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>累计挡下的重复开局次数（**应当恒为 0**；非 0 就是有第二条开局路径）。</summary>
+        public long DuplicateStarts
+        {
+            get { return m_duplicateStarts; }
+        }
+
+        /// <summary>房间从表里消失时被摘掉的次数（防泄漏）。</summary>
+        public long RoomsDropped
+        {
+            get { return m_roomsDropped; }
+        }
+
         public long BroadcastFrames
         {
             get { return m_broadcastFrames; }
@@ -112,7 +144,7 @@ namespace NBC.Server.Game
         public string Describe()
         {
             return "锁步：开局 " + m_started + " 个房、广播 " + m_broadcastFrames +
-                   " 帧、挡 " + m_guardBlocked + " 次、拒 " + m_rejectedInputs + " 条";
+                   " 帧、挡 " + m_guardBlocked + " 次、拒 " + m_rejectedInputs + " 条、重复开局 " + m_duplicateStarts + " 次、摘房 " + m_roomsDropped + " 个";
         }
 
         /// <summary>把处理器注册进路由（**显式注册**）。</summary>
@@ -142,6 +174,19 @@ namespace NBC.Server.Game
             if (room == null)
             {
                 Note?.Invoke("锁步开局失败：房号 " + roomId + " 不在房间表里");
+                return false;
+            }
+
+            // ⚠️ **闸：只开局一次**（2026-09-28 加）。
+            //    没有这道闸时 `StartRoom` 会**每次调用都重建世界** —— 主循环里每 tick 调一次
+            //    就等于"世界永远停在第 0 帧、还每帧重发一次开局"。
+            //    ⚠️ 闸放在**这里**而不是放调用方：调用方会忘，闸不会忘。
+            if (HasRoom(roomId))
+            {
+                m_duplicateStarts++;
+
+                Note?.Invoke("锁步开局被挡：房号 " + roomId + " 已经开过局了（重复开局计数 " +
+                             m_duplicateStarts + "）");
                 return false;
             }
 
@@ -219,6 +264,17 @@ namespace NBC.Server.Game
         public int Tick()
         {
             int broadcast = 0;
+
+            // ⚠️ 先摘掉**已经不在房间表里**的锁步房（房间被销毁/清空时防泄漏）。
+            //    倒着遍历才能安全 RemoveAt；`RoomsDropped` 因此是个**真实**计数而不是装饰。
+            for (int i = m_rooms.Count - 1; i >= 0; i--)
+            {
+                if (FindRoom(m_rooms[i].RoomId) == null)
+                {
+                    m_rooms.RemoveAt(i);
+                    m_roomsDropped++;
+                }
+            }
 
             for (int i = 0; i < m_rooms.Count; i++)
             {

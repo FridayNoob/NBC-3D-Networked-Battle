@@ -34,7 +34,8 @@ using NBC.Protocol;
 using NBC.Framework.Log;        // SRV-14：日志（**与客户端编同一份源码**，见 NBC.Server.Core.csproj）
 using NBC.Server.Core;
 using NBC.Server.Data;          // SRV-13：战绩落库（`BattleRecordDao` / `BattleRecordWriter`）
-using NBC.Server.Game;          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
+using NBC.Server.Game;
+using NBC.Shared.Sim;      // M4-S4 S4-c：`LockstepRoster`（按 player_id 升序生成开局实体表）          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
 using NBC.Shared;
 using NBC.Shared.Net;
 
@@ -283,6 +284,19 @@ internal static class Program
 
         // 状态同步（S5）：每个房间一个权威世界，每逻辑帧推进并下发全量快照（30Hz）
         var battles = new RoomBattleService(transport, rooms.Registry, tables);
+
+        // ==================================================================
+        //  M4-S4 S4-c：**锁步（帧同步）服务端**（§三十三）
+        //  ⚠️ 它**不依赖数据库** ⇒ 与成就/任务那两块分开构造（那两块没库就不接）。
+        //  ⚠️ tick 归属：挂进现有主循环同一格（**不另起计时器**）—— 两个计时源会在同一房间
+        //     交错调 AdvanceTick，`StepsExecuted` 与广播帧数立刻分叉。
+        // ==================================================================
+        var lockstep = new LockstepService(transport, rooms.Registry);
+        lockstep.Note += line => Log(quiet, "[锁步] " + line);
+        lockstep.RegisterHandlers(router);
+
+        // 固定输入延迟（tick）；与 LockstepScheduler 的默认语义一致（见 §32.2）
+        const int lockstepDelayTicks = 2;
         battles.Note += line => Log(quiet, "[战斗] " + line);
 
         // 输入上行（S5b）：客户端只发**意图**，服务端说了算（动多远、打不打得到）
@@ -444,7 +458,7 @@ internal static class Program
 
         Say(string.Empty);
         Say($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
-        Say($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input + QuestAction（§二十六）");
+        Say($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input + QuestAction（§二十六）+ LockstepInput（§三十三）");
         Say($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
         Say("       按 Ctrl+C 退出。");
         Say(string.Empty);
@@ -470,6 +484,31 @@ internal static class Program
             for (int i = 0; i < ticks; i++)
             {
                 battles.Tick();
+
+                // ---- ②′ 锁步：同一格里推进（每 tick **一次**）----------------
+                // ⚠️ **不要**在外面套 `while`：`LockstepService.Tick()` 内部已按房间各调一次
+                //    `AdvanceTick`，而 `AdvanceTick` 自己会把服务端时钟 ++ ⇒ 稳态恒返回 true
+                //    （2026-09-28 修掉的死循环就是这个形状）。
+                // ⚠️ 开局**懒执行**：房间满了、且还没开过局 ⇒ 开一次。
+                //    "只开局一次"的闸在 `LockstepService.StartRoom` 里（调用方会忘，闸不会忘）。
+                foreach (Room lockstepRoom in rooms.Registry.Rooms)
+                {
+                    if (!lockstepRoom.IsFull || lockstep.HasRoom(lockstepRoom.RoomId))
+                    {
+                        continue;
+                    }
+
+                    var members = new List<long>(lockstepRoom.SeatCount);
+
+                    for (int s = 0; s < lockstepRoom.Seats.Count; s++)
+                    {
+                        members.Add(lockstepRoom.Seats[s].Session.PlayerId);
+                    }
+
+                    lockstep.StartRoom(lockstepRoom.RoomId, LockstepRoster.Build(members), lockstepDelayTicks);
+                }
+
+                lockstep.Tick();
             }
 
             if (tickLimit > 0 && scheduler.CurrentTick >= tickLimit)
@@ -538,6 +577,7 @@ internal static class Program
             Say($"[统计] {accounts.Describe()}");
         }
         Say($"[统计] {loginAudit.DescribeStats()}");
+        Say($"[统计] {lockstep.Describe()}");
         if (achievements != null)
         {
             Say($"[统计] {achievements.Describe()}");
