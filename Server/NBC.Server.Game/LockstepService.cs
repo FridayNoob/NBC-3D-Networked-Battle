@@ -227,6 +227,10 @@ namespace NBC.Server.Game
             state.World = world;
             state.Scheduler = new LockstepScheduler(world, roster, delayTicks);
 
+            // ⚠️ 队伍映射**开局时就定下来**（用同一个共享纯函数、同一份成员名单）：
+            //    与客户端从 `RoomState` 成员名单推出来的**必须是同一个函数** ⇒ 否则两端判定会漂。
+            state.Teams = new SortedTeamMap(roster);
+
             m_rooms.Add(state);
             m_started++;
 
@@ -302,11 +306,21 @@ namespace NBC.Server.Game
                     // ⚠️ 先取出并判空（Scheduler 是可空字段）：否则每帧都在解引用一个可能为 null 的字段。
                     LockstepScheduler? scheduler = state.Scheduler;
 
+                    // ⚠️ **已宣布结果的房间要从推进路径摘掉**：宣布之后不再 `AdvanceTick`
+                    //    ⇒ `StepsExecuted` **不再涨**（"比赛结束了"要真的停，不能只在文案上停）。
+                    if (state.Finished)
+                    {
+                        continue;
+                    }
+
                     if (scheduler != null && scheduler.AdvanceTick(out plan))
                     {
                         Broadcast(plan, state);
                         broadcast++;
                         m_broadcastFrames++;
+
+                        // ⚠️ 推进/广播完**这一帧之后**判胜负（**只宣布一次** —— 闸在 `AnnounceIfDecided` 里）
+                        AnnounceIfDecided(state);
                     }
                 }
                 finally
@@ -316,6 +330,67 @@ namespace NBC.Server.Game
             }
 
             return broadcast;
+        }
+
+        /// <summary>本服务宣布过几局结果（**每房最多一次**）。</summary>
+        private int m_matchesAnnounced;
+
+        /// <summary>已宣布的结果局数（探针/统计用）。</summary>
+        public int MatchesAnnounced
+        {
+            get { return m_matchesAnnounced; }
+        }
+
+        /// <summary>
+        /// 判这个房间的胜负；**判定出来才**广播 `MatchResult` 并把它摘出推进路径。
+        ///
+        /// <para>⚠️ 三条纪律：① 未结束 ⇒ **什么都不做**（不广播）；② **只宣布一次**（`state.Finished` 是闸，
+        /// 不是装饰 —— 没有它就是每 tick 重播一条）；③ 算出结果的那一刻就把 `Finished` 打上
+        /// ⇒ 后续 `Tick()` 连 `AdvanceTick` 都不再调（`StepsExecuted` 停住）。</para>
+        /// </summary>
+        /// <param name="state">房间锁步状态。</param>
+        private void AnnounceIfDecided(RoomLockstep state)
+        {
+            if (state.Finished || state.World == null || state.Teams == null)
+            {
+                return;
+            }
+
+            int killsA;
+            int killsB;
+
+            // ⚠️ 与客户端**同一份**共享逻辑（`CountKills` 走 `SnapshotSorted` ⇒ 与登记顺序无关）
+            MatchRules.CountKills(state.World, state.Teams, out killsA, out killsB);
+
+            EMatchOutcome outcome = MatchRules.Decide(killsA, killsB, state.World.Tick);
+
+            if (outcome == EMatchOutcome.Undecided)
+            {
+                return;     // ① 未结束 ⇒ **不广播**（"别让任何世界都判赢"那条守的就是这里）
+            }
+
+            Room? room = FindRoom(state.RoomId);
+
+            if (room == null)
+            {
+                return;
+            }
+
+            var result = new MatchResult();
+            result.Frame = state.World.Tick;
+            result.Outcome = MatchRules.ToNumber(outcome);
+            result.KillsA = killsA;     // ⚠️ **一定带上**：客户端要拿它**复算**，不然只能比结论、比不出原因
+            result.KillsB = killsB;
+
+            int sent = SendToRoom(room, new ServerMessage { MatchResult = result });
+
+            // ② 打上闸（**只宣布一次**）+ ③ 从此不再推进
+            state.Finished = true;
+            m_matchesAnnounced++;
+
+            Note?.Invoke("锁步胜负（" + state.RoomId + "）：第 " + result.Frame + " 帧 ⇒ " +
+                         MatchRules.Describe(outcome) + "（击杀 " + killsA + "/" + killsB +
+                         "）、发给 " + sent + " 个会话、**该房停止推进**");
         }
 
         /// <summary>处理一条锁步输入（**失败要回 `ErrorResponse` 带原因**，别静默）。</summary>
@@ -512,6 +587,12 @@ namespace NBC.Server.Game
 
             /// <summary>单飞闸（0 = 空闲，1 = 正在推进）。</summary>
             public int Advancing;
+
+            /// <summary>队伍映射（**开局时**由 `SortedTeamMap` 从同一份成员名单推出来；判胜负要用）。</summary>
+            public SortedTeamMap? Teams;
+
+            /// <summary>结果**已经宣布过**（⇒ 该房从推进路径摘掉，且**只宣布一次**）。</summary>
+            public bool Finished;
         }
     }
 }

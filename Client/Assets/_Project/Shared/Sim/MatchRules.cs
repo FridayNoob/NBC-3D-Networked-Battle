@@ -100,10 +100,22 @@ namespace NBC.Shared.Sim
     /// <summary>2v2 的规则常量与判定（**纯函数**：不读时钟、不读全局）。</summary>
     public static class MatchRules
     {
-        /// <summary>击杀数达标（先到这个数的队赢）。</summary>
-        public const int KillsToWin = 5;
+        /// <summary>
+        /// 击杀数达标（先到这个数的队赢）。
+        /// <para>⚠️ **必须 ≤ `LockstepTeams.TeamSize`** —— 否则这条规则**在真实 2v2 里不可达**
+        /// （每队只有 2 个敌人，且本片没有复活），就成了**死分支**。
+        /// 第一版我写了 5 ⇒ 规则①永远触发不了、只剩限时能决出胜负；由 W25 的"可达性"检查守着
+        /// （探针里有 `KillsToWin &lt;= TeamSize` 那条）。</para>
+        /// </summary>
+        public const int KillsToWin = 2;      // 2v2 = 团灭对方（与 TeamSize 相等）
 
-        /// <summary>限时（tick）—— 跑满就按击杀多者判。</summary>
+        /// <summary>
+        /// 限时（tick）—— 跑满就按击杀多者判。
+        /// <para>⚠️ 它的角色是**僵局上限**（stalemate cap），不是主要取胜路径：主路径是"团灭对方"（2 击杀）。
+        /// 60 秒 @30Hz：本 Demo 伤害固定 25、血量 100 ⇒ 四下打死一个人，正常对局远用不到 60 秒；
+        /// 这个值只在"双方都不打"时兜底（那时 0/0 ⇒ 平局，是**有意义的**结果而不是挂死）。
+        /// 保持 1800 <b>不变</b>：调小会让正常对局被"时间到"打断，调大只是让僵局多耗一会儿。</para>
+        /// </summary>
         public const int MaxTicks = 1800;      // 30Hz ⇒ 60 秒
 
         /// <summary>
@@ -253,5 +265,49 @@ namespace NBC.Shared.Sim
         /// <param name="entityId">实体编号。</param>
         /// <returns>队号（0/1）；不在对局里返回 −1。</returns>
         int TeamOf(int entityId);
+    }
+
+    /// <summary>
+    /// 从成员名单推导出来的队伍映射（**服务端与客户端共用同一个实现**）。
+    /// <para>⚠️ 只此一份：两端各写一份映射就是两处会不一致的地方（而它直接决定谁赢）。</para>
+    /// </summary>
+    public sealed class SortedTeamMap : EntityTeam
+    {
+        /// <summary>规范化后的成员编号（升序）。</summary>
+        private readonly List<long> m_ordered;
+
+        /// <summary>按成员名单建映射（内部走 `LockstepTeams`，所以"升序 + 交替"只有一份实现）。</summary>
+        /// <param name="members">成员编号（顺序无所谓）。</param>
+        public SortedTeamMap(IReadOnlyList<long> members)
+        {
+            List<int> teamOf = LockstepTeams.BuildTeamIndex(members, out m_ordered);
+
+            // ⚠️ 这里刻意不用 `teamOf`（它按序号存）—— 查的时候用序号取模是同一个规则，
+            //    但**只保留一处**：`LockstepTeams.BuildTeamIndex` 是唯一决定"谁在哪队"的地方。
+            if (teamOf.Count != m_ordered.Count)
+            {
+                m_ordered = new List<long>();      // 理论上到不了；防御一下免得越界
+            }
+        }
+
+        /// <inheritdoc/>
+        public int TeamOf(int entityId)
+        {
+            for (int i = 0; i < m_ordered.Count; i++)
+            {
+                if (m_ordered[i] == entityId)
+                {
+                    return i % 2;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>名单里有几个人（排查用）。</summary>
+        public int Count
+        {
+            get { return m_ordered.Count; }
+        }
     }
 }
