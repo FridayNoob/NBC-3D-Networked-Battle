@@ -237,6 +237,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十六】M4-S4 S4-c 收尾：**假传输驱动真 `NetSession`**（喂协议 → 转普通数据 → 喂运行器）");
             NetSession_LockstepWireUp();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十七】M4-S4 S4-d：2v2 **队伍与胜负**（共享层纯函数，直驱）");
+            MatchRules_TeamsAndVerdict();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5215,6 +5219,141 @@ namespace NBC.NetProbe
                 "player=" + plainMissing.PlayerId + "；Missing=" + plainMissing.Missing);
 
             session.Dispose();
+        }
+
+        /// <summary>探针用的「实体 → 队号」查询（照 `EntityTeam` 接口实现）。</summary>
+        private sealed class ProbeTeam : EntityTeam
+        {
+            /// <summary>映射。</summary>
+            private readonly Dictionary<int, int> m_map = new Dictionary<int, int>();
+
+            /// <summary>设一条。</summary>
+            /// <param name="entityId">实体编号。</param>
+            /// <param name="team">队号。</param>
+            public void Set(int entityId, int team)
+            {
+                m_map[entityId] = team;
+            }
+
+            /// <inheritdoc/>
+            public int TeamOf(int entityId)
+            {
+                int team;
+                return m_map.TryGetValue(entityId, out team) ? team : -1;
+            }
+        }
+
+        /// <summary>
+        /// 【二十七】2v2 的**队伍与胜负**（S4-d 第一步：共享层纯函数，直驱）。
+        ///
+        /// <para>⚠️ 每一条都要能「因为错而红」：第 ④ 条是**阳性对照**（别让「任何世界都判赢」也能过）。</para>
+        /// </summary>
+        private static void MatchRules_TeamsAndVerdict()
+        {
+            // ---- ① 队伍分配：**顺序无关**（含重复号、含 0/负数）----
+            List<long> orderedA;
+            List<long> orderedB;
+
+            List<int> teamA = LockstepTeams.BuildTeamIndex(new List<long> { 4, 1, 3, 2 }, out orderedA);
+            List<int> teamB = LockstepTeams.BuildTeamIndex(new List<long> { 2, 4, 3, 1, 1, 0, -5 }, out orderedB);
+
+            Check("§S4d：阳性对照 —— 名单非空（否则下面的「顺序无关」是空话）",
+                orderedA.Count == 4, "规范化后有 " + orderedA.Count + " 个成员");
+
+            bool sameOrder = orderedA.Count == orderedB.Count;
+            bool sameTeam = sameOrder && teamA.Count == teamB.Count;
+
+            if (sameOrder)
+            {
+                for (int i = 0; i < orderedA.Count; i++)
+                {
+                    if (orderedA[i] != orderedB[i])
+                    {
+                        sameOrder = false;
+                    }
+
+                    if (teamA[i] != teamB[i])
+                    {
+                        sameTeam = false;
+                    }
+                }
+            }
+
+            Check("§S4d⭐ **队伍分配顺序无关**：打乱（且带重复号/0/负数）⇒ 规范化名单逐项相同",
+                sameOrder, "A=" + string.Join(",", orderedA.ConvertAll(x => x.ToString()).ToArray()) +
+                " B=" + string.Join(",", orderedB.ConvertAll(x => x.ToString()).ToArray()));
+
+            Check("§S4d⭐：而且**队号也逐项相同**（1,2 → A；3,4 → B，按 id 升序交替）",
+                sameTeam && teamA.Count == 4 && teamA[0] == 0 && teamA[1] == 1 && teamA[2] == 0 && teamA[3] == 1,
+                "队号=" + string.Join(",", teamA.ConvertAll(x => x.ToString()).ToArray()));
+
+            // ---- ② 按击杀判胜（含「同 tick 两队都达到」这个最容易写错的分支）----
+            Check("§S4d⭐ A 队击杀达标 ⇒ **A 胜**",
+                MatchRules.Decide(MatchRules.KillsToWin, 0, 0) == EMatchOutcome.TeamA,
+                "判定=" + MatchRules.Decide(MatchRules.KillsToWin, 0, 0));
+
+            Check("§S4d⭐ B 队击杀达标 ⇒ **B 胜**",
+                MatchRules.Decide(0, MatchRules.KillsToWin, 0) == EMatchOutcome.TeamB,
+                "判定=" + MatchRules.Decide(0, MatchRules.KillsToWin, 0));
+
+            Check("§S4d⭐ **同 tick 两队都达标、击杀数相等 ⇒ 平**（最易写错的分支）",
+                MatchRules.Decide(MatchRules.KillsToWin, MatchRules.KillsToWin, 0) == EMatchOutcome.Draw,
+                "判定=" + MatchRules.Decide(MatchRules.KillsToWin, MatchRules.KillsToWin, 0));
+
+            Check("§S4d⭐ **同 tick 两队都达标、A 多一个 ⇒ A 胜**",
+                MatchRules.Decide(MatchRules.KillsToWin + 1, MatchRules.KillsToWin, 0) == EMatchOutcome.TeamA,
+                "判定=" + MatchRules.Decide(MatchRules.KillsToWin + 1, MatchRules.KillsToWin, 0));
+
+            // ---- ③ 按限时判胜 ----
+            Check("§S4d⭐ **跑满限时**、A 击杀多 ⇒ A 胜",
+                MatchRules.Decide(3, 1, MatchRules.MaxTicks) == EMatchOutcome.TeamA,
+                "判定=" + MatchRules.Decide(3, 1, MatchRules.MaxTicks));
+
+            Check("§S4d⭐ **跑满限时**、击杀相等 ⇒ 平",
+                MatchRules.Decide(2, 2, MatchRules.MaxTicks) == EMatchOutcome.Draw,
+                "判定=" + MatchRules.Decide(2, 2, MatchRules.MaxTicks));
+
+            // ---- ④ 未结束（**阳性对照**）----
+            Check("§S4d⭐ **阳性对照**：谁都没达标、也没到限时 ⇒ **未结束**（别让「任何世界都判赢」也能过）",
+                MatchRules.Decide(0, 0, 0) == EMatchOutcome.Undecided &&
+                MatchRules.Decide(MatchRules.KillsToWin - 1, MatchRules.KillsToWin - 1, MatchRules.MaxTicks - 1)
+                    == EMatchOutcome.Undecided,
+                "判定=" + MatchRules.Decide(0, 0, 0) + " / " +
+                MatchRules.Decide(MatchRules.KillsToWin - 1, MatchRules.KillsToWin - 1, MatchRules.MaxTicks - 1));
+
+            // ---- ⑤ CountKills 与**登记顺序**无关 ----
+            var team = new ProbeTeam();
+            team.Set(1, 0);
+            team.Set(2, 0);
+            team.Set(3, 1);
+            team.Set(4, 1);
+
+            var worldA = new WorldState();
+            worldA.Add(1, new FixVector3(0, 0, 0), 0);      // 死（A 队）⇒ B 得一分
+            worldA.Add(2, new FixVector3(1, 0, 0), 100);    // 活
+            worldA.Add(3, new FixVector3(2, 0, 0), 0);      // 死（B 队）⇒ A 得一分
+            worldA.Add(4, new FixVector3(3, 0, 0), 0);      // 死（B 队）⇒ A 再得一分
+
+            var worldB = new WorldState();
+            worldB.Add(4, new FixVector3(3, 0, 0), 0);      // **登记顺序打乱**
+            worldB.Add(3, new FixVector3(2, 0, 0), 0);
+            worldB.Add(2, new FixVector3(1, 0, 0), 100);
+            worldB.Add(1, new FixVector3(0, 0, 0), 0);
+
+            int killsA1;
+            int killsB1;
+            int killsA2;
+            int killsB2;
+
+            MatchRules.CountKills(worldA, team, out killsA1, out killsB1);
+            MatchRules.CountKills(worldB, team, out killsA2, out killsB2);
+
+            Check("§S4d：阳性对照 —— 击杀数不是全 0（否则下面的「顺序无关」是空话）",
+                killsA1 > 0 && killsB1 > 0, "A=" + killsA1 + " B=" + killsB1);
+
+            Check("§S4d⭐ `CountKills` **与登记顺序无关**（走 `SnapshotSorted`）：2/1 与打乱后相同",
+                killsA1 == killsA2 && killsB1 == killsB2 && killsA1 == 2 && killsB1 == 1,
+                "顺序 A=" + killsA1 + "/" + killsB1 + "；打乱 " + killsA2 + "/" + killsB2);
         }
 
         private static QuestTables LoadQuestTables()
