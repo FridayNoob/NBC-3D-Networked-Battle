@@ -98,18 +98,18 @@
     <Compile Include="..\..\Client\Assets\_Project\Game\Quest\QuestStateReconciler.cs" />
 
     <!--
-      ★ M4-S4 S4-b：确定性战斗内核（`Shared\Sim\`）。
-      ⚠️ **必须显式列出来**：`NBC.Shared.csproj` 是 Unity 生成的**固定文件清单**，
-         新增文件它看不见 ⇒ 只靠 ProjectReference 编不到。
-      ⚠️ 这三个文件**在 `Check-FloatFree` 的扫描范围内**（它默认扫整个 `Shared\`）——
-         里面写一个 double，那条闸门就会红（这正是它存在的意义）。
-    -->
-    <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldState.cs" />
-    <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldStep.cs" />
-    <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldStateHash.cs" />
+      ★ M4-S4 S4-b/S4-c：确定性战斗内核与锁步调度（`Shared\Sim\`）。
 
-    <!-- ★ M4-S4 S4-c：锁步调度（同样引擎无关 ⇒ 探针能**直驱**，不必开 socket） -->
-    <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\LockstepScheduler.cs" />
+      ⚠️ 2026-09-28 实测踩过的坑：**不要**在这里显式列 `Shared\Sim\*.cs`。
+        `NBC.Shared.csproj` 是**通配**收源（`Client\Assets\_Project\Shared\**\*.cs`），
+        而本探针 ProjectReference 了它 ⇒ 那些类型**已经在** NBC.Shared 程序集里。
+        再显式列一遍，探针就会编出**第二份同名类型**，而报错长这样：
+            `参数 2: 无法从 List<SimEntity> 转换为 IReadOnlyList<SimEntity>`
+        看着像"类型转换失败"，其实是"**两个不同的 T**"。
+        ⇒ 判据：见到 List<T> 转不成 IReadOnlyList<T>，先怀疑"这是不是两个 T"。
+
+      （它们都在 `Check-FloatFree` 的扫描范围内 —— 里面写一个 double，那条闸门就会红。）
+    -->
   </ItemGroup>
 
   <ItemGroup>

@@ -237,7 +237,13 @@ namespace NBC.Server.Game
                 {
                     LockstepFramePlan plan;
 
-                    while (state.Scheduler.AdvanceTick(out plan))
+                    // ⚠️ **这里必须是"一次"，不能是 `while`**（2026-09-28 实测挂死）：
+                    //    `LockstepScheduler.AdvanceTick` 自己会把服务端时钟 `m_serverTick++`，
+                    //    然后"到点就推进一帧" ⇒ **稳态下它每次都返回 true**（时钟永远在走、
+                    //    帧永远到点）。写成 `while` 就是**死循环**，而且每轮还广播一帧
+                    //    （表现：`dotnet build` 全绿，跑起来永远不返回、连日志都吐不出来 —— 假绿）。
+                    //    ⇒ 语义是"主循环每走一格，调度器也走一格"，与本方法自己的注释一致。
+                    if (state.Scheduler.AdvanceTick(out plan))
                     {
                         Broadcast(plan, state);
                         broadcast++;
