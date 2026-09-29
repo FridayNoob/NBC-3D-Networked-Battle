@@ -220,6 +220,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十二】M4-S4 S4-b：**确定性内核 + 状态哈希**（逐帧相等 / 顺序无关 / 分歧能抓到）");
             DeterministicWorld_SameInputsSameHashes();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十三】M4-S4 S4-c：**锁步调度**（逐帧对账 / 缺输入 / 去重 / 乱序；纯逻辑直驱）");
+            LockstepScheduler_FramesMatchAcrossPeers();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -4089,6 +4093,235 @@ namespace NBC.NetProbe
             });
 
             return list;
+        }
+
+        /// <summary>造一个锁步用的世界（两个实体：玩家 1 在原点、玩家 2 在 1 米外）。</summary>
+        /// <returns>世界。</returns>
+        private static WorldState NewLockstepWorld()
+        {
+            var world = new WorldState();
+            world.Add(1, new FixVector3(0, 0, 0), 100);
+            world.Add(2, new FixVector3(1, 0, 0), 100);
+            return world;
+        }
+
+        /// <summary>
+        /// 【二十三】锁步调度（S4-c：**直驱纯逻辑，不开 socket**）。
+        ///
+        /// <para>⚠️ 这一节盯的是三条**静默**语义（`LockstepScheduler` 文件头写死了）：
+        /// 缺输入填默认 + `Missing`、重复/乱序按帧号处理、**同一帧只推进一次**。
+        /// 最后那条是锁步最经典的 bug：破了它两边的帧数会**悄悄错开**。</para>
+        /// </summary>
+        private static void LockstepScheduler_FramesMatchAcrossPeers()
+        {
+            var roster = new List<long> { 1, 2 };
+            const int frames = 24;
+
+            // 两个"端"：各自一个世界 + 一个调度器（模拟服务端与客户端各算一份）
+            WorldState serverWorld = NewLockstepWorld();
+            WorldState clientWorld = NewLockstepWorld();
+
+            var server = new LockstepScheduler(serverWorld, roster, LockstepScheduler.DefaultInputDelayTicks);
+            var client = new LockstepScheduler(clientWorld, roster, LockstepScheduler.DefaultInputDelayTicks);
+
+            int broadcastFrames = 0;
+            int hashMismatch = -1;
+            ulong mismatchA = 0;
+            ulong mismatchB = 0;
+
+            // ⚠️ 预交前 frames 帧的输入（两个端交**同一批值**）
+            for (int f = 0; f < frames; f++)
+            {
+                string ignored;
+
+                // 玩家 1 一直朝 +X 走
+                server.Submit(1, f, new FixVector3(1, 0, 0), 0, 0, out ignored);
+                client.Submit(1, f, new FixVector3(1, 0, 0), 0, 0, out ignored);
+
+                // 玩家 2 打玩家 1
+                server.Submit(2, f, FixVector3.Zero, 0, 1, out ignored);
+                client.Submit(2, f, FixVector3.Zero, 0, 1, out ignored);
+            }
+
+            // 跑足够多 tick，让所有帧都到点广播
+            for (int t = 0; t < frames + LockstepScheduler.DefaultInputDelayTicks + 2; t++)
+            {
+                LockstepFramePlan planA;
+                LockstepFramePlan planB;
+
+                bool steppedA = server.AdvanceTick(out planA);
+                bool steppedB = client.AdvanceTick(out planB);
+
+                if (steppedA != steppedB)
+                {
+                    Check("§S4c⭐：两个端**推进节奏一致**（同一 tick 都到点或都没到点）", false,
+                        "A=" + steppedA + " B=" + steppedB);
+                    return;
+                }
+
+                if (!steppedA)
+                {
+                    continue;
+                }
+
+                broadcastFrames++;
+
+                // ⭐ 逐帧对账：服务端算的哈希 == 客户端自己算的哈希
+                if (planA.ServerHash != planB.ServerHash && hashMismatch < 0)
+                {
+                    hashMismatch = planA.Frame;
+                    mismatchA = planA.ServerHash;
+                    mismatchB = planB.ServerHash;
+                }
+            }
+
+            Check("§S4c：阳性对照 —— 真的广播了足够多帧（否则下面全是空话）",
+                broadcastFrames >= frames, "广播了 " + broadcastFrames + " 帧（期望 ≥ " + frames + "）");
+
+            Check("§S4c⭐ **逐帧哈希对账**：服务端与客户端**每一帧都相等**（" + broadcastFrames + " 帧）",
+                hashMismatch < 0,
+                "第 " + hashMismatch + " 帧开始不等：" + mismatchA + " vs " + mismatchB);
+
+            Check("§S4c⭐：而且广播里的哈希 == 该世界独立算出来的哈希（不是另算一份）",
+                WorldStateHash.Compute(serverWorld) == WorldStateHash.Compute(clientWorld),
+                "终局哈希：" + WorldStateHash.Compute(serverWorld) + " vs " + WorldStateHash.Compute(clientWorld));
+
+            // ---- ⭐ 同一帧只推进一次（去重）----
+            Check("§S4c⭐ **同一帧只推进一次**：推进帧数 == 广播帧数（没有因为重复输入多推）",
+                server.StepsExecuted == broadcastFrames,
+                "StepsExecuted=" + server.StepsExecuted + " vs 广播 " + broadcastFrames + " 帧");
+
+            int rejectedBefore = server.RejectedInputs;
+            string dupReason;
+            bool dupAccepted = server.Submit(1, 5, new FixVector3(0, 1, 0), 0, 0, out dupReason);
+
+            Check("§S4c⭐ **重复输入被丢掉**：同一 (帧, 玩家) 再交一次 ⇒ 不采纳",
+                !dupAccepted && server.RejectedInputs > rejectedBefore,
+                "accepted=" + dupAccepted + "；原因=" + dupReason);
+
+            Check("§S4c⭐：而且**重复输入没有让世界多推一帧**（这就是那道闸）",
+                server.StepsExecuted == broadcastFrames,
+                "StepsExecuted=" + server.StepsExecuted + "（多出来 = 两边帧数悄悄错开）");
+
+            // ---- ⭐ 缺输入：玩家 2 从第 10 帧起不发 ----
+            WorldState missWorld = NewLockstepWorld();
+            var miss = new LockstepScheduler(missWorld, roster, LockstepScheduler.DefaultInputDelayTicks);
+
+            for (int f = 0; f < 12; f++)
+            {
+                string ignored;
+                miss.Submit(1, f, new FixVector3(1, 0, 0), 0, 0, out ignored);
+                // ⚠️ 玩家 2 故意**一条都不发**
+            }
+
+            int missingSeen = 0;
+            int framesSeen = 0;
+
+            for (int t = 0; t < 12 + LockstepScheduler.DefaultInputDelayTicks + 2; t++)
+            {
+                LockstepFramePlan plan;
+
+                if (!miss.AdvanceTick(out plan))
+                {
+                    continue;
+                }
+
+                framesSeen++;
+
+                for (int i = 0; i < plan.Inputs.Count; i++)
+                {
+                    if (plan.Inputs[i].PlayerId == 2 && plan.Inputs[i].Missing)
+                    {
+                        missingSeen++;
+                    }
+                }
+            }
+
+            Check("§S4c⭐ **缺输入看得见**：玩家 2 从没发输入 ⇒ 每一帧都带 `Missing = true`",
+                framesSeen > 0 && missingSeen == framesSeen,
+                "广播 " + framesSeen + " 帧，其中标了 Missing 的 " + missingSeen + " 条");
+
+            Check("§S4c：缺输入那帧仍然推进（不卡住）且 `Missing` 不阻止这一帧广播",
+                miss.StepsExecuted == framesSeen,
+                "StepsExecuted=" + miss.StepsExecuted + " vs 广播 " + framesSeen + " 帧");
+
+            // ---- ⭐ 乱序：第 N+2 帧的输入先到 ⇒ 缓冲，不许提前用 ----
+            WorldState orderA = NewLockstepWorld();
+            WorldState orderB = NewLockstepWorld();
+
+            var inOrder = new LockstepScheduler(orderA, roster, LockstepScheduler.DefaultInputDelayTicks);
+            var shuffled = new LockstepScheduler(orderB, roster, LockstepScheduler.DefaultInputDelayTicks);
+
+            // A：按 0,1,2 顺序交
+            for (int f = 0; f < 3; f++)
+            {
+                string ignored;
+                inOrder.Submit(1, f, f == 2 ? new FixVector3(0, 1, 0) : new FixVector3(1, 0, 0), 0, 0, out ignored);
+            }
+
+            // B：**倒着交**（第 2 帧先到，然后 1、0）
+            {
+                string ignored;
+                shuffled.Submit(1, 2, new FixVector3(0, 1, 0), 0, 0, out ignored);
+                shuffled.Submit(1, 1, new FixVector3(1, 0, 0), 0, 0, out ignored);
+                shuffled.Submit(1, 0, new FixVector3(1, 0, 0), 0, 0, out ignored);
+            }
+
+            bool sameEveryFrame = true;
+            string firstDiff = string.Empty;
+
+            for (int t = 0; t < 3 + LockstepScheduler.DefaultInputDelayTicks + 2; t++)
+            {
+                LockstepFramePlan pa;
+                LockstepFramePlan pb;
+
+                bool sa = inOrder.AdvanceTick(out pa);
+                bool sb = shuffled.AdvanceTick(out pb);
+
+                if (sa != sb || (sa && pa.ServerHash != pb.ServerHash))
+                {
+                    sameEveryFrame = false;
+
+                    if (firstDiff.Length == 0)
+                    {
+                        firstDiff = "tick " + t + "：A=" + (sa ? pa.ServerHash.ToString() : "无") +
+                                    " B=" + (sb ? pb.ServerHash.ToString() : "无");
+                    }
+                }
+            }
+
+            Check("§S4c⭐ **乱序输入不提前生效**：倒着交与顺着交 ⇒ 逐帧哈希相同",
+                sameEveryFrame, firstDiff);
+
+            // ---- ⭐ 阳性对照：分歧必须能被抓到 ----
+            WorldState divergeWorld = NewLockstepWorld();
+            var diverge = new LockstepScheduler(divergeWorld, roster, LockstepScheduler.DefaultInputDelayTicks);
+
+            for (int f = 0; f < frames; f++)
+            {
+                string ignored;
+
+                // ⚠️ 只差**一个方向分量**（0,1,0 vs 1,0,0）
+                diverge.Submit(1, f, new FixVector3(0, 1, 0), 0, 0, out ignored);
+                diverge.Submit(2, f, FixVector3.Zero, 0, 1, out ignored);
+            }
+
+            ulong divergedHash = 0;
+
+            for (int t = 0; t < frames + LockstepScheduler.DefaultInputDelayTicks + 2; t++)
+            {
+                LockstepFramePlan plan;
+
+                if (diverge.AdvanceTick(out plan))
+                {
+                    divergedHash = plan.ServerHash;
+                }
+            }
+
+            Check("§S4c⭐ **阳性对照**：一个端改一个输入分量 ⇒ 终局哈希**必须不等**",
+                divergedHash != WorldStateHash.Compute(serverWorld),
+                "改过的一端 " + divergedHash + " vs 正常端 " + WorldStateHash.Compute(serverWorld) +
+                "（相同 = 哈希恒为常量 ⇒ 前面那些「相等」全是假绿）");
         }
 
         private static QuestTables LoadQuestTables()

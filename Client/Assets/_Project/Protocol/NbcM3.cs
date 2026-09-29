@@ -67,23 +67,34 @@ namespace NBC.Protocol {
             "AiABKAUiMgoPUXVlc3RTdGF0ZUVudHJ5EhAKCHF1ZXN0X2lkGAEgASgFEg0K",
             "BXN0YXRlGAIgASgFIk8KDlF1ZXN0U3RhdGVTeW5jEigKB2VudHJpZXMYASAD",
             "KAsyFy5uYmMubTMuUXVlc3RTdGF0ZUVudHJ5EhMKC3NlcnZlcl90aWNrGAIg",
-            "ASgDIucCCg1TZXJ2ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsy",
-            "FC5uYmMubTMuSGFuZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5t",
-            "My5Qb25nSAASJwoKcm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3Rh",
-            "dGVIABIpCghzbmFwc2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90",
-            "SAASJAoFZXZlbnQYBSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVl",
-            "cnJvchgGIAEoCzIVLm5iYy5tMy5FcnJvclJlc3BvbnNlSAASLQoNcHJvZ3Jl",
-            "c3Nfc3luYxgHIAEoCzIULm5iYy5tMy5Qcm9ncmVzc1N5bmNIABItCgtxdWVz",
-            "dF9zdGF0ZRgIIAEoCzIWLm5iYy5tMy5RdWVzdFN0YXRlU3luY0gAQgkKB3Bh",
-            "eWxvYWQimAIKDUNsaWVudE1lc3NhZ2USJgoJaGFuZHNoYWtlGAEgASgLMhEu",
-            "bmJjLm0zLkhhbmRzaGFrZUgAEhwKBHBpbmcYAiABKAsyDC5uYmMubTMuUGlu",
-            "Z0gAEiwKCWpvaW5fcm9vbRgDIAEoCzIXLm5iYy5tMy5Kb2luUm9vbVJlcXVl",
-            "c3RIABIkCgVpbnB1dBgEIAEoCzITLm5iYy5tMy5QbGF5ZXJJbnB1dEgAEi4K",
-            "CmxlYXZlX3Jvb20YBSABKAsyGC5uYmMubTMuTGVhdmVSb29tUmVxdWVzdEgA",
-            "EjIKDHF1ZXN0X2FjdGlvbhgGIAEoCzIaLm5iYy5tMy5RdWVzdEFjdGlvblJl",
-            "cXVlc3RIAEIJCgdwYXlsb2FkKlQKCVJvb21QaGFzZRIWChJST09NX1BIQVNF",
-            "X1dBSVRJTkcQABIWChJST09NX1BIQVNFX1JVTk5JTkcQARIXChNST09NX1BI",
-            "QVNFX0ZJTklTSEVEEAJCD6oCDE5CQy5Qcm90b2NvbGIGcHJvdG8z"));
+            "ASgDIn4KDUxvY2tzdGVwSW5wdXQSDQoFZnJhbWUYASABKAUSCwoDc2VxGAIg",
+            "ASgFEhIKCm1vdmVfeF9yYXcYAyABKAMSEgoKbW92ZV95X3JhdxgEIAEoAxIP",
+            "CgdidXR0b25zGAUgASgFEhgKEHRhcmdldF9lbnRpdHlfaWQYBiABKAUiiwEK",
+            "EkxvY2tzdGVwRnJhbWVJbnB1dBIRCglwbGF5ZXJfaWQYASABKAMSEgoKbW92",
+            "ZV94X3JhdxgCIAEoAxISCgptb3ZlX3lfcmF3GAMgASgDEg8KB2J1dHRvbnMY",
+            "BCABKAUSGAoQdGFyZ2V0X2VudGl0eV9pZBgFIAEoBRIPCgdtaXNzaW5nGAYg",
+            "ASgIIl8KDUxvY2tzdGVwRnJhbWUSDQoFZnJhbWUYASABKAUSKgoGaW5wdXRz",
+            "GAIgAygLMhoubmJjLm0zLkxvY2tzdGVwRnJhbWVJbnB1dBITCgtzZXJ2ZXJf",
+            "aGFzaBgDIAEoBCKYAwoNU2VydmVyTWVzc2FnZRItCg1oYW5kc2hha2VfYWNr",
+            "GAEgASgLMhQubmJjLm0zLkhhbmRzaGFrZUFja0gAEhwKBHBvbmcYAiABKAsy",
+            "DC5uYmMubTMuUG9uZ0gAEicKCnJvb21fc3RhdGUYAyABKAsyES5uYmMubTMu",
+            "Um9vbVN0YXRlSAASKQoIc25hcHNob3QYBCABKAsyFS5uYmMubTMuV29ybGRT",
+            "bmFwc2hvdEgAEiQKBWV2ZW50GAUgASgLMhMubmJjLm0zLlNlcnZlckV2ZW50",
+            "SAASJgoFZXJyb3IYBiABKAsyFS5uYmMubTMuRXJyb3JSZXNwb25zZUgAEi0K",
+            "DXByb2dyZXNzX3N5bmMYByABKAsyFC5uYmMubTMuUHJvZ3Jlc3NTeW5jSAAS",
+            "LQoLcXVlc3Rfc3RhdGUYCCABKAsyFi5uYmMubTMuUXVlc3RTdGF0ZVN5bmNI",
+            "ABIvCg5sb2Nrc3RlcF9mcmFtZRgJIAEoCzIVLm5iYy5tMy5Mb2Nrc3RlcEZy",
+            "YW1lSABCCQoHcGF5bG9hZCLJAgoNQ2xpZW50TWVzc2FnZRImCgloYW5kc2hh",
+            "a2UYASABKAsyES5uYmMubTMuSGFuZHNoYWtlSAASHAoEcGluZxgCIAEoCzIM",
+            "Lm5iYy5tMy5QaW5nSAASLAoJam9pbl9yb29tGAMgASgLMhcubmJjLm0zLkpv",
+            "aW5Sb29tUmVxdWVzdEgAEiQKBWlucHV0GAQgASgLMhMubmJjLm0zLlBsYXll",
+            "cklucHV0SAASLgoKbGVhdmVfcm9vbRgFIAEoCzIYLm5iYy5tMy5MZWF2ZVJv",
+            "b21SZXF1ZXN0SAASMgoMcXVlc3RfYWN0aW9uGAYgASgLMhoubmJjLm0zLlF1",
+            "ZXN0QWN0aW9uUmVxdWVzdEgAEi8KDmxvY2tzdGVwX2lucHV0GAcgASgLMhUu",
+            "bmJjLm0zLkxvY2tzdGVwSW5wdXRIAEIJCgdwYXlsb2FkKlQKCVJvb21QaGFz",
+            "ZRIWChJST09NX1BIQVNFX1dBSVRJTkcQABIWChJST09NX1BIQVNFX1JVTk5J",
+            "TkcQARIXChNST09NX1BIQVNFX0ZJTklTSEVEEAJCD6oCDE5CQy5Qcm90b2Nv",
+            "bGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -108,8 +119,11 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestActionRequest), global::NBC.Protocol.QuestActionRequest.Parser, new[]{ "QuestId", "Action" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestStateEntry), global::NBC.Protocol.QuestStateEntry.Parser, new[]{ "QuestId", "State" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestStateSync), global::NBC.Protocol.QuestStateSync.Parser, new[]{ "Entries", "ServerTick" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState" }, new[]{ "Payload" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction" }, new[]{ "Payload" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepInput), global::NBC.Protocol.LockstepInput.Parser, new[]{ "Frame", "Seq", "MoveXRaw", "MoveYRaw", "Buttons", "TargetEntityId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepFrameInput), global::NBC.Protocol.LockstepFrameInput.Parser, new[]{ "PlayerId", "MoveXRaw", "MoveYRaw", "Buttons", "TargetEntityId", "Missing" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepFrame), global::NBC.Protocol.LockstepFrame.Parser, new[]{ "Frame", "Inputs", "ServerHash" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction", "LockstepInput" }, new[]{ "Payload" }, null, null, null)
           }));
     }
     #endregion
@@ -6298,6 +6312,1044 @@ namespace NBC.Protocol {
   }
 
   /// <summary>
+  //// 客户端 → 服务端：**一条锁步输入**（M4-S4 S4-c）。
+  ////
+  //// ⚠️ **定点一律传 `Fix64.RawValue`（int64）**，**不许** float/double ——
+  ////    前两刀（S4-a 定点数学 / S4-b 确定性内核）的全部意义就是"两端逐位相同"，
+  ////    在协议上放一个浮点就把那条保证废掉了。
+  /// </summary>
+  public sealed partial class LockstepInput : pb::IMessage<LockstepInput>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LockstepInput> _parser = new pb::MessageParser<LockstepInput>(() => new LockstepInput());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LockstepInput> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[21]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepInput() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepInput(LockstepInput other) : this() {
+      frame_ = other.frame_;
+      seq_ = other.seq_;
+      moveXRaw_ = other.moveXRaw_;
+      moveYRaw_ = other.moveYRaw_;
+      buttons_ = other.buttons_;
+      targetEntityId_ = other.targetEntityId_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepInput Clone() {
+      return new LockstepInput(this);
+    }
+
+    /// <summary>Field number for the "frame" field.</summary>
+    public const int FrameFieldNumber = 1;
+    private int frame_;
+    /// <summary>
+    /// 这条输入属于第几帧
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Frame {
+      get { return frame_; }
+      set {
+        frame_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "seq" field.</summary>
+    public const int SeqFieldNumber = 2;
+    private int seq_;
+    /// <summary>
+    /// 同一玩家**单调递增**的序号：服务端用它**去重**（重复发只认第一条）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Seq {
+      get { return seq_; }
+      set {
+        seq_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "move_x_raw" field.</summary>
+    public const int MoveXRawFieldNumber = 3;
+    private long moveXRaw_;
+    /// <summary>
+    /// 移动方向 X（`Fix64.RawValue`，Q32.32）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long MoveXRaw {
+      get { return moveXRaw_; }
+      set {
+        moveXRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "move_y_raw" field.</summary>
+    public const int MoveYRawFieldNumber = 4;
+    private long moveYRaw_;
+    /// <summary>
+    /// 移动方向 Y
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long MoveYRaw {
+      get { return moveYRaw_; }
+      set {
+        moveYRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "buttons" field.</summary>
+    public const int ButtonsFieldNumber = 5;
+    private int buttons_;
+    /// <summary>
+    /// 按键位掩码（各端同一份含义）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Buttons {
+      get { return buttons_; }
+      set {
+        buttons_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "target_entity_id" field.</summary>
+    public const int TargetEntityIdFieldNumber = 6;
+    private int targetEntityId_;
+    /// <summary>
+    /// 要打的目标（0 = 不攻击）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int TargetEntityId {
+      get { return targetEntityId_; }
+      set {
+        targetEntityId_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LockstepInput);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LockstepInput other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Frame != other.Frame) return false;
+      if (Seq != other.Seq) return false;
+      if (MoveXRaw != other.MoveXRaw) return false;
+      if (MoveYRaw != other.MoveYRaw) return false;
+      if (Buttons != other.Buttons) return false;
+      if (TargetEntityId != other.TargetEntityId) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Frame != 0) hash ^= Frame.GetHashCode();
+      if (Seq != 0) hash ^= Seq.GetHashCode();
+      if (MoveXRaw != 0L) hash ^= MoveXRaw.GetHashCode();
+      if (MoveYRaw != 0L) hash ^= MoveYRaw.GetHashCode();
+      if (Buttons != 0) hash ^= Buttons.GetHashCode();
+      if (TargetEntityId != 0) hash ^= TargetEntityId.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      if (Seq != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Seq);
+      }
+      if (MoveXRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(48);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      if (Seq != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Seq);
+      }
+      if (MoveXRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(48);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Frame != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Frame);
+      }
+      if (Seq != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Seq);
+      }
+      if (MoveXRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(TargetEntityId);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LockstepInput other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Frame != 0) {
+        Frame = other.Frame;
+      }
+      if (other.Seq != 0) {
+        Seq = other.Seq;
+      }
+      if (other.MoveXRaw != 0L) {
+        MoveXRaw = other.MoveXRaw;
+      }
+      if (other.MoveYRaw != 0L) {
+        MoveYRaw = other.MoveYRaw;
+      }
+      if (other.Buttons != 0) {
+        Buttons = other.Buttons;
+      }
+      if (other.TargetEntityId != 0) {
+        TargetEntityId = other.TargetEntityId;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Seq = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            MoveXRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            MoveYRaw = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            Buttons = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Seq = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            MoveXRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            MoveYRaw = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            Buttons = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 一帧里某个玩家的输入（服务端广播用）。
+  /// </summary>
+  public sealed partial class LockstepFrameInput : pb::IMessage<LockstepFrameInput>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LockstepFrameInput> _parser = new pb::MessageParser<LockstepFrameInput>(() => new LockstepFrameInput());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LockstepFrameInput> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[22]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrameInput() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrameInput(LockstepFrameInput other) : this() {
+      playerId_ = other.playerId_;
+      moveXRaw_ = other.moveXRaw_;
+      moveYRaw_ = other.moveYRaw_;
+      buttons_ = other.buttons_;
+      targetEntityId_ = other.targetEntityId_;
+      missing_ = other.missing_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrameInput Clone() {
+      return new LockstepFrameInput(this);
+    }
+
+    /// <summary>Field number for the "player_id" field.</summary>
+    public const int PlayerIdFieldNumber = 1;
+    private long playerId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long PlayerId {
+      get { return playerId_; }
+      set {
+        playerId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "move_x_raw" field.</summary>
+    public const int MoveXRawFieldNumber = 2;
+    private long moveXRaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long MoveXRaw {
+      get { return moveXRaw_; }
+      set {
+        moveXRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "move_y_raw" field.</summary>
+    public const int MoveYRawFieldNumber = 3;
+    private long moveYRaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long MoveYRaw {
+      get { return moveYRaw_; }
+      set {
+        moveYRaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "buttons" field.</summary>
+    public const int ButtonsFieldNumber = 4;
+    private int buttons_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Buttons {
+      get { return buttons_; }
+      set {
+        buttons_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "target_entity_id" field.</summary>
+    public const int TargetEntityIdFieldNumber = 5;
+    private int targetEntityId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int TargetEntityId {
+      get { return targetEntityId_; }
+      set {
+        targetEntityId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "missing" field.</summary>
+    public const int MissingFieldNumber = 6;
+    private bool missing_;
+    /// <summary>
+    //// ⚠️ **true = 这位玩家这一帧没发输入，填的是默认输入（不动不打）**。
+    ////    这个字段是**刻意**留的：缺人必须**看得见**，否则客户端只会觉得"他怎么不动"。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Missing {
+      get { return missing_; }
+      set {
+        missing_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LockstepFrameInput);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LockstepFrameInput other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (PlayerId != other.PlayerId) return false;
+      if (MoveXRaw != other.MoveXRaw) return false;
+      if (MoveYRaw != other.MoveYRaw) return false;
+      if (Buttons != other.Buttons) return false;
+      if (TargetEntityId != other.TargetEntityId) return false;
+      if (Missing != other.Missing) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (PlayerId != 0L) hash ^= PlayerId.GetHashCode();
+      if (MoveXRaw != 0L) hash ^= MoveXRaw.GetHashCode();
+      if (MoveYRaw != 0L) hash ^= MoveYRaw.GetHashCode();
+      if (Buttons != 0) hash ^= Buttons.GetHashCode();
+      if (TargetEntityId != 0) hash ^= TargetEntityId.GetHashCode();
+      if (Missing != false) hash ^= Missing.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (PlayerId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(PlayerId);
+      }
+      if (MoveXRaw != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (Missing != false) {
+        output.WriteRawTag(48);
+        output.WriteBool(Missing);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (PlayerId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(PlayerId);
+      }
+      if (MoveXRaw != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (Missing != false) {
+        output.WriteRawTag(48);
+        output.WriteBool(Missing);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (PlayerId != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(PlayerId);
+      }
+      if (MoveXRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(MoveXRaw);
+      }
+      if (MoveYRaw != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(MoveYRaw);
+      }
+      if (Buttons != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Buttons);
+      }
+      if (TargetEntityId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(TargetEntityId);
+      }
+      if (Missing != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LockstepFrameInput other) {
+      if (other == null) {
+        return;
+      }
+      if (other.PlayerId != 0L) {
+        PlayerId = other.PlayerId;
+      }
+      if (other.MoveXRaw != 0L) {
+        MoveXRaw = other.MoveXRaw;
+      }
+      if (other.MoveYRaw != 0L) {
+        MoveYRaw = other.MoveYRaw;
+      }
+      if (other.Buttons != 0) {
+        Buttons = other.Buttons;
+      }
+      if (other.TargetEntityId != 0) {
+        TargetEntityId = other.TargetEntityId;
+      }
+      if (other.Missing != false) {
+        Missing = other.Missing;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            PlayerId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            MoveXRaw = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            MoveYRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            Buttons = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            Missing = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            PlayerId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            MoveXRaw = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            MoveYRaw = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            Buttons = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+          case 48: {
+            Missing = input.ReadBool();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 服务端 → 客户端：**第 frame 帧的全部输入** + **服务端算出的该帧状态哈希**。
+  ////
+  //// ⚠️ `server_hash` 是客户端**对账**用的：自己 Step 出来的哈希与它不等 ⇒ 立刻知道自己跑偏了。
+  ////    ⚠️ 用 `uint64`：FNV-1a 64 位会超出 `long` 的正区间（C# 侧映射成 `ulong`）。
+  /// </summary>
+  public sealed partial class LockstepFrame : pb::IMessage<LockstepFrame>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LockstepFrame> _parser = new pb::MessageParser<LockstepFrame>(() => new LockstepFrame());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LockstepFrame> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[23]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrame() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrame(LockstepFrame other) : this() {
+      frame_ = other.frame_;
+      inputs_ = other.inputs_.Clone();
+      serverHash_ = other.serverHash_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LockstepFrame Clone() {
+      return new LockstepFrame(this);
+    }
+
+    /// <summary>Field number for the "frame" field.</summary>
+    public const int FrameFieldNumber = 1;
+    private int frame_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Frame {
+      get { return frame_; }
+      set {
+        frame_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "inputs" field.</summary>
+    public const int InputsFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::NBC.Protocol.LockstepFrameInput> _repeated_inputs_codec
+        = pb::FieldCodec.ForMessage(18, global::NBC.Protocol.LockstepFrameInput.Parser);
+    private readonly pbc::RepeatedField<global::NBC.Protocol.LockstepFrameInput> inputs_ = new pbc::RepeatedField<global::NBC.Protocol.LockstepFrameInput>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::NBC.Protocol.LockstepFrameInput> Inputs {
+      get { return inputs_; }
+    }
+
+    /// <summary>Field number for the "server_hash" field.</summary>
+    public const int ServerHashFieldNumber = 3;
+    private ulong serverHash_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ServerHash {
+      get { return serverHash_; }
+      set {
+        serverHash_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LockstepFrame);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LockstepFrame other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Frame != other.Frame) return false;
+      if(!inputs_.Equals(other.inputs_)) return false;
+      if (ServerHash != other.ServerHash) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Frame != 0) hash ^= Frame.GetHashCode();
+      hash ^= inputs_.GetHashCode();
+      if (ServerHash != 0UL) hash ^= ServerHash.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      inputs_.WriteTo(output, _repeated_inputs_codec);
+      if (ServerHash != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ServerHash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      inputs_.WriteTo(ref output, _repeated_inputs_codec);
+      if (ServerHash != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ServerHash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Frame != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Frame);
+      }
+      size += inputs_.CalculateSize(_repeated_inputs_codec);
+      if (ServerHash != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ServerHash);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LockstepFrame other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Frame != 0) {
+        Frame = other.Frame;
+      }
+      inputs_.Add(other.inputs_);
+      if (other.ServerHash != 0UL) {
+        ServerHash = other.ServerHash;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 18: {
+            inputs_.AddEntriesFrom(input, _repeated_inputs_codec);
+            break;
+          }
+          case 24: {
+            ServerHash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 18: {
+            inputs_.AddEntriesFrom(ref input, _repeated_inputs_codec);
+            break;
+          }
+          case 24: {
+            ServerHash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   //// 服务端 → 客户端。
   /// </summary>
   public sealed partial class ServerMessage : pb::IMessage<ServerMessage>
@@ -6314,7 +7366,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[21]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[24]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6358,6 +7410,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.QuestState:
           QuestState = other.QuestState.Clone();
+          break;
+        case PayloadOneofCase.LockstepFrame:
+          LockstepFrame = other.LockstepFrame.Clone();
           break;
       }
 
@@ -6475,6 +7530,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "lockstep_frame" field.</summary>
+    public const int LockstepFrameFieldNumber = 9;
+    /// <summary>
+    /// M4-S4 S4-c 追加（兼容：同上）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.LockstepFrame LockstepFrame {
+      get { return payloadCase_ == PayloadOneofCase.LockstepFrame ? (global::NBC.Protocol.LockstepFrame) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.LockstepFrame;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -6487,6 +7557,7 @@ namespace NBC.Protocol {
       Error = 6,
       ProgressSync = 7,
       QuestState = 8,
+      LockstepFrame = 9,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6525,6 +7596,7 @@ namespace NBC.Protocol {
       if (!object.Equals(Error, other.Error)) return false;
       if (!object.Equals(ProgressSync, other.ProgressSync)) return false;
       if (!object.Equals(QuestState, other.QuestState)) return false;
+      if (!object.Equals(LockstepFrame, other.LockstepFrame)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -6541,6 +7613,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.Error) hash ^= Error.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.ProgressSync) hash ^= ProgressSync.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.QuestState) hash ^= QuestState.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.LockstepFrame) hash ^= LockstepFrame.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -6592,6 +7665,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(66);
         output.WriteMessage(QuestState);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
+        output.WriteRawTag(74);
+        output.WriteMessage(LockstepFrame);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -6634,6 +7711,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(66);
         output.WriteMessage(QuestState);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
+        output.WriteRawTag(74);
+        output.WriteMessage(LockstepFrame);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -6667,6 +7748,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.QuestState) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(QuestState);
+      }
+      if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(LockstepFrame);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6728,6 +7812,12 @@ namespace NBC.Protocol {
             QuestState = new global::NBC.Protocol.QuestStateSync();
           }
           QuestState.MergeFrom(other.QuestState);
+          break;
+        case PayloadOneofCase.LockstepFrame:
+          if (LockstepFrame == null) {
+            LockstepFrame = new global::NBC.Protocol.LockstepFrame();
+          }
+          LockstepFrame.MergeFrom(other.LockstepFrame);
           break;
       }
 
@@ -6818,6 +7908,15 @@ namespace NBC.Protocol {
             QuestState = subBuilder;
             break;
           }
+          case 74: {
+            global::NBC.Protocol.LockstepFrame subBuilder = new global::NBC.Protocol.LockstepFrame();
+            if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
+              subBuilder.MergeFrom(LockstepFrame);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepFrame = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -6905,6 +8004,15 @@ namespace NBC.Protocol {
             QuestState = subBuilder;
             break;
           }
+          case 74: {
+            global::NBC.Protocol.LockstepFrame subBuilder = new global::NBC.Protocol.LockstepFrame();
+            if (payloadCase_ == PayloadOneofCase.LockstepFrame) {
+              subBuilder.MergeFrom(LockstepFrame);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepFrame = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -6929,7 +8037,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[22]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[25]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6967,6 +8075,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.QuestAction:
           QuestAction = other.QuestAction.Clone();
+          break;
+        case PayloadOneofCase.LockstepInput:
+          LockstepInput = other.LockstepInput.Clone();
           break;
       }
 
@@ -7057,6 +8168,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "lockstep_input" field.</summary>
+    public const int LockstepInputFieldNumber = 7;
+    /// <summary>
+    /// M4-S4 S4-c 追加（兼容）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.LockstepInput LockstepInput {
+      get { return payloadCase_ == PayloadOneofCase.LockstepInput ? (global::NBC.Protocol.LockstepInput) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.LockstepInput;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -7067,6 +8193,7 @@ namespace NBC.Protocol {
       Input = 4,
       LeaveRoom = 5,
       QuestAction = 6,
+      LockstepInput = 7,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7103,6 +8230,7 @@ namespace NBC.Protocol {
       if (!object.Equals(Input, other.Input)) return false;
       if (!object.Equals(LeaveRoom, other.LeaveRoom)) return false;
       if (!object.Equals(QuestAction, other.QuestAction)) return false;
+      if (!object.Equals(LockstepInput, other.LockstepInput)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -7117,6 +8245,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.Input) hash ^= Input.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LeaveRoom) hash ^= LeaveRoom.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.QuestAction) hash ^= QuestAction.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.LockstepInput) hash ^= LockstepInput.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -7160,6 +8289,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(50);
         output.WriteMessage(QuestAction);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepInput) {
+        output.WriteRawTag(58);
+        output.WriteMessage(LockstepInput);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7194,6 +8327,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(50);
         output.WriteMessage(QuestAction);
       }
+      if (payloadCase_ == PayloadOneofCase.LockstepInput) {
+        output.WriteRawTag(58);
+        output.WriteMessage(LockstepInput);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7221,6 +8358,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.QuestAction) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(QuestAction);
+      }
+      if (payloadCase_ == PayloadOneofCase.LockstepInput) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(LockstepInput);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7270,6 +8410,12 @@ namespace NBC.Protocol {
             QuestAction = new global::NBC.Protocol.QuestActionRequest();
           }
           QuestAction.MergeFrom(other.QuestAction);
+          break;
+        case PayloadOneofCase.LockstepInput:
+          if (LockstepInput == null) {
+            LockstepInput = new global::NBC.Protocol.LockstepInput();
+          }
+          LockstepInput.MergeFrom(other.LockstepInput);
           break;
       }
 
@@ -7342,6 +8488,15 @@ namespace NBC.Protocol {
             QuestAction = subBuilder;
             break;
           }
+          case 58: {
+            global::NBC.Protocol.LockstepInput subBuilder = new global::NBC.Protocol.LockstepInput();
+            if (payloadCase_ == PayloadOneofCase.LockstepInput) {
+              subBuilder.MergeFrom(LockstepInput);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepInput = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -7409,6 +8564,15 @@ namespace NBC.Protocol {
             }
             input.ReadMessage(subBuilder);
             QuestAction = subBuilder;
+            break;
+          }
+          case 58: {
+            global::NBC.Protocol.LockstepInput subBuilder = new global::NBC.Protocol.LockstepInput();
+            if (payloadCase_ == PayloadOneofCase.LockstepInput) {
+              subBuilder.MergeFrom(LockstepInput);
+            }
+            input.ReadMessage(subBuilder);
+            LockstepInput = subBuilder;
             break;
           }
         }

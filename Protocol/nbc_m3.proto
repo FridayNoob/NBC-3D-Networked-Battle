@@ -323,6 +323,46 @@ message QuestStateSync
     int64 server_tick = 2;   // 服务端逻辑帧号（排查"这条是什么时候的"）
 }
 
+/// 客户端 → 服务端：**一条锁步输入**（M4-S4 S4-c）。
+///
+/// ⚠️ **定点一律传 `Fix64.RawValue`（int64）**，**不许** float/double ——
+///    前两刀（S4-a 定点数学 / S4-b 确定性内核）的全部意义就是"两端逐位相同"，
+///    在协议上放一个浮点就把那条保证废掉了。
+message LockstepInput
+{
+    int32 frame = 1;   // 这条输入属于第几帧
+    int32 seq   = 2;   // 同一玩家**单调递增**的序号：服务端用它**去重**（重复发只认第一条）
+    int64 move_x_raw = 3;   // 移动方向 X（`Fix64.RawValue`，Q32.32）
+    int64 move_y_raw = 4;   // 移动方向 Y
+    int32 buttons = 5;      // 按键位掩码（各端同一份含义）
+    int32 target_entity_id = 6;   // 要打的目标（0 = 不攻击）
+}
+
+/// 一帧里某个玩家的输入（服务端广播用）。
+message LockstepFrameInput
+{
+    int64 player_id = 1;
+    int64 move_x_raw = 2;
+    int64 move_y_raw = 3;
+    int32 buttons = 4;
+    int32 target_entity_id = 5;
+
+    /// ⚠️ **true = 这位玩家这一帧没发输入，填的是默认输入（不动不打）**。
+    ///    这个字段是**刻意**留的：缺人必须**看得见**，否则客户端只会觉得"他怎么不动"。
+    bool missing = 6;
+}
+
+/// 服务端 → 客户端：**第 frame 帧的全部输入** + **服务端算出的该帧状态哈希**。
+///
+/// ⚠️ `server_hash` 是客户端**对账**用的：自己 Step 出来的哈希与它不等 ⇒ 立刻知道自己跑偏了。
+///    ⚠️ 用 `uint64`：FNV-1a 64 位会超出 `long` 的正区间（C# 侧映射成 `ulong`）。
+message LockstepFrame
+{
+    int32 frame = 1;
+    repeated LockstepFrameInput inputs = 2;
+    uint64 server_hash = 3;
+}
+
 /// 服务端 → 客户端。
 message ServerMessage
 {
@@ -336,6 +376,7 @@ message ServerMessage
         ErrorResponse error         = 6;   // M3-S4 追加（兼容：只是多一个 oneof 分支）
         ProgressSync  progress_sync = 7;   // M4-S3 收口追加（兼容：同上）
         QuestStateSync quest_state  = 8;   // M4-S3 §二十六 追加（兼容：同上）
+        LockstepFrame lockstep_frame = 9;  // M4-S4 S4-c 追加（兼容：同上）
     }
 }
 
@@ -350,5 +391,6 @@ message ClientMessage
         PlayerInput     input      = 4;
         LeaveRoomRequest leave_room = 5;   // M3-S4 追加（兼容）
         QuestActionRequest quest_action = 6;   // M4-S3 §二十六 追加（兼容）
+        LockstepInput lockstep_input = 7;      // M4-S4 S4-c 追加（兼容）
     }
 }

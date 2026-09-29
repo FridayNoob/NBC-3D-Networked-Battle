@@ -107,6 +107,9 @@
     <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldState.cs" />
     <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldStep.cs" />
     <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\WorldStateHash.cs" />
+
+    <!-- ★ M4-S4 S4-c：锁步调度（同样引擎无关 ⇒ 探针能**直驱**，不必开 socket） -->
+    <Compile Include="..\..\Client\Assets\_Project\Shared\Sim\LockstepScheduler.cs" />
   </ItemGroup>
 
   <ItemGroup>
