@@ -702,16 +702,26 @@ namespace NBC.Tests.EditMode
         /// <summary>
         /// ⚠️ **本片最容易回归的一条**：`FindQuestState` 返回 `null` = 「服务端没说」，
         /// 与 `0` = 「未接取」**是两件事**（把 null 画成"未接取"就是 §二十四 那个 bug 的翻版）。
+        /// <summary>
+        /// ⚠️ **本片最容易回归的一条**：`FindQuestState` 是**三值契约**，三个方向都要钉住：
+        /// <list type="bullet">
+        ///   <item><description>`null` = **还没收到过同步**（不知道）⇒ 界面退回本地预测并标注；</description></item>
+        ///   <item><description>`0` = **收到过全量同步、但表里没有它** = 服务端明确说「未接取」
+        ///   （可以当真 ⇒ 界面直接显示「可接」）；</description></item>
+        ///   <item><description>`1/2/3` = 服务端说它到哪一步了。</description></item>
+        /// </list>
+        /// <para>📌 三值缺一不可：把 `null` 与 `0` 混起来，就会把「还不知道」画成「没接」；
+        /// 反过来把 `0` 当成 `null`，界面就永远不敢显示权威的「可接」。</para>
         /// </summary>
         [Test]
-        public void QuestStateSync_FindQuestState_NullMeansServerDidNotSay()
+        public void QuestStateSync_FindQuestState_IsThreeValued_NullVsZeroVsState()
         {
             FakeTransport fake = new FakeTransport();
             NetSession session = Online(fake);
 
-            // 阳性对照：还没收到任何同步时必须是 null（而不是 0）
+            // ① **还没收到过任何同步** ⇒ null（不知道）
             Assert.AreEqual(0, session.QuestStatesReceived, "还没收到过任何任务状态");
-            Assert.IsNull(session.FindQuestState(3003), "服务端还没说 ⇒ null");
+            Assert.IsNull(session.FindQuestState(3003), "还没收到过 ⇒ null（服务端没说）");
 
             fake.PushFrame(new ServerMessage
             {
@@ -727,17 +737,25 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual(1, session.QuestStatesReceived);
             Assert.AreEqual(42, session.LastQuestStates.ServerTick, "tick 要带出来（排查「这条是什么时候的」）");
 
+            // ② **全量表里有它** ⇒ 服务端说的那个状态
             int? state = session.FindQuestState(3003);
             Assert.IsTrue(state.HasValue, "服务端说了 3003 ⇒ 必须有值");
             Assert.AreEqual(1, state.Value);
 
-            // ⭐ 全部意义：**没被提到的任务**仍然是 null，绝不是 0
-            Assert.IsNull(session.FindQuestState(9999), "服务端没提过的任务必须是 null，不是 0");
+            // ③ **收到过全量、但表里没有它** ⇒ 0 = 服务端**明确**说「未接取」（不是 null！）
+            int? absent = session.FindQuestState(9999);
+            Assert.IsTrue(absent.HasValue,
+                "收到过全量同步之后，「表里没有它」是服务端的**明确表态**，不是「不知道」");
+            Assert.AreEqual(0, absent.Value, "没被提到的任务 = 未接取(0)");
         }
 
-        /// <summary>缝：`null`（服务端没说）⇒ **false**，而不是「有值且是 0」。</summary>
+        /// <summary>
+        /// 缝：`null`（**不知道**）⇒ `false`；`0`（**明确未接取**）⇒ `true` + 0。
+        /// <para>⚠️ 这两个必须分得开 —— `false` 的含义是"退回本地那份并标成预测"，
+        /// 而 `true + 0` 的含义是"服务端说没接过 ⇒ 可以显示「可接」"。</para>
+        /// </summary>
         [Test]
-        public void QuestStateAuthority_NullBecomesFalse_NotZero()
+        public void QuestStateAuthority_UnknownIsFalse_KnownNotAcceptedIsTrueWithZero()
         {
             FakeTransport fake = new FakeTransport();
             NetSession session = Online(fake);
@@ -745,8 +763,8 @@ namespace NBC.Tests.EditMode
 
             int state;
 
-            Assert.IsFalse(authority.TryGetState(3003, out state),
-                "服务端没说 ⇒ false（不许 true + 0 —— 那等于把「不知道」画成「没接」）");
+            // ① 还没收到过 ⇒ false（不知道；**不是**"未接取"）
+            Assert.IsFalse(authority.TryGetState(3003, out state), "还没收到过 ⇒ false（不知道）");
 
             fake.PushFrame(new ServerMessage
             {
@@ -758,9 +776,14 @@ namespace NBC.Tests.EditMode
 
             session.Pump(0);
 
+            // ② 表里有 ⇒ true + 状态
             Assert.IsTrue(authority.TryGetState(3003, out state));
             Assert.AreEqual(2, state);
-            Assert.IsFalse(authority.TryGetState(9999, out state), "没提过的仍然是 false");
+
+            // ③ 表里没有 ⇒ **true + 0**（服务端明确说"未接取"），与 ① 的 false 是两件事
+            Assert.IsTrue(authority.TryGetState(9999, out state),
+                "收到过全量之后，「没有它」是明确表态 ⇒ 必须是 true + 0，而不是 false");
+            Assert.AreEqual(0, state, "没被提到 = 未接取(0)");
         }
         private static byte[] Room(string roomId, int dungeonId, int capacity,
                                    (string Name, bool IsHost)[] members)
