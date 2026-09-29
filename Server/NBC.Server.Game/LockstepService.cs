@@ -140,11 +140,12 @@ namespace NBC.Server.Game
         }
 
         /// <summary>一句人话（统计行用）。</summary>
-        /// <returns>例：`锁步：开局 1 个房、广播 27 帧、挡 0 次、拒 2 条`。</returns>
+        /// <returns>例：`锁步：开局 1 个房、广播 27 帧、挡 0 次、拒 2 条、宣布 1 局`。</returns>
         public string Describe()
         {
             return "锁步：开局 " + m_started + " 个房、广播 " + m_broadcastFrames +
-                   " 帧、挡 " + m_guardBlocked + " 次、拒 " + m_rejectedInputs + " 条、重复开局 " + m_duplicateStarts + " 次、摘房 " + m_roomsDropped + " 个";
+                   " 帧、挡 " + m_guardBlocked + " 次、拒 " + m_rejectedInputs + " 条、重复开局 " + m_duplicateStarts +
+                   " 次、摘房 " + m_roomsDropped + " 个、**宣布 " + m_matchesAnnounced + " 局**";
         }
 
         /// <summary>把处理器注册进路由（**显式注册**）。</summary>

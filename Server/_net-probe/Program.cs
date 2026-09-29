@@ -245,6 +245,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十八】M4-S4 S4-d 第 3 件：房间相位（满员 ⇒ Running；离开不回退）");
             RoomPhase_FullBecomesRunning();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十九】M4-S4 S4-d 收尾：服务端宣布胜负 + 客户端复算比对");
+            MatchResult_AnnounceAndRecheck();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5419,6 +5423,253 @@ namespace NBC.NetProbe
                 Check("§S4d2：重新满员 ⇒ 相位**还是 `Running`**（不会反复变）",
                     room.Phase == RoomPhase.Running && room.IsFull,
                     "相位=" + room.Phase + "；席位=" + room.SeatCount);
+            }
+        }
+
+        /// <summary>找客户端收到的最后一条 `match_result`。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>结果或 null。</returns>
+        private static MatchResult FindMatchResult(Client client)
+        {
+            for (int i = client.Received.Count - 1; i >= 0; i--)
+            {
+                if (client.Received[i].MatchResult != null)
+                {
+                    return client.Received[i].MatchResult;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>数客户端一共收到几条 `match_result`（「只宣布一次」要数它）。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>条数。</returns>
+        private static int CountMatchResults(Client client)
+        {
+            int n = 0;
+
+            for (int i = 0; i < client.Received.Count; i++)
+            {
+                if (client.Received[i].MatchResult != null)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>
+        /// 【二十九】服务端宣布胜负 + 客户端复算比对（S4-d 收尾）。
+        ///
+        /// <para>⭐ 关键便利：`StartRoom` 的实体表**是调用方造的** ⇒ 把 **B 队两人的 `Hp` 直接设成 0**，
+        /// 一开局 `CountKills` 就数出 `killsA = 2 == KillsToWin` ⇒ **完全不碰攻击冷却**
+        /// （否则要摸清 `AttackReadyTick` 去凑 4×N 下，脆且慢）。</para>
+        /// </summary>
+        private static void MatchResult_AnnounceAndRecheck()
+        {
+            // ⭐ W25：规则阈值**必须在真实参数下可达**（守的是「规则①活着」，不是数值好看）
+            Check("§S4d3⭐ **可达性断言**：`KillsToWin <= TeamSize`（否则规则①在 2v2 里是死分支 —— 第一版我写了 5）",
+                MatchRules.KillsToWin <= LockstepTeams.TeamSize,
+                "KillsToWin=" + MatchRules.KillsToWin + " TeamSize=" + LockstepTeams.TeamSize);
+
+            // ================= 场景 A：**未结束** ⇒ 不广播（阳性对照）=================
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                var service = new LockstepService(h.Server, h.Registry);
+                service.RegisterHandlers(h.Router);
+
+                Client a = h.ConnectAndLogin("alice", "pw-alice");
+                long id0 = AckOf(a, "alice 登录").PlayerId;
+                h.JoinSameRoom(a);
+
+                Room room = null;
+
+                foreach (Room r in h.Registry.Rooms)
+                {
+                    room = r;
+                    break;
+                }
+
+                if (room == null)
+                {
+                    Check("§S4d3：阳性对照 —— 拿到房间", false, "房间表为空");
+                    return;
+                }
+
+                // 全员满血（没人死）⇒ 击杀 0/0 ⇒ **未结束**
+                var alive = new List<SimEntity>
+                {
+                    MakeEntity((int)id0, 0, 100),
+                    MakeEntity((int)id0 + 1, 5, 100),
+                    MakeEntity((int)id0 + 2, -5, 100),
+                    MakeEntity((int)id0 + 3, 0, 100),
+                };
+
+                service.StartRoom(room.RoomId, alive, 2);
+
+                for (int t = 0; t < 8; t++)
+                {
+                    service.Tick();
+                }
+
+                h.PumpFor(300);
+
+                Check("§S4d3⭐ **阳性对照：未结束 ⇒ 不广播结果**（别让「任何世界都判赢」也能过）",
+                    service.MatchesAnnounced == 0 && CountMatchResults(a) == 0,
+                    "宣布=" + service.MatchesAnnounced + "；收到结果=" + CountMatchResults(a) +
+                    "；广播帧=" + service.BroadcastFrames);
+
+                Check("§S4d3：阳性对照 —— 但**帧确实在广播**（证明上面不是「什么都没跑」）",
+                    service.BroadcastFrames > 0 && CountMatchResults(a) == 0,
+                    "广播帧=" + service.BroadcastFrames);
+            }
+
+            // ================= 场景 B：**已达标** ⇒ 宣布一次 + 停止推进 + 客户端复算 =================
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                var service = new LockstepService(h.Server, h.Registry);
+                service.RegisterHandlers(h.Router);
+
+                Client a = h.ConnectAndLogin("alice", "pw-alice");
+                long id0 = AckOf(a, "alice 登录").PlayerId;
+                h.JoinSameRoom(a);
+
+                Room room = null;
+
+                foreach (Room r in h.Registry.Rooms)
+                {
+                    room = r;
+                    break;
+                }
+
+                if (room == null)
+                {
+                    Check("§S4d3：阳性对照 —— 场景 B 拿到房间", false, "房间表为空");
+                    return;
+                }
+
+                // 按 id 升序 ⇒ 队号 = 序号 % 2：第 0、2 个是 A 队，第 1、3 个是 B 队。
+                // ⚠️ **把 B 队两人 Hp 设成 0** ⇒ 一开局 A 队击杀就有 2 个 == `KillsToWin`
+                var rosterIds = new List<long> { id0, id0 + 1, id0 + 2, id0 + 3 };
+
+                var decided = new List<SimEntity>
+                {
+                    MakeEntity((int)id0, 0, 100),
+                    MakeEntity((int)id0 + 1, 5, 0),      // B 队（序号 1）—— 已经死了
+                    MakeEntity((int)id0 + 2, -5, 100),
+                    MakeEntity((int)id0 + 3, 0, 0),      // B 队（序号 3）—— 已经死了
+                };
+
+                service.StartRoom(room.RoomId, decided, 2);
+
+                // 跑够帧数（delay=2 ⇒ 第 3 次 tick 会广播帧 0 ⇒ 那一刻判胜负）
+                for (int t = 0; t < 6; t++)
+                {
+                    service.Tick();
+                }
+
+                h.PumpFor(300);
+
+                MatchResult result = FindMatchResult(a);
+
+                Check("§S4d3⭐ **服务端广播了结果**（阳性对照：真的收到了那条消息）",
+                    result != null, "收到结果条数=" + CountMatchResults(a));
+
+                Check("§S4d3⭐：结果里的 `kills_a/kills_b` 与**独立数出来**的一致",
+                    result != null && result.KillsA == 2 && result.KillsB == 0 &&
+                    result.Outcome == MatchRules.ToNumber(EMatchOutcome.TeamA),
+                    result == null
+                        ? "没收到"
+                        : ("kills=" + result.KillsA + "/" + result.KillsB + " outcome=" + result.Outcome));
+
+                Check("§S4d3⭐ **只宣布一次**：`MatchesAnnounced == 1` 且客户端只收到 1 条",
+                    service.MatchesAnnounced == 1 && CountMatchResults(a) == 1,
+                    "宣布=" + service.MatchesAnnounced + "；收到=" + CountMatchResults(a) + "；" + service.Describe());
+
+                // ⭐ **宣布后不再推进**：再 tick 一批，广播帧数不许再涨
+                long framesAtAnnounce = service.BroadcastFrames;
+
+                for (int t = 0; t < 10; t++)
+                {
+                    service.Tick();
+                }
+
+                h.PumpFor(200);
+
+                Check("§S4d3⭐ **宣布后停止推进**：再 tick 10 次，广播帧数**不再涨**",
+                    service.BroadcastFrames == framesAtAnnounce && CountMatchResults(a) == 1,
+                    "宣布时 " + framesAtAnnounce + " ⇒ 现在 " + service.BroadcastFrames +
+                    "；结果条数=" + CountMatchResults(a));
+
+                // ---- 客户端：收到同一批消息 ⇒ 自己复算 ----
+                LockstepStart startMsg = FindLockstepStart(a);
+                var framesMsg = new List<LockstepFrame>();
+
+                for (int i = 0; i < a.Received.Count; i++)
+                {
+                    if (a.Received[i].LockstepFrame != null)
+                    {
+                        framesMsg.Add(a.Received[i].LockstepFrame);
+                    }
+                }
+
+                Check("§S4d3：阳性对照 —— 客户端侧拿到了开局 + 至少一帧（否则复算无从谈起）",
+                    startMsg != null && framesMsg.Count > 0,
+                    "start=" + (startMsg != null) + "；帧数=" + framesMsg.Count);
+
+                if (startMsg == null || framesMsg.Count == 0 || result == null)
+                {
+                    return;
+                }
+
+                var client = new LockstepClient();
+
+                // ⚠️ 队伍映射用**同一个** `SortedTeamMap`（与客户端将来从 `RoomState` 成员名单推的是同一个函数）
+                client.SetTeams(new SortedTeamMap(rosterIds));
+                client.ApplyStart(startMsg.Frame, startMsg.InitialHash, LockstepWire.ToPlainEntities(startMsg));
+
+                for (int i = 0; i < framesMsg.Count; i++)
+                {
+                    client.ApplyFrame(framesMsg[i].Frame, LockstepWire.ToPlainInputs(framesMsg[i]), framesMsg[i].ServerHash);
+                }
+
+                bool agreed = client.ApplyMatchResult(
+                    (int)result.Frame, (int)result.Outcome, (int)result.KillsA, (int)result.KillsB);
+
+                Check("§S4d3⭐ 客户端复算**一致** ⇒ 落定结果、零不一致",
+                    agreed && client.MatchMismatchCount == 0 && client.Outcome == EMatchOutcome.TeamA,
+                    "一致=" + agreed + "；不一致=" + client.MatchMismatchCount +
+                    "；结果=" + (client.Outcome == null ? "未落定" : MatchRules.Describe(client.Outcome.Value)));
+
+                // ⭐ 改一位 outcome ⇒ 必须报不一致（事件一次 + 计数涨 + 三样可读）
+                var victim = new LockstepClient();
+                victim.SetTeams(new SortedTeamMap(rosterIds));
+                victim.ApplyStart(startMsg.Frame, startMsg.InitialHash, LockstepWire.ToPlainEntities(startMsg));
+
+                for (int i = 0; i < framesMsg.Count; i++)
+                {
+                    victim.ApplyFrame(framesMsg[i].Frame, LockstepWire.ToPlainInputs(framesMsg[i]), framesMsg[i].ServerHash);
+                }
+
+                int events = 0;
+                LockstepMatchMismatch captured = default(LockstepMatchMismatch);
+                victim.MatchMismatchDetected += m => { events++; captured = m; };
+
+                int wrongOutcome = MatchRules.ToNumber(EMatchOutcome.TeamB);
+                bool tamperedAgreed = victim.ApplyMatchResult(
+                    (int)result.Frame, wrongOutcome, (int)result.KillsA, (int)result.KillsB);
+
+                Check("§S4d3⭐ **改一位结果（A 说成 B）⇒ 客户端必须报不一致**",
+                    !tamperedAgreed && victim.MatchMismatchCount == 1 && events == 1,
+                    "一致=" + tamperedAgreed + "；不一致=" + victim.MatchMismatchCount + "；事件=" + events);
+
+                Check("§S4d3⭐：而且**三样都可读**（我的判定 / 服务端判定 / 两队击杀）",
+                    events == 1 && captured.Mine == EMatchOutcome.TeamA &&
+                    captured.Server == EMatchOutcome.TeamB &&
+                    captured.MyKillsA == 2 && captured.ServerKillsA == result.KillsA,
+                    events == 1 ? captured.ToString() : "事件没触发");
             }
         }
 
