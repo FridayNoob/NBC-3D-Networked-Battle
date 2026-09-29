@@ -26,6 +26,7 @@ using NBC.Game.Quest;           // M4-S3 收口（§二十四）：进度「是�
 using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
+using NBC.Shared;               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
 using NBC.Shared.Net;
 
@@ -209,6 +210,10 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【二十】M4-S3 §二十八：**本地跟随权威**（幂等 / 不回路 / 无副作用；纯逻辑）");
             QuestStateReconciler_FollowsAuthorityWithoutSideEffects();
+
+            Console.WriteLine();
+            Console.WriteLine("【二十一】M4-S4 S4-a：**定点数学**纳入自动化验证（Fix64 Q32.32 / FixMath / FixVector3）");
+            FixedPoint_ArithmeticBoundaries_AndDeterminism();
 
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
@@ -3667,6 +3672,214 @@ namespace NBC.NetProbe
             Check("§28⭐ **幂等（端到端）**：同一份同步施加第二次 ⇒ **0 次跟随**",
                 applied2 == 0 && sink2.Calls.Count == 0,
                 "applied2=" + applied2 + "；调用：" + string.Join("、", sink2.Calls.ToArray()));
+        }
+
+        /// <summary>【二十一】定点数学（S4-a：**只验证，不改实现**）。</summary>
+        private static void FixedPoint_ArithmeticBoundaries_AndDeterminism()
+        {
+            // ---- ① 常规算术 ----
+            Fix64 a = Fix64.FromInt(3);
+            Fix64 b = Fix64.FromInt(4);
+
+            Check("§S4a：`FromInt(3) * FromInt(4) == 12`（定点乘法）",
+                (a * b) == Fix64.FromInt(12), "得到 " + (a * b).ToDouble());
+
+            Check("§S4a：`One` 是乘法单位元、`Zero` 是加法单位元",
+                (a * Fix64.One) == a && (a + Fix64.Zero) == a,
+                "a*One=" + (a * Fix64.One).ToDouble() + "；a+Zero=" + (a + Fix64.Zero).ToDouble());
+
+            Check("§S4a：负数与减法（`Half` 存在且 = 0.5）",
+                (Fix64.Zero - a) == (-a) && Fix64.Half == (Fix64.One / Fix64.FromInt(2)),
+                "-a=" + (-a).ToDouble() + "；Half=" + Fix64.Half.ToDouble());
+
+            Check("§S4a：`MinusOne` 与 `Abs`",
+                Fix64.MinusOne == -Fix64.One && Fix64.Abs(Fix64.MinusOne) == Fix64.One,
+                "Abs(-1)=" + Fix64.Abs(Fix64.MinusOne).ToDouble());
+
+            // ---- ② 溢出边界：**既有取舍是饱和**（不是抛）----
+            Check("§S4a⭐：乘法溢出 ⇒ **饱和**到 `MaxValue`（不抛）",
+                (Fix64.MaxValue * Fix64.FromInt(2)) == Fix64.MaxValue,
+                "MaxValue*2 = raw " + (Fix64.MaxValue * Fix64.FromInt(2)).RawValue +
+                "（期望 " + Fix64.MaxValue.RawValue + "）");
+
+            Check("§S4a⭐：负向溢出 ⇒ 饱和到 `MinValue`",
+                (Fix64.MinValue * Fix64.FromInt(2)) == Fix64.MinValue,
+                "MinValue*2 = raw " + (Fix64.MinValue * Fix64.FromInt(2)).RawValue);
+
+            // ---- ③ FromInt/ToInt：**范围内向零截断**、**越界饱和** ----
+            Check("§S4a⭐：`ToInt` 在范围内**向零截断**（3.9 → 3、-3.9 → -3）",
+                ((int)Fix64.FromDouble(3.9)) == 3 && ((int)Fix64.FromDouble(-3.9)) == -3,
+                "3.9→" + ((int)Fix64.FromDouble(3.9)) + "；-3.9→" + ((int)Fix64.FromDouble(-3.9)));
+
+            Check("§S4a：`ToInt` 越界 ⇒ **饱和**到 int 边界（不是回绕）",
+                ((int)Fix64.MaxValue) == int.MaxValue && ((int)Fix64.MinValue) == int.MinValue,
+                "Max→" + ((int)Fix64.MaxValue) + "；Min→" + ((int)Fix64.MinValue));
+
+            // ---- ④ FromFloat/FromDouble：NaN 有守卫、无穷饱和 ----
+            bool nanThrew = false;
+            try { Fix64.FromDouble(double.NaN); } catch (System.ArgumentException) { nanThrew = true; }
+
+            Check("§S4a⭐：`FromDouble(NaN)` **抛** `ArgumentException`（不静默给个数）",
+                nanThrew, "没抛 —— 那会把 NaN 变成一个看起来正常的值");
+
+            Check("§S4a：`FromDouble(±∞)` 饱和到 `MaxValue`/`MinValue`",
+                Fix64.FromDouble(double.PositiveInfinity) == Fix64.MaxValue &&
+                Fix64.FromDouble(double.NegativeInfinity) == Fix64.MinValue,
+                "∞→raw " + Fix64.FromDouble(double.PositiveInfinity).RawValue);
+
+            // ---- ⑤ 除零：**除法与取余都要抛** ----
+            bool divThrew = false;
+            bool modThrew = false;
+
+            try { Fix64 unused = a / Fix64.Zero; } catch (System.DivideByZeroException) { divThrew = true; }
+            try { Fix64 unused = a % Fix64.Zero; } catch (System.DivideByZeroException) { modThrew = true; }
+
+            Check("§S4a⭐：除法除零 ⇒ 抛 `DivideByZeroException`", divThrew, "没抛（会给出一个假结果）");
+            Check("§S4a⭐：取余除零 ⇒ 也抛 `DivideByZeroException`", modThrew, "没抛");
+
+            // ---- ⑥ Sqrt：三条判据 ----
+            Check("§S4a⭐：`Sqrt` 完全平方数**精确**（4→2、9→3、16→4、0→0、1→1）",
+                Fix64.Sqrt(Fix64.FromInt(4)) == Fix64.FromInt(2) &&
+                Fix64.Sqrt(Fix64.FromInt(9)) == Fix64.FromInt(3) &&
+                Fix64.Sqrt(Fix64.FromInt(16)) == Fix64.FromInt(4) &&
+                Fix64.Sqrt(Fix64.Zero) == Fix64.Zero &&
+                Fix64.Sqrt(Fix64.One) == Fix64.One,
+                "√4=" + Fix64.Sqrt(Fix64.FromInt(4)).ToDouble() +
+                "；√9=" + Fix64.Sqrt(Fix64.FromInt(9)).ToDouble() +
+                "；√16=" + Fix64.Sqrt(Fix64.FromInt(16)).ToDouble());
+
+            // 不变式：Sqrt(x)^2 <= x < (Sqrt(x)+1)^2 —— 扫一批值（含非完全平方与大值）
+            int violated = 0;
+            int scanned = 0;
+            string firstBad = string.Empty;
+
+            for (int i = 0; i <= 400; i++)
+            {
+                Fix64 x = Fix64.FromInt(i) + Fix64.FromRaw(123456789L);   // 带上小数部分，避免都是整数
+                Fix64 root = Fix64.Sqrt(x);
+                Fix64 low = root * root;
+                Fix64 high = (root + Fix64.One) * (root + Fix64.One);
+
+                scanned++;
+
+                if (!(low <= x && x < high) && violated == 0)
+                {
+                    firstBad = "x=" + x.ToDouble() + " root=" + root.ToDouble() +
+                               " root²=" + low.ToDouble() + " (root+1)²=" + high.ToDouble();
+                }
+
+                if (!(low <= x && x < high))
+                {
+                    violated++;
+                }
+            }
+
+            Check("§S4a：扫描了**足够多**的值（否则下面的不变式是空话）", scanned >= 400, "scanned=" + scanned);
+
+            Check("§S4a⭐ 不变式：`Sqrt(x)² <= x < (Sqrt(x)+1)²`（401 个值，含小数与大值）",
+                violated == 0, violated + " 个违反；第一个：" + firstBad);
+
+            bool sqrtNegativeThrew = false;
+            try { Fix64.Sqrt(Fix64.MinusOne); } catch (System.ArgumentOutOfRangeException) { sqrtNegativeThrew = true; }
+
+            Check("§S4a：对负数开方 ⇒ 抛（不返回 NaN 似的假值）", sqrtNegativeThrew, "没抛");
+
+            // ---- ⑦ FixVector3：点积/长度平方/归一化 ----
+            var v = new FixVector3(3, 4, 0);
+            var w = new FixVector3(1, 2, 2);
+
+            Check("§S4a：`(3,4,0)·(1,2,2) == 11`（与整数算例一致）",
+                FixVector3.Dot(v, w) == Fix64.FromInt(11), "=" + FixVector3.Dot(v, w).ToDouble());
+
+            Check("§S4a：`(3,4,0)` 的长度平方 = 25、长度 = 5",
+                v.SqrMagnitude == Fix64.FromInt(25) && v.Magnitude == Fix64.FromInt(5),
+                "sqr=" + v.SqrMagnitude.ToDouble() + "；len=" + v.Magnitude.ToDouble());
+
+            // ⚠️ 容差说明：开方是**牛顿迭代**，末位可能差几个 raw 单位（1 raw = 2^-32 ≈ 2.3e-10）。
+            //    取 16 raw ≈ 3.7e-9：够装下迭代末位误差，又远小于"真的算错"（那会差好几个数量级）。
+            Fix64 unitTolerance = Fix64.FromRaw(16);
+            FixVector3 n = new FixVector3(3, 4, 0).Normalized();
+            Fix64 error = Fix64.Abs(n.SqrMagnitude - Fix64.One);
+
+            Check("§S4a⭐：归一化后长度 ≈ `One`（容差 16 raw ≈ 3.7e-9）",
+                error <= unitTolerance,
+                "|len²-1| = " + error.ToDouble() + "（raw " + error.RawValue + "，容差 raw 16）");
+
+            Check("§S4a：归一化方向对（(3,4,0)→(0.6,0.8,0)）",
+                Fix64.Abs(n.X - Fix64.FromDouble(0.6)) <= unitTolerance &&
+                Fix64.Abs(n.Y - Fix64.FromDouble(0.8)) <= unitTolerance,
+                "n=(" + n.X.ToDouble() + ", " + n.Y.ToDouble() + ", " + n.Z.ToDouble() + ")");
+
+            // ---- ⑧ CORDIC 已知值（既然在用，就不能不验）----
+            // ⚠️ 容差说明：CORDIC 32 次迭代 + 定点舍入，误差通常在 1e-5 量级。
+            //    取 1<<16 raw ≈ 1.5e-5：够装下 CORDIC 误差，又能抓住"公式写反/象限错"那类真错。
+            Fix64 trigTolerance = Fix64.FromRaw(1L << 16);
+
+            Check("§S4a：`Sin(0) == 0`（精确）", FixMath.Sin(Fix64.Zero) == Fix64.Zero,
+                "=" + FixMath.Sin(Fix64.Zero).ToDouble());
+
+            Check("§S4a：`Cos(0) == One`（精确）", FixMath.Cos(Fix64.Zero) == Fix64.One,
+                "=" + FixMath.Cos(Fix64.Zero).ToDouble());
+
+            Check("§S4a⭐：`Sin(π/2) ≈ One`（容差 1.5e-5）",
+                Fix64.Abs(FixMath.Sin(FixMath.HalfPi) - Fix64.One) <= trigTolerance,
+                "=" + FixMath.Sin(FixMath.HalfPi).ToDouble());
+
+            Check("§S4a⭐：`Cos(π) ≈ -One`（容差 1.5e-5）",
+                Fix64.Abs(FixMath.Cos(FixMath.Pi) + Fix64.One) <= trigTolerance,
+                "=" + FixMath.Cos(FixMath.Pi).ToDouble());
+
+            // 恒等式 sin²+cos²≈1（扫几个角度，含非特殊角）
+            int identityBad = 0;
+            string identityFirst = string.Empty;
+
+            for (int i = 0; i <= 16; i++)
+            {
+                Fix64 angle = FixMath.Pi * Fix64.FromInt(i) / Fix64.FromInt(8);   // 0, π/8, ..., 2π
+                Fix64 s = FixMath.Sin(angle);
+                Fix64 c = FixMath.Cos(angle);
+                Fix64 sum = s * s + c * c;
+
+                if (Fix64.Abs(sum - Fix64.One) > trigTolerance)
+                {
+                    identityBad++;
+
+                    if (identityFirst.Length == 0)
+                    {
+                        identityFirst = "角度 " + angle.ToDouble() + " ⇒ sin²+cos²=" + sum.ToDouble();
+                    }
+                }
+            }
+
+            Check("§S4a⭐ 恒等式：`sin²+cos² ≈ One`（0..2π 取 17 个角）",
+                identityBad == 0, identityBad + " 个越界；第一个：" + identityFirst);
+
+            // ---- ⑨ ⭐ 逐位确定性（帧同步的地基）----
+            // 同一串表达式跑**两遍**，要求 RawValue **逐位相等**。
+            // 这不是"差不多就行"：两遍不等 ⇒ 两端跑同一个输入会得到不同世界。
+            Fix64 d1 = ((Fix64.FromInt(7) * Fix64.FromInt(3) + Fix64.Half) / Fix64.FromInt(5)) -
+                       Fix64.Sqrt(Fix64.FromInt(2));
+            Fix64 d2 = ((Fix64.FromInt(7) * Fix64.FromInt(3) + Fix64.Half) / Fix64.FromInt(5)) -
+                       Fix64.Sqrt(Fix64.FromInt(2));
+
+            Check("§S4a⭐ **逐位确定性**：同一表达式跑两遍 ⇒ `RawValue` 完全相等",
+                d1.RawValue == d2.RawValue,
+                "第一遍 raw " + d1.RawValue + " vs 第二遍 raw " + d2.RawValue);
+
+            // 再来一遍"链式"的（含 CORDIC）：这类最容易因为内部缓存/静态状态而不确定
+            Fix64 c1 = FixMath.Cos(FixMath.Pi / Fix64.FromInt(3)) * Fix64.FromInt(100);
+            Fix64 c2 = FixMath.Cos(FixMath.Pi / Fix64.FromInt(3)) * Fix64.FromInt(100);
+
+            Check("§S4a⭐ **逐位确定性（含 CORDIC）**：`cos(π/3)*100` 两遍逐位相等",
+                c1.RawValue == c2.RawValue,
+                "raw " + c1.RawValue + " vs " + c2.RawValue);
+
+            // 换一个"顺序"重算同一个值 ⇒ 也必须相等（确定性不允许受调用历史影响）
+            Fix64 c3 = FixMath.Cos(FixMath.Pi / Fix64.FromInt(3)) * Fix64.FromInt(100);
+
+            Check("§S4a⭐ **逐位确定性（不受调用历史影响）**：第三次结果仍逐位相等",
+                c3.RawValue == c1.RawValue,
+                "raw " + c1.RawValue + " → " + c3.RawValue);
         }
 
         private static QuestTables LoadQuestTables()

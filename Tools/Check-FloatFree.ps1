@@ -35,10 +35,19 @@
 [CmdletBinding()]
 param(
     # Folders (relative to the repo root) to scan.
-    [string[]] $Path = @("Client\Assets\_Project\Shared\Battle"),
+    #
+    # NOTE (2026-09-28): this used to be only Shared\Battle. Scanning the WHOLE
+    # Shared folder is deliberately stricter: a NEW deterministic logic folder
+    # (e.g. Shared\Sim for lockstep) would otherwise be a BLIND SPOT -- the gate
+    # would keep passing while nobody scanned the new code.
+    # Measured: whole Shared = 15 files, 0 hits (with the 3 fix files whitelisted).
+    [string[]] $Path = @("Client\Assets\_Project\Shared"),
 
     # File names (no folder) that are allowed to mention floating point.
-    [string[]] $Allow = @(),
+    #
+    # The three fix-point types ARE the boundary: FromFloat/ToFloat exist on
+    # purpose (Docs\27 s29.2 criterion 1). Everything else under Shared is logic.
+    [string[]] $Allow = @("Fix64.cs", "FixMath.cs", "FixVector3.cs"),
 
     # Repo root (null = parent of this script's folder; resolved lazily -
     # $PSScriptRoot is EMPTY inside param() defaults under Windows
