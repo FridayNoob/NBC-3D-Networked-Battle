@@ -299,7 +299,10 @@ namespace NBC.Server.Game
                     //    帧永远到点）。写成 `while` 就是**死循环**，而且每轮还广播一帧
                     //    （表现：`dotnet build` 全绿，跑起来永远不返回、连日志都吐不出来 —— 假绿）。
                     //    ⇒ 语义是"主循环每走一格，调度器也走一格"，与本方法自己的注释一致。
-                    if (state.Scheduler.AdvanceTick(out plan))
+                    // ⚠️ 先取出并判空（Scheduler 是可空字段）：否则每帧都在解引用一个可能为 null 的字段。
+                    LockstepScheduler? scheduler = state.Scheduler;
+
+                    if (scheduler != null && scheduler.AdvanceTick(out plan))
                     {
                         Broadcast(plan, state);
                         broadcast++;
@@ -357,8 +360,18 @@ namespace NBC.Server.Game
             }
 
             // ③ 交给调度器（它负责去重/乱序/过期 —— 见 §三十二 的三条语义）
+            LockstepScheduler? scheduler = state.Scheduler;
+
+            if (scheduler == null)
+            {
+                m_rejectedInputs++;
+
+                return DispatchResult.ReplyWith(Error(NetErrors.QuestUnavailable,
+                    "这个房间的锁步调度器还没就绪（不该发生：开局时就会建）。"));
+            }
+
             string reason;
-            bool accepted = state.Scheduler.Submit(
+            bool accepted = scheduler.Submit(
                 session.PlayerId, input.Frame,
                 // wire 上是两个 int64 raw ⇒ 这里**显式**装回定点（没有"看起来能自动转"的路径）
                 new FixVector3(Fix64.FromRaw(input.MoveXRaw), Fix64.FromRaw(input.MoveYRaw), Fix64.Zero),

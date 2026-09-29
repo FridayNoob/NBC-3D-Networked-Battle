@@ -248,7 +248,9 @@ namespace NBC.Shared.Sim
         /// <returns>这一格真的推进了一帧返回 true。</returns>
         public bool AdvanceTick(out LockstepFramePlan plan)
         {
-            plan = null;
+            // ⚠️ `null!` 是刻意的：`TryXxx(out T)` 模式里 out 参数必须先赋一个值，而这里
+            //    「没到点就返回 false」，plan 的 null 只在返回 false 时有意义（调用方先判 bool）。
+            plan = null!;
             m_serverTick++;
 
             int next = m_lastSteppedFrame + 1;
@@ -272,7 +274,7 @@ namespace NBC.Shared.Sim
             var plan = new LockstepFramePlan();
             plan.Frame = frame;
 
-            PendingFrame bucket = Find(frame);
+            PendingFrame? bucket = Find(frame);
 
             // ⚠️ **按名册顺序**产出（不是按输入到达顺序）⇒ 广播内容确定，可逐帧对账
             for (int i = 0; i < m_roster.Count; i++)
@@ -316,7 +318,11 @@ namespace NBC.Shared.Sim
             m_stepsExecuted++;
 
             // 这一帧广播出去了 ⇒ 缓冲可以丢了（之后再来的一律作废）
-            m_pending.Remove(bucket);
+            // ⚠️ 判空：`Find` 可能返回 null（没有这一帧的缓冲 = 谁都没发过输入）—— 那也要能推进。
+            if (bucket != null)
+            {
+                m_pending.Remove(bucket);
+            }
 
             return plan;
         }
@@ -324,7 +330,7 @@ namespace NBC.Shared.Sim
         /// <summary>找某一帧的缓冲。</summary>
         /// <param name="frame">帧号。</param>
         /// <returns>缓冲；没有则 null。</returns>
-        private PendingFrame Find(int frame)
+        private PendingFrame? Find(int frame)
         {
             for (int i = 0; i < m_pending.Count; i++)
             {
@@ -342,7 +348,7 @@ namespace NBC.Shared.Sim
         /// <returns>缓冲。</returns>
         private PendingFrame FindOrCreate(int frame)
         {
-            PendingFrame found = Find(frame);
+            PendingFrame? found = Find(frame);
 
             if (found != null)
             {
