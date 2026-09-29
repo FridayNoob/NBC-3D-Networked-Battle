@@ -19,6 +19,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
+using NBC.Framework.Net;         // M4-S4 S4-c：`ITransport`（假传输要实现它来驱动真 `NetSession`）
 using NBC.Framework.Net.Adapter;
 using NBC.Framework.Net.Sim;   // S8：网络模拟器（SimulatedTransport / NetSimProfile）
 using NBC.Game.Net;
@@ -231,6 +232,10 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【二十五】M4-S4 S4-c 收尾：**客户端锁步运行器 + 三方对账**（含阳性对照）");
             LockstepClient_ThreeWayReconcile();
+
+            Console.WriteLine();
+            Console.WriteLine("【二十六】M4-S4 S4-c 收尾：**假传输驱动真 `NetSession`**（喂协议 → 转普通数据 → 喂运行器）");
+            NetSession_LockstepWireUp();
 
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
@@ -4913,6 +4918,303 @@ namespace NBC.NetProbe
                     !restart && dup.StepsExecuted == afterFirst && dup.World != null,
                     "返回 " + restart + "；Step " + dup.StepsExecuted);
             }
+        }
+
+        /// <summary>
+        /// 假传输（**最小版**，照 `Tests\EditMode\Net\FakeTransport.cs` 的形状）。
+        /// <para>⚠️ 它能驱动**真的 `NetSession`**，靠的是 `ITransport` 这个**公开契约** ——
+        /// 而不是给产品加测试后门。这就是"有公开的输入入口"那一半。</para>
+        /// </summary>
+        private sealed class FakeNetTransport : ITransport
+        {
+            /// <summary>待交给会话的帧。</summary>
+            private readonly Queue<byte[]> m_inbox = new Queue<byte[]>();
+
+            /// <summary>会话发出去的帧（握手等；本用例不解析，只留着排查）。</summary>
+            public readonly List<byte[]> SentFrames = new List<byte[]>();
+
+            /// <summary>传输状态（照样本：初始 Disconnected）。</summary>
+            private ETransportState m_state = ETransportState.Disconnected;
+
+            /// <summary>发出去多少字节（`Stats` 要用）。</summary>
+            private int m_bytesSent;
+
+            /// <inheritdoc/>
+            public string Description { get { return "探针假传输"; } }
+
+            /// <inheritdoc/>
+            public ETransportState State { get { return m_state; } }
+
+            /// <inheritdoc/>
+            public bool IsConnected { get { return m_state == ETransportState.Connected; } }
+
+            /// <inheritdoc/>
+            public TransportStats Stats
+            {
+                get { return new TransportStats(m_bytesSent, 0, SentFrames.Count, 0); }
+            }
+
+            /// <inheritdoc/>
+            public event Action<byte[]> FrameReceived;
+
+            /// <inheritdoc/>
+            public event Action<string> Closed;
+
+            /// <inheritdoc/>
+            public void Connect(string host, int port)
+            {
+                m_state = ETransportState.Connected;
+            }
+
+            /// <inheritdoc/>
+            public void Send(byte[] payload)
+            {
+                SentFrames.Add(payload);
+                m_bytesSent += payload.Length;
+            }
+
+            /// <summary>把一条**服务端消息**塞进收件箱（`Pump` 时交给会话）。</summary>
+            /// <param name="message">消息。</param>
+            public void Push(ServerMessage message)
+            {
+                m_inbox.Enqueue(message.ToByteArray());
+            }
+
+            /// <inheritdoc/>
+            public void Pump()
+            {
+                // ⚠️ 条件与样本一致：**连上了才出队**（会话可能在收到某条消息后自己断开）
+                while (m_state == ETransportState.Connected && m_inbox.Count > 0)
+                {
+                    byte[] payload = m_inbox.Dequeue();
+                    Action<byte[]> handler = FrameReceived;
+
+                    if (handler != null)
+                    {
+                        handler(payload);
+                    }
+                }
+            }
+
+            /// <inheritdoc/>
+            public void Close()
+            {
+                m_state = ETransportState.Closed;
+            }
+
+            /// <inheritdoc/>
+            public void Dispose()
+            {
+            }
+        }
+
+        /// <summary>造一条握手通过的消息（字段照 `NetSessionTests` 的样本）。</summary>
+        /// <param name="playerId">给你的玩家编号。</param>
+        /// <returns>消息。</returns>
+        private static ServerMessage MakeHandshakeAck(long playerId)
+        {
+            var ack = new HandshakeAck();
+            ack.Accepted = true;
+            ack.PlayerId = playerId;
+            ack.ProtocolVersion = NBC.Shared.Net.NetContract.Version;
+            ack.ServerVersion = "net-probe/lockstep";
+            ack.TickHz = NBC.Shared.Net.NetContract.TickRate;
+            ack.Reason = string.Empty;
+
+            return new ServerMessage { HandshakeAck = ack };
+        }
+
+        /// <summary>
+        /// 【二十六】用**假传输驱动真 `NetSession`**（S4-c 收尾的验收）。
+        ///
+        /// <para>⚠️ 顺序：先握手推成 Online，**业务消息才认**（否则 `NetSession` 直接忽略）。</para>
+        /// <para>⚠️ 服务端那两条消息**不起真服务**：照 `LockstepService.StartRoom` 的做法手工造 ——
+        /// 用 `LockstepRoster` + `WorldStep` + `WorldStateHash` 算出**真的** `initial_hash` 与逐帧 `server_hash`。</para>
+        /// </summary>
+        private static void NetSession_LockstepWireUp()
+        {
+            var fake = new FakeNetTransport();
+            var session = new NetSession(fake, "锁步探针", "net-probe/lockstep");
+
+            session.Connect("127.0.0.1", 7777);
+            session.Pump(0);
+
+            // ⚠️ **必须先握手**：`NetSession` 在 Online 之前不认业务消息
+            fake.Push(MakeHandshakeAck(1));
+            session.Pump(0);
+
+            Check("§S4c5：阳性对照 —— 假传输把会话推成了 **Online**（否则下面全被忽略）",
+                session.IsOnline, "状态=" + session.State);
+
+            // ---- 手工造开局（照 `StartRoom` 的做法，用**同一份**共享逻辑）----
+            var roster = new List<long> { 1, 2 };
+            List<SimEntity> entities = LockstepRoster.Build(roster);
+
+            Check("§S4c5：阳性对照 —— 阵容非空（否则建不出世界）",
+                entities.Count == 2, "实体数=" + entities.Count);
+
+            var serverWorld = new WorldState();
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                serverWorld.Add(entities[i].Id, entities[i].Position, entities[i].Hp);
+            }
+
+            serverWorld.SetTick(0);
+
+            var start = new LockstepStart();
+            start.Frame = 0;
+            start.InitialHash = WorldStateHash.Compute(serverWorld);
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                var e = new LockstepStartEntity();
+                e.EntityId = entities[i].Id;
+                e.PosXRaw = entities[i].Position.X.RawValue;
+                e.PosYRaw = entities[i].Position.Y.RawValue;
+                e.PosZRaw = entities[i].Position.Z.RawValue;
+                e.Hp = entities[i].Hp;
+                e.MaxHp = entities[i].MaxHp;
+                e.AttackReadyTick = entities[i].AttackReadyTick;
+                start.Entities.Add(e);
+            }
+
+            fake.Push(new ServerMessage { LockstepStart = start });
+            session.Pump(0);
+
+            const int frames = 16;
+            var serverFrames = new List<LockstepFrame>();
+
+            for (int f = 0; f < frames; f++)
+            {
+                // 服务端推进一帧（**同一批输入**），算出这一帧的 `server_hash`
+                var stepInputs = new List<SimInput>
+                {
+                    new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 },
+                    new SimInput { EntityId = 2, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                };
+
+                WorldStep.Step(serverWorld, stepInputs, 1);
+
+                var frame = new LockstepFrame();
+                frame.Frame = f;
+                frame.ServerHash = WorldStateHash.Compute(serverWorld);
+
+                var in1 = new LockstepFrameInput();
+                in1.PlayerId = 1;
+                in1.MoveXRaw = Fix64.One.RawValue;
+                in1.MoveYRaw = 0;
+                in1.Buttons = 7;
+                in1.TargetEntityId = 2;
+                in1.Missing = false;
+                frame.Inputs.Add(in1);
+
+                var in2 = new LockstepFrameInput();
+                in2.PlayerId = 2;
+                in2.MoveXRaw = 0;
+                in2.MoveYRaw = 0;
+                in2.Buttons = 0;
+                in2.TargetEntityId = 0;
+                in2.Missing = true;         // ⚠️ 缺输入：转换必须把它带过来
+                frame.Inputs.Add(in2);
+
+                serverFrames.Add(frame);
+            }
+
+            // ---- ① ⭐ 好的一条：喂完 16 帧 ⇒ 零分歧，而且**确实收到了** ----
+            for (int i = 0; i < serverFrames.Count; i++)
+            {
+                fake.Push(new ServerMessage { LockstepFrame = serverFrames[i] });
+                session.Pump(0);
+            }
+
+            Check("§S4c5⭐ **阳性对照：好的一条不许自己报分歧**", session.DesyncCount == 0,
+                "DesyncCount=" + session.DesyncCount + "；" +
+                (session.Lockstep == null ? "没有运行器" : session.Lockstep.Describe()));
+
+            // ⚠️ 光断 `DesyncCount == 0` 不够：**压根没接收也会绿** ⇒ 必须有"确实收到了"的正面证据
+            Check("§S4c5⭐：而且**真的建了世界、逐帧推进**（正面证据，防「没接收也算绿」）",
+                session.Lockstep != null && session.Lockstep.Started &&
+                session.Lockstep.StepsExecuted == frames &&
+                session.Lockstep.LastSteppedFrame == frames - 1,
+                session.Lockstep == null
+                    ? "运行器没建起来"
+                    : ("Started=" + session.Lockstep.Started + "；推进 " + session.Lockstep.StepsExecuted +
+                       "；末帧 " + session.Lockstep.LastSteppedFrame));
+
+            Check("§S4c5：客户端的终局哈希 == 服务端最后那帧的哈希",
+                session.Lockstep != null && session.Lockstep.World != null &&
+                WorldStateHash.Compute(session.Lockstep.World) == serverFrames[frames - 1].ServerHash,
+                session.Lockstep == null || session.Lockstep.World == null
+                    ? "没有世界"
+                    : (WorldStateHash.Compute(session.Lockstep.World) + " vs " + serverFrames[frames - 1].ServerHash));
+
+            // ---- ② ⭐ 改一位 server_hash ⇒ 分歧必须被抓到，且**恰好一次** ----
+            LockstepFrame tampered = serverFrames[frames - 1].Clone();
+            tampered.Frame = frames;                 // 新的一帧（否则会被"重复帧"挡掉，测不到分歧）
+            tampered.ServerHash = tampered.ServerHash ^ 1UL;
+
+            WorldStep.Step(serverWorld, new List<SimInput>
+            {
+                new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 },
+            }, 1);
+
+            ulong expectedMine = WorldStateHash.Compute(serverWorld);
+
+            int events = 0;
+            LockstepDesync captured = default(LockstepDesync);
+            session.DesyncDetected += d => { events++; captured = d; };
+
+            fake.Push(new ServerMessage { LockstepFrame = tampered });
+            session.Pump(0);
+
+            Check("§S4c5⭐ **改一位 `server_hash`** ⇒ `DesyncCount == 1`",
+                session.DesyncCount == 1, "DesyncCount=" + session.DesyncCount);
+
+            Check("§S4c5⭐：`DesyncDetected` **恰好触发一次**", events == 1, "次数=" + events);
+
+            Check("§S4c5⭐：事件里**帧号 + 我的哈希 + 服务端哈希**都可读且与预期一致",
+                events == 1 && captured.Frame == frames && !captured.AtStart &&
+                captured.Mine == expectedMine && captured.Server == tampered.ServerHash,
+                events != 1
+                    ? "事件没触发"
+                    : ("帧 " + captured.Frame + "：我 " + captured.Mine + "（期望 " + expectedMine +
+                       "）vs 服务端 " + captured.Server + "（期望 " + tampered.ServerHash + "）"));
+
+            // ---- ③ 转换**逐字段**断言（别只断"没抛异常"）----
+            SimEntity plainEntity = LockstepWire.ToPlainEntity(start.Entities[0]);
+
+            Check("§S4c5：`ToPlainEntity` **逐字段**（id / 位置三 raw / hp / max_hp / attack_ready_tick）",
+                plainEntity.Id == (int)start.Entities[0].EntityId &&
+                plainEntity.Position.X.RawValue == start.Entities[0].PosXRaw &&
+                plainEntity.Position.Y.RawValue == start.Entities[0].PosYRaw &&
+                plainEntity.Position.Z.RawValue == start.Entities[0].PosZRaw &&
+                plainEntity.Hp == start.Entities[0].Hp &&
+                plainEntity.MaxHp == start.Entities[0].MaxHp &&
+                plainEntity.AttackReadyTick == start.Entities[0].AttackReadyTick,
+                "id=" + plainEntity.Id + " X=" + plainEntity.Position.X.RawValue +
+                " hp=" + plainEntity.Hp + " max=" + plainEntity.MaxHp + " cd=" + plainEntity.AttackReadyTick);
+
+            FrameInput plainInput = LockstepWire.ToPlainInput(serverFrames[0].Inputs[0]);
+
+            Check("§S4c5：`ToPlainInput` **逐字段**（player_id / 位置两 raw / buttons / target / **Missing**）",
+                plainInput.PlayerId == 1 &&
+                plainInput.MoveDirection.X.RawValue == Fix64.One.RawValue &&
+                plainInput.MoveDirection.Y.RawValue == 0 &&
+                plainInput.Buttons == 7 &&
+                plainInput.TargetEntityId == 2 &&
+                !plainInput.Missing,
+                "player=" + plainInput.PlayerId + " X=" + plainInput.MoveDirection.X.RawValue +
+                " buttons=" + plainInput.Buttons + " target=" + plainInput.TargetEntityId +
+                " missing=" + plainInput.Missing);
+
+            FrameInput plainMissing = LockstepWire.ToPlainInput(serverFrames[0].Inputs[1]);
+
+            Check("§S4c5⭐：`Missing` **真的被带过来了**（最容易在转换里丢的一条）",
+                plainMissing.PlayerId == 2 && plainMissing.Missing,
+                "player=" + plainMissing.PlayerId + "；Missing=" + plainMissing.Missing);
+
+            session.Dispose();
         }
 
         private static QuestTables LoadQuestTables()
