@@ -67,6 +67,62 @@ namespace NBC.Shared.Sim
         }
     }
 
+    /// <summary>一条「胜负判定对不上」的报告（**带三样**：我的判定 / 服务端判定 / 两队击杀数）。</summary>
+    public readonly struct LockstepMatchMismatch
+    {
+        /// <summary>判定发生在哪一帧。</summary>
+        public readonly int Frame;
+
+        /// <summary>我复算出来的判定。</summary>
+        public readonly EMatchOutcome Mine;
+
+        /// <summary>服务端宣布的判定。</summary>
+        public readonly EMatchOutcome Server;
+
+        /// <summary>我数出来的 A 队击杀。</summary>
+        public readonly int MyKillsA;
+
+        /// <summary>我数出来的 B 队击杀。</summary>
+        public readonly int MyKillsB;
+
+        /// <summary>服务端给的 A 队击杀。</summary>
+        public readonly int ServerKillsA;
+
+        /// <summary>服务端给的 B 队击杀。</summary>
+        public readonly int ServerKillsB;
+
+        /// <summary>造一条。</summary>
+        /// <param name="frame">帧号。</param>
+        /// <param name="mine">我的判定。</param>
+        /// <param name="server">服务端判定。</param>
+        /// <param name="myKillsA">我的 A 击杀。</param>
+        /// <param name="myKillsB">我的 B 击杀。</param>
+        /// <param name="serverKillsA">服务端 A 击杀。</param>
+        /// <param name="serverKillsB">服务端 B 击杀。</param>
+        public LockstepMatchMismatch(
+            int frame, EMatchOutcome mine, EMatchOutcome server,
+            int myKillsA, int myKillsB, int serverKillsA, int serverKillsB)
+        {
+            Frame = frame;
+            Mine = mine;
+            Server = server;
+            MyKillsA = myKillsA;
+            MyKillsB = myKillsB;
+            ServerKillsA = serverKillsA;
+            ServerKillsB = serverKillsB;
+        }
+
+        /// <summary>一句人话。</summary>
+        /// <returns>例：`第 40 帧判定不一致：我 A 队胜 vs 服务端 B 队胜（我数 5/2，服务端给 2/5）`。</returns>
+        public override string ToString()
+        {
+            return "第 " + Frame + " 帧判定不一致：我 " + MatchRules.Describe(Mine) +
+                   " vs 服务端 " + MatchRules.Describe(Server) +
+                   "（我数 " + MyKillsA + "/" + MyKillsB +
+                   "，服务端给 " + ServerKillsA + "/" + ServerKillsB + "）";
+        }
+    }
+
     /// <summary>客户端的锁步运行器（引擎无关、**只吃普通数据** ⇒ 探针能直驱、能变异）。</summary>
     public sealed class LockstepClient
     {
@@ -151,13 +207,103 @@ namespace NBC.Shared.Sim
             get { return m_rejectedFrames; }
         }
 
+        /// <summary>队伍映射（判胜负要用；`NetSession` 在开局后按**同一个纯函数**设进来）。</summary>
+        private EntityTeam? m_team;
+
+        /// <summary>与服务端**判定不一致**的次数。</summary>
+        private int m_matchMismatches;
+
+        /// <summary>最近一次判定不一致。</summary>
+        private LockstepMatchMismatch m_lastMatchMismatch;
+
+        /// <summary>落定的结果（服务端宣布且我复算一致时为非 null）。</summary>
+        private EMatchOutcome? m_outcome;
+
+        /// <summary>服务端宣布的**结果与我复算的不一致**（照 `DesyncDetected` 的形状）。</summary>
+        public event Action<LockstepMatchMismatch>? MatchMismatchDetected;
+
+        /// <summary>判定不一致次数。</summary>
+        public int MatchMismatchCount
+        {
+            get { return m_matchMismatches; }
+        }
+
+        /// <summary>有没有过判定不一致。</summary>
+        public bool HasMatchMismatch
+        {
+            get { return m_matchMismatches > 0; }
+        }
+
+        /// <summary>最近一次判定不一致。</summary>
+        public LockstepMatchMismatch LastMatchMismatch
+        {
+            get { return m_lastMatchMismatch; }
+        }
+
+        /// <summary>落定的结果（还没落定 = null）。</summary>
+        public EMatchOutcome? Outcome
+        {
+            get { return m_outcome; }
+        }
+
+        /// <summary>设队伍映射（⚠️ 用**接口**而不是委托：共享层不引入委托分配）。</summary>
+        /// <param name="team">映射。</param>
+        public void SetTeams(EntityTeam team)
+        {
+            m_team = team;
+        }
+
+        /// <summary>
+        /// 收服务端宣布的结果 ⇒ **用自己那份世界复算**（`CountKills` + `Decide`）⇒ 与它比。
+        ///
+        /// <para>⚠️ 复算放在这里（引擎无关层）而不是 `NetSession`：放那儿就只能靠起真服务验（W22 同一条道理）。</para>
+        /// <para>⚠️ 不一致要**报出来**，而且必须带「我的判定 / 服务端判定 / 两队击杀数」——
+        /// 只说「不一样」排查不动。</para>
+        /// </summary>
+        /// <param name="frame">判定发生在哪一帧。</param>
+        /// <param name="serverOutcomeNumber">服务端判定（wire 数字 1/2/3）。</param>
+        /// <param name="killsA">服务端给的 A 队击杀数。</param>
+        /// <param name="killsB">服务端给的 B 队击杀数。</param>
+        /// <returns>复算与服务端**一致**返回 true。</returns>
+        public bool ApplyMatchResult(int frame, int serverOutcomeNumber, int killsA, int killsB)
+        {
+            EMatchOutcome server = MatchRules.FromNumber(serverOutcomeNumber);
+
+            // 没开局 / 没有队伍映射 ⇒ 复算不出来，**如实返回 false**（不许假装一致）
+            if (!m_started || m_world == null || m_team == null)
+            {
+                return false;
+            }
+
+            int myKillsA;
+            int myKillsB;
+
+            MatchRules.CountKills(m_world, m_team, out myKillsA, out myKillsB);
+
+            EMatchOutcome mine = MatchRules.Decide(myKillsA, myKillsB, m_world.Tick);
+
+            if (mine != server)
+            {
+                m_matchMismatches++;
+                m_lastMatchMismatch = new LockstepMatchMismatch(
+                    frame, mine, server, myKillsA, myKillsB, killsA, killsB);
+                MatchMismatchDetected?.Invoke(m_lastMatchMismatch);
+                return false;
+            }
+
+            m_outcome = server;
+            return true;
+        }
+
         /// <summary>一句人话（排查用）。</summary>
         /// <returns>例：`锁步客户端：已开局、推进 12 帧、分歧 0、开局前忽略 0、拒 1`。</returns>
         public string Describe()
         {
             return "锁步客户端：" + (m_started ? "已开局" : "**未开局**") +
                    "、推进 " + m_stepsExecuted + " 帧、分歧 " + m_desyncs +
-                   "、开局前忽略 " + m_ignoredBeforeStart + "、拒 " + m_rejectedFrames;
+                   "、开局前忽略 " + m_ignoredBeforeStart + "、拒 " + m_rejectedFrames +
+                   "、判定不一致 " + m_matchMismatches +
+                   (m_outcome == null ? "" : ("、结果 " + MatchRules.Describe(m_outcome.Value)));
         }
 
         /// <summary>

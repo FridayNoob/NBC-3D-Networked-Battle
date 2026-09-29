@@ -200,6 +200,37 @@ namespace NBC.Shared.Sim
             }
         }
 
+        /// <summary>
+        /// wire 上的数字 → 判定（`1=A / 2=B / 3=平 / 其它=未结束`）。
+        /// <para>⚠️ 写成函数而不是在两端各写一遍 `switch`：**一处规则**。</para>
+        /// </summary>
+        /// <param name="number">协议里的数字。</param>
+        /// <returns>判定。</returns>
+        public static EMatchOutcome FromNumber(int number)
+        {
+            switch (number)
+            {
+                case 1: return EMatchOutcome.TeamA;
+                case 2: return EMatchOutcome.TeamB;
+                case 3: return EMatchOutcome.Draw;
+                default: return EMatchOutcome.Undecided;
+            }
+        }
+
+        /// <summary>判定 → wire 上的数字（与 `FromNumber` **互为逆**）。</summary>
+        /// <param name="outcome">判定。</param>
+        /// <returns>数字。</returns>
+        public static int ToNumber(EMatchOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case EMatchOutcome.TeamA: return 1;
+                case EMatchOutcome.TeamB: return 2;
+                case EMatchOutcome.Draw: return 3;
+                default: return 0;
+            }
+        }
+
         /// <summary>一条人话（日志/统计用）。</summary>
         /// <param name="outcome">判定。</param>
         /// <returns>文案。</returns>
