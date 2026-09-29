@@ -92,6 +92,9 @@ internal static class Program
 
             // ⚠️ M4-S4 S4-e：调试用 —— 房间进第一个真人后补足到 N 个机器人席位（**默认 0 = 零行为变化**）。
             int fillSeats = ReadIntArg(args, "--fill-seats", 0);
+
+            // ⚠️ M4-S4 S4-e：**仅调试用** —— 用内存账号表（`dev1`…**不查数据库**）。**默认关**。
+            bool devAccounts = HasFlag(args, "--dev-accounts");
         bool quiet = HasFlag(args, "--quiet") || config.QuietByConfig;
 
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
@@ -221,8 +224,24 @@ internal static class Program
 
         DbConnectionFactory? dbFactory = null;
         BattleRecordDao? recordDao = null;
-        AccountDirectory? accounts = null;
+
+        // ⚠️ M4-S4 S4-e：类型是**接口** —— `--dev-accounts` 时换 `DevAccountStore`（内存），
+        //    否则仍是 `AccountDirectory`（数据库）。**登录路径一行都不用改**（接缝就是这个接口）。
+        IAccountStore? accounts = null;
+
         AccountDao? accountDao = null;
+
+        if (devAccounts)
+        {
+            // ⚠️ **调试账号**：不查数据库。
+            //    横幅必须**独特**（老规矩：同一句日志不许同时表示正常和故障）。
+            //    ⚠️ 这条分支**只替换账号表**：下面 `AccountDirectory.Load` 的异常路径**一行不动**，
+            //       所以"正常模式下 DB 打不开"照旧报错，**不会被这个开关静默吞掉**。
+            accounts = new DevAccountStore();
+
+            Say("⚠️ [调试账号] 已启用：不查数据库，账号只存在于内存（dev1…dev4）—— 这个服务端不是正常服务端");
+            Say($"[调试账号] {((DevAccountStore)accounts).Describe()}");
+        }
 
         if (string.IsNullOrEmpty(dbOptions.Password))
         {
@@ -242,17 +261,30 @@ internal static class Program
                     // ⚠️ 账号表在**启动时读一次**（M4-S3）：登录跑在网络泵的握手里，
                     //    在那里等一次 MySQL 往返会把整个服务端卡住。
                     //    代价：**新注册的账号要重启服务端才认**（见 `AccountDirectory` 文件头）。
-                    accounts = AccountDirectory.Load(dbFactory);
+                    //    ⚠️ 调试账号模式下**不覆盖**已经装好的内存表（否则"开了开关却还是登不进"）。
+                    if (!devAccounts)
+                    {
+                        accounts = AccountDirectory.Load(dbFactory);
+                    }
+
                     accountDao = new AccountDao(dbFactory);
 
                     Say($"[数据库] 已接：{dbOptions.Describe()}");
-                    Say($"[数据库] {accounts.Describe()}");
 
-                    if (accounts.WithoutProfileCount > 0)
+                    // ⚠️ `Describe()` / `WithoutProfileCount` 是 **`AccountDirectory` 专有**的
+                    //    ⇒ 必须**先判类型**再问（接口上没有这两个成员）。
+                    AccountDirectory? dbAccounts = accounts as AccountDirectory;
+
+                    if (dbAccounts != null)
                     {
-                        // ⚠️ **要显眼**：这些账号永远登不进来，而粗看只会以为"密码错了"
-                        Say($"[数据库] ⚠️ 有 {accounts.WithoutProfileCount} 个账号**没有玩家档案** —— " +
-                            "它们登不进来（不是密码问题）。请检查 Docs\\08 的种子数据。");
+                        Say($"[数据库] {dbAccounts.Describe()}");
+
+                        if (dbAccounts.WithoutProfileCount > 0)
+                        {
+                            // ⚠️ **要显眼**：这些账号永远登不进来，而粗看只会以为"密码错了"
+                            Say($"[数据库] ⚠️ 有 {dbAccounts.WithoutProfileCount} 个账号**没有玩家档案** —— " +
+                                "它们登不进来（不是密码问题）。请检查 Docs\\08 的种子数据。");
+                        }
                     }
                 }
                 else
@@ -265,9 +297,22 @@ internal static class Program
             {
                 Say("[数据库] 初始化失败，**降级运行**（服务端照常跑）：" + ex.Message);
                 recordDao = null;
-                accounts = null;
+
+                // ⚠️ 调试账号表**不受数据库故障影响**（它本来就不查库）—— 别在这里把它清掉
+                if (!devAccounts)
+                {
+                    accounts = null;
+                }
+
                 accountDao = null;
             }
+        }
+
+        // ⚠️ M4-S4 S4-e：`--fill-seats` 也在**启动瞬间**打一行 ——
+        //    否则负责人要等到进房才发现"参数没生效"（那时已经白等一轮）。
+        if (fillSeats > 0)
+        {
+            Say($"[调试] --fill-seats={fillSeats} 已启用：进第一个真人后自动补足到 {fillSeats} 个席位");
         }
 
         // ⚠️ 2026-09-27（SRV-17a）：这里**原来还有** `PlayerProfileSlots`（"领一个空闲档案槽位"）。
@@ -603,7 +648,18 @@ internal static class Program
         Say($"[统计] 打完 {battles.BattlesFinished} 局；{recordWriter.DescribeStats()}");
         if (accounts != null)
         {
-            Say($"[统计] {accounts.Describe()}");
+            // ⚠️ `Describe()` 是 **`AccountDirectory` 专有**的（接口上没有）⇒ 先判类型。
+            //    调试账号表走 else 分支（`DevAccountStore.Describe()` 是它自己的）。
+            AccountDirectory? dbAccounts = accounts as AccountDirectory;
+
+            if (dbAccounts != null)
+            {
+                Say($"[统计] {dbAccounts.Describe()}");
+            }
+            else
+            {
+                Say($"[统计] {((DevAccountStore)accounts).Describe()}");
+            }
         }
         Say($"[统计] {loginAudit.DescribeStats()}");
         Say($"[统计] {lockstep.Describe()}");
