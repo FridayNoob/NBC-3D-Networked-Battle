@@ -41,8 +41,10 @@ using Google.Protobuf;
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Protocol;
+using NBC.Shared;               // M4-S4：`Fix64` / `FixVector3`（定点）
 using NBC.Shared.Auth;
 using NBC.Shared.Net;
+using NBC.Shared.Sim;           // M4-S4 S4-c：`LockstepClient` / `SimEntity` / `FrameInput`（**普通数据**）
 
 namespace NBC.Game.Net
 {
@@ -163,6 +165,12 @@ namespace NBC.Game.Net
 
         /// <summary>收到过多少条任务状态同步。</summary>
         private long m_questStatesReceived;
+
+        /// <summary>
+        /// 锁步运行器（M4-S4 S4-c）。**懒建**：只有真的收到锁步消息才建，
+        /// 这样"不玩锁步"的会话不多一份对象（也没必要）。
+        /// </summary>
+        private LockstepClient? m_lockstep;
 
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
@@ -389,6 +397,22 @@ namespace NBC.Game.Net
         }
 
         /// <summary>
+        /// 锁步**分歧次数**（M4-S4 S4-c）：委托给运行器。
+        /// <para>⚠️ 这是帧同步的**报警器**：> 0 就说明"我算出来的世界与服务端不一样"，
+        /// 而不是"网络卡了一下"。0 = 还没收到过锁步消息，或一直一致。</para>
+        /// </summary>
+        public int DesyncCount
+        {
+            get { return m_lockstep == null ? 0 : m_lockstep.DesyncCount; }
+        }
+
+        /// <summary>锁步运行器（可能为 null = 还没收到过任何锁步消息）。</summary>
+        public LockstepClient Lockstep
+        {
+            get { return m_lockstep; }
+        }
+
+        /// <summary>
         /// 取一个任务的**权威状态**（M4-S3 §二十六）。
         ///
         /// <para>⚠️ 三种返回值必须分得开，这是本方法存在的全部理由：</para>
@@ -538,6 +562,14 @@ namespace NBC.Game.Net
         /// 界面必须跟着退回去，不能因为"本地以为接过"就留住绿色。</para>
         /// </summary>
         public event Action<QuestStateSync> QuestStateReceived;
+
+        /// <summary>
+        /// 锁步**分歧**（M4-S4 S4-c）：我算出来的世界哈希与服务端广播里的不一致。
+        /// <para>⚠️ 带上**帧号 + 两个哈希**（`LockstepDesync`）—— 只说"不一致"排查不动。
+        /// 报警器必须是**事件**而不是只进日志：帧同步跑偏了要能立刻被人看见。</para>
+        /// </summary>
+        public event Action<LockstepDesync> DesyncDetected;
+
 
 
         /// <summary>收到一条死亡事件（M4-S1；怪与英雄都走这里，**按 `kind` 分派**）。</summary>
@@ -896,6 +928,14 @@ namespace NBC.Game.Net
                     HandleQuestState(message.QuestState);
                     break;
 
+                case ServerMessage.PayloadOneofCase.LockstepStart:
+                    HandleLockstepStart(message.LockstepStart);
+                    break;
+
+                case ServerMessage.PayloadOneofCase.LockstepFrame:
+                    HandleLockstepFrame(message.LockstepFrame);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -1149,10 +1189,97 @@ namespace NBC.Game.Net
             });
         }
 
+        /// <summary>
+        /// 收到锁步**开局**：在这里把协议类型转成**普通数据**。
+        /// <para>⚠️ 规则 W22：运行器住在 `Shared\Sim\`（通配进 `NBC.Shared`，**不认协议**）
+        /// ⇒ 转换只能放**网络层**（`NBC.Protocol` + `NBC.Shared` 两边都引得到）。</para>
+        /// </summary>
+        /// <param name="start">开局消息。</param>
+        private void HandleLockstepStart(LockstepStart start)
+        {
+            if (start == null)
+            {
+                return;
+            }
+
+            EnsureLockstep();
+
+            var entities = new List<SimEntity>(start.Entities.Count);
+
+            for (int i = 0; i < start.Entities.Count; i++)
+            {
+                LockstepStartEntity raw = start.Entities[i];
+
+                SimEntity e;
+                e.Id = (int)raw.EntityId;       // wire 是 int64、内存是 int：**显式**（协议里写明了这一点）
+                e.Position = new FixVector3(
+                    Fix64.FromRaw(raw.PosXRaw), Fix64.FromRaw(raw.PosYRaw), Fix64.FromRaw(raw.PosZRaw));
+                e.Hp = raw.Hp;
+                e.MaxHp = raw.MaxHp;
+                e.AttackReadyTick = raw.AttackReadyTick;
+                entities.Add(e);
+            }
+
+            bool ok = m_lockstep != null && m_lockstep.ApplyStart(start.Frame, start.InitialHash, entities);
+
+            Log("收到**锁步开局**：帧 " + start.Frame + "、" + entities.Count + " 个实体 ⇒ " +
+                (ok ? "已开局" : "**开局失败**（initial_hash 对不上 —— 见分歧事件）"));
+        }
+
+        /// <summary>收到锁步**一帧**：转成普通数据 ⇒ 喂运行器（它会自己 `Step` 并比哈希）。</summary>
+        /// <param name="frame">帧消息。</param>
+        private void HandleLockstepFrame(LockstepFrame frame)
+        {
+            if (frame == null)
+            {
+                return;
+            }
+
+            EnsureLockstep();
+
+            var inputs = new List<FrameInput>(frame.Inputs.Count);
+
+            for (int i = 0; i < frame.Inputs.Count; i++)
+            {
+                LockstepFrameInput raw = frame.Inputs[i];
+
+                FrameInput f;
+                f.PlayerId = raw.PlayerId;
+                f.MoveDirection = new FixVector3(Fix64.FromRaw(raw.MoveXRaw), Fix64.FromRaw(raw.MoveYRaw), Fix64.Zero);
+                f.Buttons = raw.Buttons;
+                f.TargetEntityId = raw.TargetEntityId;
+                f.Missing = raw.Missing;
+                inputs.Add(f);
+            }
+
+            if (m_lockstep != null)
+            {
+                m_lockstep.ApplyFrame(frame.Frame, inputs, frame.ServerHash);
+            }
+        }
+
+        /// <summary>
+        /// 懒建运行器并接上分歧上报。
+        /// <para>⚠️ 分歧**必须是事件**（不只是日志）：帧同步跑偏要能立刻被人看见。</para>
+        /// </summary>
+        private void EnsureLockstep()
+        {
+            if (m_lockstep != null)
+            {
+                return;
+            }
+
+            m_lockstep = new LockstepClient();
+            m_lockstep.DesyncDetected += d =>
+            {
+                Log("⚠️ **锁步分歧**：" + d);
+                DesyncDetected?.Invoke(d);
+            };
+        }
+
         /// <summary>一条**任务状态**：存下来、记数、发事件、写日志。</summary>
         /// <param name="states">任务状态（null 会被忽略 —— 0 长度帧解出来就是 null）。</param>
-        private void HandleQuestState(QuestStateSync states)
-        {
+        private void HandleQuestState(QuestStateSync states)        {
             if (states == null)
             {
                 return;
