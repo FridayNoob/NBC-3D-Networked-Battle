@@ -52,6 +52,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using NBC.Protocol;             // `QuestStateSync` / `QuestStateEntry`（§二十六 下发的形状）
 using NBC.Shared.Condition;
 using NBC.Shared.Reward;
 
@@ -154,6 +155,56 @@ namespace NBC.Server.Game
         public int TrackedPlayers
         {
             get { return m_players.Count; }
+        }
+
+        /// <summary>
+        /// 某个玩家的任务状态**变了**（接取成功 / 交付成功）。
+        /// <para>⚠️ 与 `AchievementAuthority.ProgressChanged` 同一个形状：权威**只管喊**，
+        /// "发给谁、怎么发"由 `QuestStateBroadcaster` 负责（Host 与探针共用那一份）。</para>
+        /// <para>⚠️ 参数是玩家编号，**不是**会话 —— 权威不认识网络（分层）。</para>
+        /// </summary>
+        public event Action<long>? StateChanged;
+
+        /// <summary>
+        /// 把一个玩家的**全部**任务状态拍成一条 `QuestStateSync`（一个都没接过时返回 false）。
+        /// <para>⚠️ **全量**：增量一旦漏一条就会**永久**少一个任务的状态，而且不报错
+        /// （与 `ProgressSync` / 每 tick 全量快照同一个判据）。</para>
+        /// <para>⚠️ 只发**有状态**的任务（`!= None`）⇒ **0 不出现在协议里** ——
+        /// "表里没有这一行 = 未接取"，所以客户端的 `null`（服务端没说）与 `0`（未接取）分得开。</para>
+        /// </summary>
+        /// <param name="playerId">玩家编号。</param>
+        /// <param name="serverTick">服务端逻辑帧号（只用于排查）。</param>
+        /// <param name="message">拍好的消息。</param>
+        /// <returns>有东西可发返回 true。</returns>
+        public bool TryBuildQuestStateView(long playerId, long serverTick, out QuestStateSync message)
+        {
+            message = new QuestStateSync { ServerTick = serverTick };
+
+            PlayerState? state;
+
+            if (!m_players.TryGetValue(playerId, out state) || state.States == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < m_tables.Quests.Count; i++)
+            {
+                int questId = m_tables.Quests[i].Id;
+                EQuestStage stage = state.States.GetState(questId);
+
+                if (stage == EQuestStage.None)
+                {
+                    continue;       // 没接过 ⇒ 不发（见上面那条"0 不出现"）
+                }
+
+                message.Entries.Add(new QuestStateEntry
+                {
+                    QuestId = questId,
+                    State = (int)stage
+                });
+            }
+
+            return message.Entries.Count > 0;
         }
 
         /// <summary>一句人话（启动/关服统计用）。</summary>
@@ -326,6 +377,9 @@ namespace NBC.Server.Game
             state.Accepted++;
             m_accepted++;
 
+            // 状态真的变了 ⇒ 喊一声（`QuestStateBroadcaster` 会把全量状态发给这个玩家）
+            StateChanged?.Invoke(playerId);
+
             Note?.Invoke("任务接取（服务端权威）：玩家 " + playerId + " → " + questId + "「" + quest.Name + "」");
             return true;
         }
@@ -408,6 +462,10 @@ namespace NBC.Server.Game
 
             state.Submitted++;
             m_submitted++;
+
+            // 交付也是状态变化 ⇒ 喊一声（**幂等路径不喊**：重复交付什么都没变，
+            // 上面那条分支已经提前 `return true` 了）
+            StateChanged?.Invoke(playerId);
 
             Note?.Invoke("任务交付（服务端权威）：玩家 " + playerId + " → " + questId + "「" + quest.Name + "」" +
                          (reward == null

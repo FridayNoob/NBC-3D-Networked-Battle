@@ -198,6 +198,10 @@ namespace NBC.NetProbe
             Quest_SharedConditionIsRejected_ButCleanTablesLoad();
             Quest_SubmitUnregisters_SoBothPathsAgree();
 
+            Console.WriteLine();
+            Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
+            QuestAction_SocketRoundTrip();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -3233,6 +3237,219 @@ namespace NBC.NetProbe
                         second.TrackedConditionCount == afterSubmit,
                         "未重启交付后 " + afterSubmit + " vs 重启后 " + second.TrackedConditionCount +
                         "（两边不等 = 两条路径行为不一致）");
+                }
+            }
+        }
+
+        /// <summary>从客户端收到的消息里找**最后一条**任务状态同步（没有则 null）。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>状态同步或 null。</returns>
+        private static QuestStateSync FindQuestState(Client client)
+        {
+            for (int i = client.Received.Count - 1; i >= 0; i--)
+            {
+                QuestStateSync sync = client.Received[i].QuestState;
+
+                if (sync != null)
+                {
+                    return sync;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>状态同步里某个任务的状态；没有这个任务时返回 -999（刻意不是 0）。</summary>
+        /// <param name="sync">状态同步。</param>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>状态数字。</returns>
+        private static int StateOf(QuestStateSync sync, int questId)
+        {
+            if (sync == null)
+            {
+                return -999;
+            }
+
+            for (int i = 0; i < sync.Entries.Count; i++)
+            {
+                if (sync.Entries[i].QuestId == questId)
+                {
+                    return sync.Entries[i].State;
+                }
+            }
+
+            return -999;
+        }
+
+        /// <summary>客户端收到几条错误。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>条数。</returns>
+        private static int CountErrors(Client client)
+        {
+            int n = 0;
+
+            for (int i = 0; i < client.Received.Count; i++)
+            {
+                if (client.Received[i].Error != null)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>客户端收到的**最后一条**错误（没有则 null）。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>错误或 null。</returns>
+        private static ErrorResponse LastError(Client client)
+        {
+            for (int i = client.Received.Count - 1; i >= 0; i--)
+            {
+                ErrorResponse error = client.Received[i].Error;
+
+                if (error != null)
+                {
+                    return error;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 【十八】任务动作走**真网线**（§二十六）。
+        ///
+        /// <para>⚠️ 前提（我在交付简报里点明过）：**成功路径是"推送"发的** ——
+        /// `QuestService` 成功时只返回 `Handled`，状态由 `QuestStateBroadcaster` 发。
+        /// 所以这套用例**必须**自己构造广播器并注册处理器，否则断言的是"没人回包"。</para>
+        ///
+        /// <para>⚠️ 每条都要有**阳性对照**：①里同时断言"确实收到了消息"，
+        /// 免得把"一条都没收到"当成通过（假绿）。</para>
+        /// </summary>
+        private static void QuestAction_SocketRoundTrip()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                QuestTables tables = LoadQuestTables();
+
+                var backing = new Dictionary<int, int>();
+                var progress = new FakeProgressStore();
+                var ledger = new FakeRewardLedger();
+
+                using (var authority = new QuestAuthority(tables, _ => progress, _ => ledger,
+                                                          _ => new FakeQuestStateStore(backing)))
+                using (var push = new QuestStateBroadcaster(h.Server, h.Registry, authority))
+                {
+                    var service = new QuestService(authority, push);
+                    service.RegisterHandlers(h.Router);
+
+                    // `FakeAccounts` 里 alice = 玩家 11（> 0 = 真实账号档案）
+                    Client a = h.ConnectAndLogin("alice", "pw-alice");
+                    long aliceId = AckOf(a, "alice 登录").PlayerId;
+
+                    // ⚠️ 必须进房：广播器靠**房间**找会话（本项目"一个席位一个会话"）
+                    h.JoinSameRoom(a);
+
+                    Task? loading;
+                    authority.Track(aliceId, "爱丽丝", out loading);
+
+                    if (loading != null)
+                    {
+                        loading.GetAwaiter().GetResult();
+                    }
+
+                    // ---- ① 接取 ⇒ 收到 quest_state 且 state = 1 ----
+                    a.Send(new ClientMessage { QuestAction = new QuestActionRequest { QuestId = 3003, Action = 1 } });
+                    h.PumpFor(300);
+
+                    Check("①：阳性对照 —— 确实收到了服务端消息（不是「什么都没收到」被算通过）",
+                        a.Received.Count > 0, "收到 " + a.Received.Count + " 条");
+
+                    QuestStateSync sync = FindQuestState(a);
+
+                    Check("①⭐：登录玩家发「接取」⇒ 收到 `quest_state`", sync != null,
+                        "没收到状态同步；共 " + a.Received.Count + " 条消息，错误 " + CountErrors(a) + " 条");
+
+                    Check("①⭐：而且任务 3003 的 state = 1（Accepted）",
+                        StateOf(sync, 3003) == 1, "state=" + StateOf(sync, 3003) + "（-999 = 没这条）");
+
+                    // ---- ② 条件没满就交付 ⇒ 收到错误（不是成功、不是静默）----
+                    int errorsBefore = CountErrors(a);
+
+                    a.Send(new ClientMessage { QuestAction = new QuestActionRequest { QuestId = 3003, Action = 2 } });
+                    h.PumpFor(300);
+
+                    ErrorResponse rejected = LastError(a);
+
+                    Check("②⭐：条件没满就「交付」⇒ **收到错误**（不是成功、不是静默）",
+                        CountErrors(a) > errorsBefore && rejected != null,
+                        "错误条数 " + errorsBefore + " → " + CountErrors(a));
+
+                    Check("②：错误码是 `QuestRejected`（1006），不是别的",
+                        rejected != null && rejected.Code == NBC.Shared.Net.NetErrors.QuestRejected,
+                        rejected == null ? "没有错误" : "code=" + rejected.Code);
+
+                    Check("②⭐：错误里带**原因原文**（说清「现在不能交付」）",
+                        rejected != null && rejected.Message.Contains("不能交付"),
+                        rejected == null ? "没有错误" : ("Message=" + rejected.Message));
+
+                    // ---- ③ 游客发「接取」⇒ **明确拒绝**（与"没接权威"分开）----
+                    Client guest = h.ConnectAndHandshake("游客乙");
+                    HandshakeAck guestAck = AckOf(guest, "游客握手");
+
+                    Check("③：阳性对照 —— 这个连接**确实是游客**（负 id）",
+                        guestAck.PlayerId <= 0, "player_id=" + guestAck.PlayerId + "（不是游客的话这条用例没意义）");
+
+                    guest.Send(new ClientMessage { QuestAction = new QuestActionRequest { QuestId = 3003, Action = 1 } });
+                    h.PumpFor(300);
+
+                    ErrorResponse guestRejected = LastError(guest);
+
+                    Check("③⭐：游客发「接取」⇒ **被明确拒绝**（不是静默丢弃、不是当成功）",
+                        guestRejected != null, "游客一条错误都没收到");
+
+                    Check("③⭐：而且用的是**身份**码（`PlayerMismatch`=1004），**不是**「没接权威」那个码",
+                        guestRejected != null && guestRejected.Code == NBC.Shared.Net.NetErrors.PlayerMismatch,
+                        guestRejected == null ? "没有错误" : "code=" + guestRejected.Code);
+
+                    Check("③：错误里告诉了玩家**该怎么办**（「先用账号登录」）",
+                        guestRejected != null && guestRejected.Message.Contains("登录"),
+                        guestRejected == null ? "没有错误" : ("Message=" + guestRejected.Message));
+
+                    // ---- ④ 让它真的完成并交付 ⇒ 再交付一次必须幂等 ----
+                    authority.ApplyFact(new ProgressFact(aliceId, NBC.Shared.Condition.EConditionEvent.KillMonster, 6003, 1));
+
+                    a.Send(new ClientMessage { QuestAction = new QuestActionRequest { QuestId = 3003, Action = 2 } });
+                    h.PumpFor(300);
+
+                    QuestStateSync afterSubmit = FindQuestState(a);
+
+                    Check("④：条件打满后「交付」⇒ 收到 state = 3（Submitted）",
+                        StateOf(afterSubmit, 3003) == 3, "state=" + StateOf(afterSubmit, 3003));
+
+                    long paidExp = ledger.PaidExp;
+                    long paidGold = ledger.PaidGold;
+
+                    Check("④：阳性对照 —— 交付**真的发了奖**（钱不是 0，否则下面那条测不出东西）",
+                        paidExp != 0 && paidGold != 0, "exp=" + paidExp + " gold=" + paidGold);
+
+                    int errorsBefore2 = CountErrors(a);
+
+                    a.Send(new ClientMessage { QuestAction = new QuestActionRequest { QuestId = 3003, Action = 2 } });
+                    h.PumpFor(300);
+
+                    Check("④⭐：**重复交付** ⇒ 钱**一点没变**（不重复发奖）",
+                        ledger.PaidExp == paidExp && ledger.PaidGold == paidGold,
+                        "exp " + paidExp + " → " + ledger.PaidExp + "；gold " + paidGold + " → " + ledger.PaidGold);
+
+                    Check("④：而且重复交付**没有被当成错误**（幂等语义：仍然成功）",
+                        CountErrors(a) == errorsBefore2,
+                        "错误条数 " + errorsBefore2 + " → " + CountErrors(a));
+
+                    Check("④：台账里**只有一行**任务奖励（`owner_kind=1` / quest 3003）",
+                        ledger.HasGranted(NBC.Shared.Reward.ERewardOwnerKind.Quest, 3003),
+                        "台账：" + ledger.Describe());
                 }
             }
         }

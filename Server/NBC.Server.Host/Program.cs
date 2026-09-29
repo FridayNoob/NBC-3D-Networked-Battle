@@ -312,6 +312,11 @@ internal static class Program
         // M4-S3 收口（未做#2）：把权威进度推给客户端的那条线（**Host 与探针共用**）
         ProgressBroadcaster? progress = null;
 
+        // M4-S3 §二十六：任务动作（接取 / 交付）处理器 + 任务状态推送线
+        // ⚠️ 两者都**只在这里构造一次**，与探针共用同一份类（别抄一份进探针）。
+        QuestStateBroadcaster? questStates = null;
+        QuestService? questService = null;
+
         if (questTables != null && dbFactory != null)
         {
             DbConnectionFactory liveFactory = dbFactory;
@@ -350,6 +355,19 @@ internal static class Program
             progress = new ProgressBroadcaster(transport, rooms.Registry, achievements);
             progress.Note += line => Log(quiet, "[进度] " + line);
 
+            // ================================================================
+            //  §二十六：任务动作（接取 / 交付）+ **任务状态同步**
+            //  ⚠️ 成功时处理器**不回包**：权威在同一调用栈里同步喊 `StateChanged`，
+            //     广播器当场发全量 ⇒ "点接取"与"条件在战斗里打满"是**同一条发送路径**。
+            //     （回包 + 另外推送会**发两遍**，而且两次读取可能顺序相反。）
+            // ================================================================
+            questStates = new QuestStateBroadcaster(transport, rooms.Registry, quests);
+            questStates.Note += line => Log(quiet, "[任务状态] " + line);
+
+            questService = new QuestService(quests, questStates);
+            questService.Note += line => Log(quiet, "[任务请求] " + line);
+            questService.RegisterHandlers(router);
+
             // 一局结束就冲一次库（**fire-and-forget**：这里是 Tick 线程，绝不能等 IO）
             // ⚠️ lambda 的参数**不能叫 `_`** —— 那样里面的 `_ = 任务` 会被解析成"给这个参数赋值"，
             //    报一句完全看不懂的 `无法将 Task<bool> 转换为 BattleRecordDraft`（本次实测踩到）。
@@ -360,6 +378,7 @@ internal static class Program
             };
 
             Say($"[成就] 服务端权威判定已接：{questTables.Describe()}");
+            Say($"[任务] 权威 + 动作路由（接取/交付）已接：{questTables.Describe()}");
         }
         else
         {
@@ -425,7 +444,7 @@ internal static class Program
 
         Say(string.Empty);
         Say($"[就绪] 已监听 {transport.Port}（端口传 0 时由系统分配）");
-        Say($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input");
+        Say($"       路由已注册 {router.HandlerCount} 种消息：Handshake（内建）+ Ping + JoinRoom + LeaveRoom + Input + QuestAction（§二十六）");
         Say($"       每房 {rooms.Registry.Capacity} 个席位（D6：一个房间 = 一个副本实例）");
         Say("       按 Ctrl+C 退出。");
         Say(string.Empty);
@@ -494,6 +513,9 @@ internal static class Program
             Say("[收尾] 任务状态落库" + (drained ? "已排空。" : "**超时**（还有没写完的）。"));
         }
 
+        // 推送线退订（它挂着 `QuestAuthority.StateChanged`；不退订就是泄漏）
+        questStates?.Dispose();
+
         // 登录审计同理：别把"谁登录过"丢在队列里
         if (loginAudit.PendingCount > 0 || loginAudit.Submitted > 0)
         {
@@ -523,6 +545,14 @@ internal static class Program
         if (quests != null)
         {
             Say($"[统计] {quests.Describe()}");
+        }
+        if (questService != null)
+        {
+            Say($"[统计] {questService.Describe()}");
+        }
+        if (questStates != null)
+        {
+            Say($"[统计] {questStates.Describe()}");
         }
         Say($"[统计] 收 {transport.FramesIn} 帧/{transport.BytesIn} B，" +
                           $"发 {transport.FramesOut} 帧/{transport.BytesOut} B，" +

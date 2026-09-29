@@ -39,6 +39,20 @@ namespace NBC.Shared.Net
         /// </summary>
         public const int PlayerMismatch = 1004;
 
+        /// <summary>
+        /// 服务端**没接任务权威**（没接数据库 / 读不到四张表）⇒ 现在不能接取或交付（M4-S3 §二十六）。
+        /// <para>⚠️ 与"游客被拒"**必须分开**：前者是**服务端配置问题**（该修服务端），
+        /// 后者是**身份问题**（该去登录）。混成一个码，排查时就会走错方向。</para>
+        /// </summary>
+        public const int QuestUnavailable = 1005;
+
+        /// <summary>
+        /// 任务状态机**拒绝了**这个动作（已经接过 / 条件没满 / 不是"已完成"…）（M4-S3 §二十六）。
+        /// <para>⚠️ **原因原文在 `ErrorResponse.Message` 里** —— 客户端要把它显示出来，
+        /// 别只显示一个编号（玩家看不懂，你也排查不动）。</para>
+        /// </summary>
+        public const int QuestRejected = 1006;
+
         /// <summary>把错误码说成人话（服务端兜底用；正常情况下服务端会给出更具体的一句）。</summary>
         /// <param name="code">错误码。</param>
         /// <returns>人话。</returns>
@@ -54,6 +68,10 @@ namespace NBC.Shared.Net
                     return "房间不存在";
                 case PlayerMismatch:
                     return "输入里的玩家 id 不是你的";
+                case QuestUnavailable:
+                    return "服务端现在不能处理任务动作";
+                case QuestRejected:
+                    return "任务动作被拒绝";
                 default:
                     return "未知错误（" + code + "）";
             }
