@@ -80,7 +80,7 @@ namespace NBC.Protocol {
             "AxIRCglwb3Nfel9yYXcYBCABKAMSCgoCaHAYBSABKAUSDgoGbWF4X2hwGAYg",
             "ASgFEhkKEWF0dGFja19yZWFkeV90aWNrGAcgASgFImMKDUxvY2tzdGVwU3Rh",
             "cnQSDQoFZnJhbWUYASABKAUSLQoIZW50aXRpZXMYAiADKAsyGy5uYmMubTMu",
-            "TG9ja3N0ZXBTdGFydEVudGl0eRIUCgxpbml0aWFsX2hhc2gYAyABKAQiyQMK",
+            "TG9ja3N0ZXBTdGFydEVudGl0eRIUCgxpbml0aWFsX2hhc2gYAyABKAQi9gMK",
             "DVNlcnZlck1lc3NhZ2USLQoNaGFuZHNoYWtlX2FjaxgBIAEoCzIULm5iYy5t",
             "My5IYW5kc2hha2VBY2tIABIcCgRwb25nGAIgASgLMgwubmJjLm0zLlBvbmdI",
             "ABInCgpyb29tX3N0YXRlGAMgASgLMhEubmJjLm0zLlJvb21TdGF0ZUgAEikK",
@@ -90,17 +90,20 @@ namespace NBC.Protocol {
             "GAcgASgLMhQubmJjLm0zLlByb2dyZXNzU3luY0gAEi0KC3F1ZXN0X3N0YXRl",
             "GAggASgLMhYubmJjLm0zLlF1ZXN0U3RhdGVTeW5jSAASLwoObG9ja3N0ZXBf",
             "ZnJhbWUYCSABKAsyFS5uYmMubTMuTG9ja3N0ZXBGcmFtZUgAEi8KDmxvY2tz",
-            "dGVwX3N0YXJ0GAogASgLMhUubmJjLm0zLkxvY2tzdGVwU3RhcnRIAEIJCgdw",
-            "YXlsb2FkIskCCg1DbGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIR",
-            "Lm5iYy5tMy5IYW5kc2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBp",
-            "bmdIABIsCglqb2luX3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1",
-            "ZXN0SAASJAoFaW5wdXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIu",
-            "CgpsZWF2ZV9yb29tGAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RI",
-            "ABIyCgxxdWVzdF9hY3Rpb24YBiABKAsyGi5uYmMubTMuUXVlc3RBY3Rpb25S",
-            "ZXF1ZXN0SAASLwoObG9ja3N0ZXBfaW5wdXQYByABKAsyFS5uYmMubTMuTG9j",
-            "a3N0ZXBJbnB1dEgAQgkKB3BheWxvYWQqVAoJUm9vbVBoYXNlEhYKElJPT01f",
-            "UEhBU0VfV0FJVElORxAAEhYKElJPT01fUEhBU0VfUlVOTklORxABEhcKE1JP",
-            "T01fUEhBU0VfRklOSVNIRUQQAkIPqgIMTkJDLlByb3RvY29sYgZwcm90bzM="));
+            "dGVwX3N0YXJ0GAogASgLMhUubmJjLm0zLkxvY2tzdGVwU3RhcnRIABIrCgxt",
+            "YXRjaF9yZXN1bHQYCyABKAsyEy5uYmMubTMuTWF0Y2hSZXN1bHRIAEIJCgdw",
+            "YXlsb2FkIk8KC01hdGNoUmVzdWx0Eg0KBWZyYW1lGAEgASgFEg8KB291dGNv",
+            "bWUYAiABKAUSDwoHa2lsbHNfYRgDIAEoBRIPCgdraWxsc19iGAQgASgFIskC",
+            "Cg1DbGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIRLm5iYy5tMy5I",
+            "YW5kc2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBpbmdIABIsCglq",
+            "b2luX3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1ZXN0SAASJAoF",
+            "aW5wdXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIuCgpsZWF2ZV9y",
+            "b29tGAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RIABIyCgxxdWVz",
+            "dF9hY3Rpb24YBiABKAsyGi5uYmMubTMuUXVlc3RBY3Rpb25SZXF1ZXN0SAAS",
+            "LwoObG9ja3N0ZXBfaW5wdXQYByABKAsyFS5uYmMubTMuTG9ja3N0ZXBJbnB1",
+            "dEgAQgkKB3BheWxvYWQqVAoJUm9vbVBoYXNlEhYKElJPT01fUEhBU0VfV0FJ",
+            "VElORxAAEhYKElJPT01fUEhBU0VfUlVOTklORxABEhcKE1JPT01fUEhBU0Vf",
+            "RklOSVNIRUQQAkIPqgIMTkJDLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -130,7 +133,8 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepFrame), global::NBC.Protocol.LockstepFrame.Parser, new[]{ "Frame", "Inputs", "ServerHash" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepStartEntity), global::NBC.Protocol.LockstepStartEntity.Parser, new[]{ "EntityId", "PosXRaw", "PosYRaw", "PosZRaw", "Hp", "MaxHp", "AttackReadyTick" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepStart), global::NBC.Protocol.LockstepStart.Parser, new[]{ "Frame", "Entities", "InitialHash" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame", "LockstepStart" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame", "LockstepStart", "MatchResult" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.MatchResult), global::NBC.Protocol.MatchResult.Parser, new[]{ "Frame", "Outcome", "KillsA", "KillsB" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction", "LockstepInput" }, new[]{ "Payload" }, null, null, null)
           }));
     }
@@ -8140,6 +8144,9 @@ namespace NBC.Protocol {
         case PayloadOneofCase.LockstepStart:
           LockstepStart = other.LockstepStart.Clone();
           break;
+        case PayloadOneofCase.MatchResult:
+          MatchResult = other.MatchResult.Clone();
+          break;
       }
 
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -8286,6 +8293,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "match_result" field.</summary>
+    public const int MatchResultFieldNumber = 11;
+    /// <summary>
+    /// M4-S4 S4-d 追加（兼容：只是多一个 oneof 分支）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.MatchResult MatchResult {
+      get { return payloadCase_ == PayloadOneofCase.MatchResult ? (global::NBC.Protocol.MatchResult) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.MatchResult;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -8300,6 +8322,7 @@ namespace NBC.Protocol {
       QuestState = 8,
       LockstepFrame = 9,
       LockstepStart = 10,
+      MatchResult = 11,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -8340,6 +8363,7 @@ namespace NBC.Protocol {
       if (!object.Equals(QuestState, other.QuestState)) return false;
       if (!object.Equals(LockstepFrame, other.LockstepFrame)) return false;
       if (!object.Equals(LockstepStart, other.LockstepStart)) return false;
+      if (!object.Equals(MatchResult, other.MatchResult)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -8358,6 +8382,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.QuestState) hash ^= QuestState.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LockstepFrame) hash ^= LockstepFrame.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LockstepStart) hash ^= LockstepStart.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.MatchResult) hash ^= MatchResult.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -8417,6 +8442,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(82);
         output.WriteMessage(LockstepStart);
       }
+      if (payloadCase_ == PayloadOneofCase.MatchResult) {
+        output.WriteRawTag(90);
+        output.WriteMessage(MatchResult);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -8467,6 +8496,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(82);
         output.WriteMessage(LockstepStart);
       }
+      if (payloadCase_ == PayloadOneofCase.MatchResult) {
+        output.WriteRawTag(90);
+        output.WriteMessage(MatchResult);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -8506,6 +8539,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.LockstepStart) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(LockstepStart);
+      }
+      if (payloadCase_ == PayloadOneofCase.MatchResult) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(MatchResult);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -8579,6 +8615,12 @@ namespace NBC.Protocol {
             LockstepStart = new global::NBC.Protocol.LockstepStart();
           }
           LockstepStart.MergeFrom(other.LockstepStart);
+          break;
+        case PayloadOneofCase.MatchResult:
+          if (MatchResult == null) {
+            MatchResult = new global::NBC.Protocol.MatchResult();
+          }
+          MatchResult.MergeFrom(other.MatchResult);
           break;
       }
 
@@ -8687,6 +8729,15 @@ namespace NBC.Protocol {
             LockstepStart = subBuilder;
             break;
           }
+          case 90: {
+            global::NBC.Protocol.MatchResult subBuilder = new global::NBC.Protocol.MatchResult();
+            if (payloadCase_ == PayloadOneofCase.MatchResult) {
+              subBuilder.MergeFrom(MatchResult);
+            }
+            input.ReadMessage(subBuilder);
+            MatchResult = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -8792,6 +8843,336 @@ namespace NBC.Protocol {
             LockstepStart = subBuilder;
             break;
           }
+          case 90: {
+            global::NBC.Protocol.MatchResult subBuilder = new global::NBC.Protocol.MatchResult();
+            if (payloadCase_ == PayloadOneofCase.MatchResult) {
+              subBuilder.MergeFrom(MatchResult);
+            }
+            input.ReadMessage(subBuilder);
+            MatchResult = subBuilder;
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 服务端 → 客户端：**这一局的胜负判定**（M4-S4 S4-d）。
+  ////
+  //// ⚠️ **带上两队击杀数**是刻意的：客户端要能拿它**复算**判定 —— 只发结论的话，
+  ////    一旦两端不一致，你只知道"不一样"，不知道**为什么**不一样。
+  ////
+  //// ⚠️ `outcome` 用**数字**（1=A 2=B 3=平），与 `owner_kind` / `quest_state.state`
+  ////    同一套路：枚举名会改，数字不会；改数字是**不兼容改动**。
+  /// </summary>
+  public sealed partial class MatchResult : pb::IMessage<MatchResult>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<MatchResult> _parser = new pb::MessageParser<MatchResult>(() => new MatchResult());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<MatchResult> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[27]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public MatchResult() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public MatchResult(MatchResult other) : this() {
+      frame_ = other.frame_;
+      outcome_ = other.outcome_;
+      killsA_ = other.killsA_;
+      killsB_ = other.killsB_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public MatchResult Clone() {
+      return new MatchResult(this);
+    }
+
+    /// <summary>Field number for the "frame" field.</summary>
+    public const int FrameFieldNumber = 1;
+    private int frame_;
+    /// <summary>
+    /// 判定发生在哪一帧
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Frame {
+      get { return frame_; }
+      set {
+        frame_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "outcome" field.</summary>
+    public const int OutcomeFieldNumber = 2;
+    private int outcome_;
+    /// <summary>
+    /// 1 = A 队胜；2 = B 队胜；3 = 平局
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Outcome {
+      get { return outcome_; }
+      set {
+        outcome_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "kills_a" field.</summary>
+    public const int KillsAFieldNumber = 3;
+    private int killsA_;
+    /// <summary>
+    /// A 队击杀数（客户端复算用）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int KillsA {
+      get { return killsA_; }
+      set {
+        killsA_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "kills_b" field.</summary>
+    public const int KillsBFieldNumber = 4;
+    private int killsB_;
+    /// <summary>
+    /// B 队击杀数
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int KillsB {
+      get { return killsB_; }
+      set {
+        killsB_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as MatchResult);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(MatchResult other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Frame != other.Frame) return false;
+      if (Outcome != other.Outcome) return false;
+      if (KillsA != other.KillsA) return false;
+      if (KillsB != other.KillsB) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Frame != 0) hash ^= Frame.GetHashCode();
+      if (Outcome != 0) hash ^= Outcome.GetHashCode();
+      if (KillsA != 0) hash ^= KillsA.GetHashCode();
+      if (KillsB != 0) hash ^= KillsB.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      if (Outcome != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Outcome);
+      }
+      if (KillsA != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(KillsA);
+      }
+      if (KillsB != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(KillsB);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Frame != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(Frame);
+      }
+      if (Outcome != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Outcome);
+      }
+      if (KillsA != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(KillsA);
+      }
+      if (KillsB != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(KillsB);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Frame != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Frame);
+      }
+      if (Outcome != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Outcome);
+      }
+      if (KillsA != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(KillsA);
+      }
+      if (KillsB != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(KillsB);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(MatchResult other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Frame != 0) {
+        Frame = other.Frame;
+      }
+      if (other.Outcome != 0) {
+        Outcome = other.Outcome;
+      }
+      if (other.KillsA != 0) {
+        KillsA = other.KillsA;
+      }
+      if (other.KillsB != 0) {
+        KillsB = other.KillsB;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Outcome = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            KillsA = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            KillsB = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Frame = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Outcome = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            KillsA = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            KillsB = input.ReadInt32();
+            break;
+          }
         }
       }
     }
@@ -8816,7 +9197,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[27]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[28]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

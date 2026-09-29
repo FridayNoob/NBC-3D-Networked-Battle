@@ -430,9 +430,24 @@ message ServerMessage
         QuestStateSync quest_state  = 8;   // M4-S3 §二十六 追加（兼容：同上）
         LockstepFrame lockstep_frame = 9;  // M4-S4 S4-c 追加（兼容：同上）
         LockstepStart lockstep_start = 10; // M4-S4 S4-c 第二半 追加（兼容：同上）
+        MatchResult   match_result  = 11; // M4-S4 S4-d 追加（兼容：只是多一个 oneof 分支）
     }
 }
 
+/// 服务端 → 客户端：**这一局的胜负判定**（M4-S4 S4-d）。
+///
+/// ⚠️ **带上两队击杀数**是刻意的：客户端要能拿它**复算**判定 —— 只发结论的话，
+///    一旦两端不一致，你只知道"不一样"，不知道**为什么**不一样。
+///
+/// ⚠️ `outcome` 用**数字**（1=A 2=B 3=平），与 `owner_kind` / `quest_state.state`
+///    同一套路：枚举名会改，数字不会；改数字是**不兼容改动**。
+message MatchResult
+{
+    int32 frame   = 1;   // 判定发生在哪一帧
+    int32 outcome = 2;   // 1 = A 队胜；2 = B 队胜；3 = 平局
+    int32 kills_a = 3;   // A 队击杀数（客户端复算用）
+    int32 kills_b = 4;   // B 队击杀数
+}
 /// 客户端 → 服务端。
 message ClientMessage
 {
