@@ -6070,11 +6070,19 @@ namespace NBC.NetProbe
                     "roster=" + string.Join(",", fromRoster.ConvertAll(x => x.ToString()).ToArray()) +
                     " 下发=" + string.Join(",", fromState.ConvertAll(x => x.ToString()).ToArray()));
 
+                // ⚠️ **长度闸**（补的）：没有它，下面那条"队伍逐项相同"对"名单长度不同"不敏感 ——
+                //    变异 V（`ToState()` 不写机器人）实测时那条**保持绿**，只有"集合相等"抓到。
+                Check("§S4e2⭐⭐ **两份名单的元素个数相同**（⭐ 补的长度闸：缺它就抓不到「少一个机器人」）",
+                    fromRoster.Count == fromState.Count &&
+                    fromRoster.Count == room.SeatCount + room.BotCount,
+                    "roster=" + fromRoster.Count + " 下发=" + fromState.Count +
+                    " 真人=" + room.SeatCount + " 机器人=" + room.BotCount);
+
                 // ⭐ 而且两端用**同一个纯函数**推出的队伍也一致（这才是"假分歧"真正要防的）
                 var teamFromRoster = new SortedTeamMap(roster);
                 var teamFromState = new SortedTeamMap(fromState);
 
-                bool teamsSame = true;
+                bool teamsSame = fromRoster.Count == fromState.Count;   // ⚠️ **先卡长度**
 
                 for (int i = 0; i < fromState.Count; i++)
                 {
