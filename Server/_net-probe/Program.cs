@@ -249,6 +249,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十九】M4-S4 S4-d 收尾：服务端宣布胜负 + 客户端复算比对");
             MatchResult_AnnounceAndRecheck();
 
+            Console.WriteLine();
+            Console.WriteLine("【三十】M4-S4 S4-d 收尾：**真实路径**（假 ITRANSPORT 驱真 NetSession）上的胜负复算");
+            NetSession_MatchResultPath();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5671,6 +5675,202 @@ namespace NBC.NetProbe
                     captured.MyKillsA == 2 && captured.ServerKillsA == result.KillsA,
                     events == 1 ? captured.ToString() : "事件没触发");
             }
+        }
+
+        /// <summary>
+        /// 【三十】**真实 socket 路径**上的胜负：假 `ITransport` 驱真 `NetSession`
+        /// （`room_state` → `lockstep_start` → `lockstep_frame` → `match_result`）。
+        ///
+        /// <para>⚠️ 这一节补的正是"直驱 `LockstepClient` 验不到"的那块：**接线**（分发分支 + 转换 + 转发 + 队伍映射）。</para>
+        /// </summary>
+        private static void NetSession_MatchResultPath()
+        {
+            var fake = new FakeNetTransport();
+            var session = new NetSession(fake, "锁步探针", "net-probe/lockstep");
+
+            session.Connect("127.0.0.1", 7777);
+            session.Pump(0);
+            fake.Push(MakeHandshakeAck(11));
+            session.Pump(0);
+
+            Check("§S4d4：阳性对照 —— 会话已 Online（否则下面的业务消息全被忽略）",
+                session.IsOnline, "状态=" + session.State);
+
+            const int baseId = 100;
+            var rosterIds = new List<long> { baseId, baseId + 1, baseId + 2, baseId + 3 };
+
+            // ---- ① 先喂 `room_state`（成员名单）⇒ 会话据此推队伍映射（**不加协议字段**）----
+            var roomState = new RoomState();
+            roomState.RoomId = "probe-room";
+            roomState.DungeonId = 0;
+            roomState.Capacity = 4;
+
+            for (int i = 0; i < rosterIds.Count; i++)
+            {
+                var m = new RoomMember();
+                m.PlayerId = rosterIds[i];
+                m.PlayerName = "p" + i;
+                m.IsHost = i == 0;
+                m.Ready = true;
+                roomState.Members.Add(m);
+            }
+
+            fake.Push(new ServerMessage { RoomState = roomState });
+            session.Pump(0);
+
+            Check("§S4d4：阳性对照 —— 会话确实拿到了房间与成员名单（拿不到就推不出队伍）",
+                session.CurrentRoom != null && session.CurrentRoom.Members.Count == 4,
+                session.CurrentRoom == null ? "没有房间" : ("成员=" + session.CurrentRoom.Members.Count));
+
+            // ---- ② 造开局（B 队两人 Hp = 0 ⇒ 一开局 A 队击杀就有 2 == KillsToWin）----
+            var entities = new List<SimEntity>
+            {
+                MakeEntity(baseId, 0, 100),          // 序号 0 → A 队
+                MakeEntity(baseId + 1, 5, 0),        // 序号 1 → B 队（已死）
+                MakeEntity(baseId + 2, -5, 100),     // 序号 2 → A 队
+                MakeEntity(baseId + 3, 0, 0),        // 序号 3 → B 队（已死）
+            };
+
+            var serverWorld = new WorldState();
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                serverWorld.Add(entities[i].Id, entities[i].Position, entities[i].Hp);
+                int idx = serverWorld.IndexOf(entities[i].Id);
+                SimEntity fix = serverWorld.GetAt(idx);
+                fix.MaxHp = entities[i].MaxHp;
+                fix.AttackReadyTick = entities[i].AttackReadyTick;
+                serverWorld.SetAt(idx, fix);
+            }
+
+            serverWorld.SetTick(0);
+
+            var startMsg = new LockstepStart();
+            startMsg.Frame = 0;
+            startMsg.InitialHash = WorldStateHash.Compute(serverWorld);
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                var e = new LockstepStartEntity();
+                e.EntityId = entities[i].Id;
+                e.PosXRaw = entities[i].Position.X.RawValue;
+                e.PosYRaw = entities[i].Position.Y.RawValue;
+                e.PosZRaw = entities[i].Position.Z.RawValue;
+                e.Hp = entities[i].Hp;
+                e.MaxHp = entities[i].MaxHp;
+                e.AttackReadyTick = entities[i].AttackReadyTick;
+                startMsg.Entities.Add(e);
+            }
+
+            fake.Push(new ServerMessage { LockstepStart = startMsg });
+            session.Pump(0);
+
+            // ---- ③ 喂几帧（每帧推进服务端那份世界并算 server_hash）----
+            const int frames = 4;
+
+            for (int f = 0; f < frames; f++)
+            {
+                WorldStep.Step(serverWorld, new List<SimInput>
+                {
+                    new SimInput { EntityId = baseId, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 },
+                    new SimInput { EntityId = baseId + 1, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                    new SimInput { EntityId = baseId + 2, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                    new SimInput { EntityId = baseId + 3, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                }, 1);
+
+                var frame = new LockstepFrame();
+                frame.Frame = f;
+                frame.ServerHash = WorldStateHash.Compute(serverWorld);
+                frame.Inputs.Add(new LockstepFrameInput { PlayerId = baseId, MoveXRaw = Fix64.One.RawValue, Missing = false });
+                frame.Inputs.Add(new LockstepFrameInput { PlayerId = baseId + 1, Missing = true });
+                frame.Inputs.Add(new LockstepFrameInput { PlayerId = baseId + 2, Missing = true });
+                frame.Inputs.Add(new LockstepFrameInput { PlayerId = baseId + 3, Missing = true });
+
+                fake.Push(new ServerMessage { LockstepFrame = frame });
+                session.Pump(0);
+            }
+
+            Check("§S4d4：阳性对照 —— 会话侧的运行器真的开局并推进了（防「压根没接收」也算绿）",
+                session.Lockstep != null && session.Lockstep.Started &&
+                session.Lockstep.StepsExecuted == frames,
+                session.Lockstep == null ? "没有运行器" : session.Lockstep.Describe());
+
+            // ---- ④ 服务端宣布：A 队胜（击杀 2/0）----
+            int killsA;
+            int killsB;
+            MatchRules.CountKills(serverWorld, new SortedTeamMap(rosterIds), out killsA, out killsB);
+
+            EMatchOutcome outcome = MatchRules.Decide(killsA, killsB, serverWorld.Tick);
+
+            var result = new MatchResult();
+            result.Frame = serverWorld.Tick;
+            result.Outcome = MatchRules.ToNumber(outcome);
+            result.KillsA = killsA;
+            result.KillsB = killsB;
+
+            int events = 0;
+            LockstepMatchMismatch captured = default(LockstepMatchMismatch);
+            session.MatchMismatchDetected += m => { events++; captured = m; };
+
+            fake.Push(new ServerMessage { MatchResult = result });
+            session.Pump(0);
+
+            Check("§S4d4⭐ 真实路径：**好的一条零不一致**（接线正确 ⇒ 复算与服务端一致）",
+                session.MatchMismatchCount == 0 && session.MatchOutcome == EMatchOutcome.TeamA,
+                "不一致=" + session.MatchMismatchCount +
+                "；结果=" + (session.MatchOutcome == null ? "未落定" : MatchRules.Describe(session.MatchOutcome.Value)));
+
+            Check("§S4d4⭐：而且**有「确实收到了结果」的正面证据**（落定了结果，不是「没收到」混过去）",
+                session.MatchOutcome != null && events == 0,
+                "落定=" + (session.MatchOutcome != null) + "；事件=" + events);
+
+            // ---- ⑤ 改一位结果 ⇒ **恰好一次**不一致 + 三样可读 ----
+            MatchResult tampered = result.Clone();
+            tampered.Outcome = MatchRules.ToNumber(EMatchOutcome.TeamB);   // A 说成 B
+
+            fake.Push(new ServerMessage { MatchResult = tampered });
+            session.Pump(0);
+
+            Check("§S4d4⭐ 真实路径：**改一位结果 ⇒ 恰好一次不一致** + 事件一次",
+                session.MatchMismatchCount == 1 && events == 1,
+                "不一致=" + session.MatchMismatchCount + "；事件=" + events);
+
+            Check("§S4d4⭐：**三样可读**（我的判定 / 服务端判定 / 两队击杀）",
+                events == 1 && captured.Mine == EMatchOutcome.TeamA &&
+                captured.Server == EMatchOutcome.TeamB &&
+                captured.MyKillsA == killsA && captured.ServerKillsA == (int)tampered.KillsA,
+                events == 1 ? captured.ToString() : "事件没触发");
+
+            // ---- ⑥ 没有 `room_state`（拿不到队伍映射）⇒ **不许假装一致** ----
+            var lonely = new FakeNetTransport();
+            var lonelySession = new NetSession(lonely, "锁步探针", "net-probe/lockstep");
+
+            lonelySession.Connect("127.0.0.1", 7778);
+            lonelySession.Pump(0);
+            lonely.Push(MakeHandshakeAck(11));
+            lonelySession.Pump(0);
+
+            // ⚠️ **故意不喂 `room_state`**：没有成员名单 ⇒ 推不出队伍映射
+            lonely.Push(new ServerMessage { LockstepStart = startMsg });
+            lonelySession.Pump(0);
+
+            var lonelyFrame = new LockstepFrame();
+            lonelyFrame.Frame = 0;
+            lonelyFrame.ServerHash = WorldStateHash.Compute(serverWorld);
+            lonely.Push(new ServerMessage { LockstepFrame = lonelyFrame });
+            lonelySession.Pump(0);
+
+            lonely.Push(new ServerMessage { MatchResult = result });
+            lonelySession.Pump(0);
+
+            Check("§S4d4⭐ **没有队伍映射 ⇒ 不许假装一致**：结果不落定、也不谎报不一致",
+                lonelySession.MatchOutcome == null && lonelySession.MatchMismatchCount == 0,
+                "落定=" + (lonelySession.MatchOutcome != null) +
+                "；不一致=" + lonelySession.MatchMismatchCount +
+                "；房间=" + (lonelySession.CurrentRoom == null));
+
+            session.Dispose();
+            lonelySession.Dispose();
         }
 
         private static QuestTables LoadQuestTables()

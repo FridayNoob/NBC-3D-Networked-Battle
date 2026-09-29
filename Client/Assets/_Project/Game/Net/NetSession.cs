@@ -936,6 +936,10 @@ namespace NBC.Game.Net
                     HandleLockstepFrame(message.LockstepFrame);
                     break;
 
+                case ServerMessage.PayloadOneofCase.MatchResult:
+                    HandleMatchResult(message.MatchResult);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -1230,6 +1234,94 @@ namespace NBC.Game.Net
             if (m_lockstep != null)
             {
                 m_lockstep.ApplyFrame(frame.Frame, inputs, frame.ServerHash);
+            }
+        }
+
+        /// <summary>
+        /// 把队伍映射同步给运行器（**从 `CurrentRoom` 的成员名单推、用同一个 `SortedTeamMap`**）。
+        /// <para>⚠️ **仍然不加协议字段**：两端从同一份成员名单 + 同一个纯函数推出同一张映射
+        /// （这是 §34.2 定的做法，也是 §33.5 那条判据的应用）。</para>
+        /// </summary>
+        private void SyncLockstepTeams()
+        {
+            if (m_lockstep == null || m_room == null)
+            {
+                return;
+            }
+
+            var ids = new List<long>(m_room.Members.Count);
+
+            for (int i = 0; i < m_room.Members.Count; i++)
+            {
+                ids.Add(m_room.Members[i].PlayerId);
+            }
+
+            m_lockstep.SetTeams(new SortedTeamMap(ids));
+        }
+
+        /// <summary>
+        /// 收到**胜负结果**：协议 → 普通数据（`MatchRules.FromNumber`，**客户端不另写一份 switch**）
+        /// ⇒ 转发给运行器**复算并比对**。
+        /// <para>⚠️ 复算与比对留在 `LockstepClient`（W22 同一条道理：放这儿就只能靠起真服务验）。</para>
+        /// </summary>
+        /// <param name="result">结果消息。</param>
+        private void HandleMatchResult(MatchResult result)
+        {
+            if (result == null)
+            {
+                return;
+            }
+
+            EnsureLockstep();
+
+            // ⚠️ 在这里同步队伍映射 ⇒ **不依赖消息到达顺序**（`room_state` 先来后到都能推到同一张映射）
+            SyncLockstepTeams();
+
+            if (m_lockstep == null)
+            {
+                return;
+            }
+
+            bool agreed = m_lockstep.ApplyMatchResult(
+                (int)result.Frame, (int)result.Outcome, (int)result.KillsA, (int)result.KillsB);
+
+            Log("收到**胜负结果**：第 " + result.Frame + " 帧 ⇒ " + MatchRules.Describe(MatchRules.FromNumber((int)result.Outcome)) +
+                "（击杀 " + result.KillsA + "/" + result.KillsB + "）⇒ " +
+                (agreed ? "复算一致" : "**复算不一致**（见不一致事件）") +
+                "；" + m_lockstep.Describe());
+        }
+
+        /// <summary>与服务端**胜负判定不一致**的次数（委托给运行器）。</summary>
+        public int MatchMismatchCount
+        {
+            get { return m_lockstep == null ? 0 : m_lockstep.MatchMismatchCount; }
+        }
+
+        /// <summary>落定的结果（还没落定 = null）。</summary>
+        public EMatchOutcome? MatchOutcome
+        {
+            get { return m_lockstep == null ? null : m_lockstep.Outcome; }
+        }
+
+        /// <summary>服务端宣布的结果与我复算的不一致（照 `DesyncDetected` 的形状）。</summary>
+        public event Action<LockstepMatchMismatch> MatchMismatchDetected
+        {
+            add
+            {
+                EnsureLockstep();
+
+                if (m_lockstep != null)
+                {
+                    m_lockstep.MatchMismatchDetected += value;
+                }
+            }
+
+            remove
+            {
+                if (m_lockstep != null)
+                {
+                    m_lockstep.MatchMismatchDetected -= value;
+                }
             }
         }
 
