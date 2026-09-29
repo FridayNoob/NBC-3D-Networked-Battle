@@ -241,6 +241,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十七】M4-S4 S4-d：2v2 **队伍与胜负**（共享层纯函数，直驱）");
             MatchRules_TeamsAndVerdict();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十八】M4-S4 S4-d 第 3 件：房间相位（满员 ⇒ Running；离开不回退）");
+            RoomPhase_FullBecomesRunning();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -5354,6 +5358,68 @@ namespace NBC.NetProbe
             Check("§S4d⭐ `CountKills` **与登记顺序无关**（走 `SnapshotSorted`）：2/1 与打乱后相同",
                 killsA1 == killsA2 && killsB1 == killsB2 && killsA1 == 2 && killsB1 == 1,
                 "顺序 A=" + killsA1 + "/" + killsB1 + "；打乱 " + killsA2 + "/" + killsB2);
+        }
+
+        /// <summary>
+        /// 【二十八】房间相位（S4-d 第 3 件）：**满员 ⇒ `Running`**，且「离开一人」**不回退**。
+        ///
+        /// <para>⚠️ 直驱 `Room.Add` / `Room.Remove` —— 相位状态机就设**在那一层**（状态变化处），
+        /// 所以这里验的就是真代码，不是 Host 循环里的复制品。</para>
+        /// </summary>
+        private static void RoomPhase_FullBecomesRunning()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                // 拿 4 个会话（用游客即可：`Room.Add` 不关心玩家编号）
+                for (int i = 0; i < 4; i++)
+                {
+                    h.ConnectAndHandshake("相位" + i);
+                }
+
+                Check("§S4d2：阳性对照 —— 备齐了 4 个会话（否则下面测不了满员）",
+                    h.Sessions.Count >= 4, "会话数=" + h.Sessions.Count);
+
+                if (h.Sessions.Count < 4)
+                {
+                    return;
+                }
+
+                int n = h.Sessions.Count;
+                var room = new Room("phase-probe", 0, 4);
+
+                Check("§S4d2：新房间初始相位是 `Waiting`（阳性对照：别一建就是 Running）",
+                    room.Phase == RoomPhase.Waiting, "相位=" + room.Phase);
+
+                // 前 3 个人进来 ⇒ **还不该** Running
+                room.Add(h.Sessions[n - 4], "p0");
+                room.Add(h.Sessions[n - 3], "p1");
+                room.Add(h.Sessions[n - 2], "p2");
+
+                Check("§S4d2：3/4 人时相位**仍是 `Waiting`**（没满就不许开）",
+                    room.Phase == RoomPhase.Waiting && !room.IsFull,
+                    "相位=" + room.Phase + "；满=" + room.IsFull + "；席位=" + room.SeatCount);
+
+                // 第 4 个人进来 ⇒ **满员 ⇒ Running**
+                room.Add(h.Sessions[n - 1], "p3");
+
+                Check("§S4d2⭐ **满员（4/4）⇒ 相位变 `Running`**（这一刀的核心）",
+                    room.Phase == RoomPhase.Running && room.IsFull,
+                    "相位=" + room.Phase + "；满=" + room.IsFull + "；席位=" + room.SeatCount);
+
+                // ⚠️ 「离开一人」的语义（**我定的**，见 §34.2）：Running **黏性**，不回退
+                bool removed = room.Remove(h.Sessions[n - 4]);
+
+                Check("§S4d2⭐ **离开一人 ⇒ 相位仍是 `Running`**（黏性：相位说的是「这局开没开」，不是「现在满不满」）",
+                    removed && room.Phase == RoomPhase.Running && !room.IsFull,
+                    "移出=" + removed + "；相位=" + room.Phase + "；满=" + room.IsFull + "；席位=" + room.SeatCount);
+
+                // 再有人进来 ⇒ 已经 Running 了，**不许**因为"又满了一次"而反复变
+                room.Add(h.Sessions[n - 4], "p0-again");
+
+                Check("§S4d2：重新满员 ⇒ 相位**还是 `Running`**（不会反复变）",
+                    room.Phase == RoomPhase.Running && room.IsFull,
+                    "相位=" + room.Phase + "；席位=" + room.SeatCount);
+            }
         }
 
         private static QuestTables LoadQuestTables()

@@ -173,6 +173,16 @@ public sealed class Room
         // 第一个进房的人当房主（确定性规则，见文件头第三节）
         seat.IsHost = _seats.Count == 0;
         _seats.Add(seat);
+
+        // ⚠️ M4-S4 S4-d：**满员 ⇒ 进入 `Running`**。相位状态机就设**在状态变化的那一层**
+        //    （也就是「加席位」这里），**不放在 Host 主循环里**「每 tick 检查一下再设」——
+        //    那样是把状态机的职责塞进循环，而且会多出一处「谁负责设」的分歧。
+        //    判据用 `IsFull`（`>= Capacity`）而不是 `>`：4 人房第 4 个人进来**就该开**。
+        if (IsFull && Phase == RoomPhase.Waiting)
+        {
+            Phase = RoomPhase.Running;
+        }
+
         return seat;
     }
 
@@ -191,6 +201,11 @@ public sealed class Room
             bool wasHost = _seats[i].IsHost;
             _seats.RemoveAt(i);
 
+            // ⚠️ M4-S4 S4-d：**离开一人时相位不回退 —— `Running` 是「黏性」的**。
+            //    理由：相位回答的是「**这局开始没开始**」，不是「现在满不满员」。
+            //    把它拉回 `Waiting` 会让「已经开局的锁步世界」与相位**自相矛盾**
+            //    （客户端会以为还没开局，而服务端已经在推进帧）。
+            //    ⇒ 掉线/中途离场该怎么办（暂停？判负？）是 **S4-e** 的事，**不是靠回退相位**。
             if (wasHost && _seats.Count > 0)
             {
                 _seats[0].IsHost = true;    // 见文件头第三节：按进房顺序接替

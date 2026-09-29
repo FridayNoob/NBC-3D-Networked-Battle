@@ -489,11 +489,15 @@ internal static class Program
                 // ⚠️ **不要**在外面套 `while`：`LockstepService.Tick()` 内部已按房间各调一次
                 //    `AdvanceTick`，而 `AdvanceTick` 自己会把服务端时钟 ++ ⇒ 稳态恒返回 true
                 //    （2026-09-28 修掉的死循环就是这个形状）。
-                // ⚠️ 开局**懒执行**：房间满了、且还没开过局 ⇒ 开一次。
-                //    "只开局一次"的闸在 `LockstepService.StartRoom` 里（调用方会忘，闸不会忘）。
+                // ⚠️ 开局**懒执行**：房间**进入 `Running`**、且还没开过局 ⇒ 开一次。
+                //    ⚠️ 判据是**相位**（`RoomPhase.Running`），不是"人数够了" ——
+                //       相位由 `Room.Add` 在满员那一刻设（状态机只有那一处），
+                //       这里只是**消费**它，不再自己判满员（否则就是两处规则）。
+                //    "只开局一次"的闸在 `LockstepService.StartRoom` 里（调用方会忘，闸不会忘）；
+                //    `HasRoom` 是第二道闸：**先问再开**，免得每 tick 去撞里面的闸刷计数。
                 foreach (Room lockstepRoom in rooms.Registry.Rooms)
                 {
-                    if (!lockstepRoom.IsFull || lockstep.HasRoom(lockstepRoom.RoomId))
+                    if (lockstepRoom.Phase != RoomPhase.Running || lockstep.HasRoom(lockstepRoom.RoomId))
                     {
                         continue;
                     }
