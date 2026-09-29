@@ -26,7 +26,8 @@ using NBC.Game.Quest;           // M4-S3 收口（§二十四）：进度「是�
 using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
-using NBC.Shared;               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
+using NBC.Shared;
+using NBC.Shared.Sim;           // M4-S4 S4-b：`WorldState` / `WorldStep` / `WorldStateHash`（确定性内核）               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
 using NBC.Shared.Net;
 
@@ -214,6 +215,10 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【二十一】M4-S4 S4-a：**定点数学**纳入自动化验证（Fix64 Q32.32 / FixMath / FixVector3）");
             FixedPoint_ArithmeticBoundaries_AndDeterminism();
+
+            Console.WriteLine();
+            Console.WriteLine("【二十二】M4-S4 S4-b：**确定性内核 + 状态哈希**（逐帧相等 / 顺序无关 / 分歧能抓到）");
+            DeterministicWorld_SameInputsSameHashes();
 
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
@@ -3880,6 +3885,210 @@ namespace NBC.NetProbe
             Check("§S4a⭐ **逐位确定性（不受调用历史影响）**：第三次结果仍逐位相等",
                 c3.RawValue == c1.RawValue,
                 "raw " + c1.RawValue + " → " + c3.RawValue);
+        }
+
+        /// <summary>造一个"标准开局"世界（实体登记顺序 = 参数顺序）。</summary>
+        /// <param name="order">按什么顺序登记这三个实体。</param>
+        /// <returns>世界。</returns>
+        private static WorldState NewStandardWorld(int[] order)
+        {
+            var world = new WorldState();
+
+            for (int i = 0; i < order.Length; i++)
+            {
+                switch (order[i])
+                {
+                    case 1: world.Add(1, new FixVector3(0, 0, 0), 100); break;
+                    case 2: world.Add(2, new FixVector3(1, 0, 0), 100); break;
+                    default: world.Add(3, new FixVector3(5, 0, 0), 100); break;
+                }
+            }
+
+            return world;
+        }
+
+        /// <summary>
+        /// 【二十二】确定性战斗内核 + 状态哈希（S4-b）。
+        ///
+        /// <para>⚠️ 这一节的核心判据是**"两个独立世界跑同一批输入，逐帧哈希相等"**；
+        /// 但**光有它不够** —— 如果哈希恒为常量，它也"相等"。所以还必须有一条
+        /// **阳性对照**：故意让两边分歧 ⇒ 哈希**必须不等**。没有那条，前面全是假绿。</para>
+        /// </summary>
+        private static void DeterministicWorld_SameInputsSameHashes()
+        {
+            // ---- ① 具体算例（整数可手算，断言**精确相等**）----
+            WorldState one = NewStandardWorld(new[] { 1, 2, 3 });
+
+            Check("§S4b：世界里有 3 个实体、帧号从 0 开始",
+                one.Count == 3 && one.Tick == 0,
+                "count=" + one.Count + "；tick=" + one.Tick);
+
+            // 实体 1 朝 +X 走一步；实体 2 打实体 1（相距 1 米 < 射程 2 米）
+            var inputs1 = new List<SimInput>
+            {
+                new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 },
+                new SimInput { EntityId = 2, MoveDirection = FixVector3.Zero, AttackTargetId = 1 },
+            };
+
+            int hits = WorldStep.Step(one, inputs1, 1);
+
+            Check("§S4b：射程内攻击 ⇒ 计 1 次命中", hits == 1, "hits=" + hits);
+
+            SimEntity afterMove = one.GetAt(one.IndexOf(1));
+
+            Check("§S4b：移动 1 tick ⇒ X **精确等于** `MmToMeters(100)`（0.1 米）",
+                afterMove.Position.X == WorldStep.MmToMeters(WorldStep.SpeedMmPerTick),
+                "X=" + afterMove.Position.X.ToDouble() +
+                "（期望 raw " + WorldStep.MmToMeters(WorldStep.SpeedMmPerTick).RawValue +
+                "，实得 raw " + afterMove.Position.X.RawValue + "）");
+
+            Check("§S4b：移动只改 X（Y/Z 仍为 0）",
+                afterMove.Position.Y == Fix64.Zero && afterMove.Position.Z == Fix64.Zero,
+                "Y=" + afterMove.Position.Y.ToDouble() + "；Z=" + afterMove.Position.Z.ToDouble());
+
+            // ⚠️ 挨打的是**实体 1**（输入里是"实体 2 打实体 1"）—— 第一版我错写成实体 2，
+            //    当场红了；红的是断言不是产品（`hits==1` 与冷却那条都是绿的）。
+            SimEntity victim = one.GetAt(one.IndexOf(1));
+
+            Check("§S4b：伤害结算**复用** `DamageMath`（100 − 25 = 75）",
+                victim.Hp == 100 - WorldStep.AttackDamage,
+                "hp=" + victim.Hp + "（期望 " + (100 - WorldStep.AttackDamage) + "）");
+
+            SimEntity attacker = one.GetAt(one.IndexOf(2));
+
+            Check("§S4b：冷却按 `BattleRules.BasicAttackCooldownTicks` 记（下一帧不能连打）",
+                attacker.AttackReadyTick == 1 + NBC.Shared.Battle.BattleRules.BasicAttackCooldownTicks,
+                "AttackReadyTick=" + attacker.AttackReadyTick);
+
+            Check("§S4b：帧号推进了 1", one.Tick == 1, "tick=" + one.Tick);
+
+            // ---- ② ⭐ 两个独立世界 + 同一批输入 + 跑 64 帧 ⇒ 每帧哈希相等 ----
+            WorldState a = NewStandardWorld(new[] { 1, 2, 3 });
+            WorldState b = NewStandardWorld(new[] { 1, 2, 3 });
+
+            int mismatchedFrame = -1;
+            ulong firstMismatchA = 0;
+            ulong firstMismatchB = 0;
+            const int frames = 64;
+
+            for (int frame = 0; frame < frames; frame++)
+            {
+                // ⚠️ 输入**每帧重新构造**（两个世界拿到的是同一批值，不是同一个对象）
+                List<SimInput> stepInputs = BuildFrameInputs(frame);
+
+                WorldStep.Step(a, stepInputs, 1);
+                WorldStep.Step(b, stepInputs, 1);
+
+                ulong ha = WorldStateHash.Compute(a);
+                ulong hb = WorldStateHash.Compute(b);
+
+                if (ha != hb && mismatchedFrame < 0)
+                {
+                    mismatchedFrame = frame;
+                    firstMismatchA = ha;
+                    firstMismatchB = hb;
+                }
+            }
+
+            Check("§S4b：真的跑了足够多帧（否则下面的「逐帧相等」是空话）",
+                a.Tick == frames && b.Tick == frames,
+                "a.tick=" + a.Tick + "；b.tick=" + b.Tick);
+
+            Check("§S4b⭐ **逐帧哈希相等**：两个独立世界 + 同一批输入 + " + frames + " 帧",
+                mismatchedFrame < 0,
+                "第 " + mismatchedFrame + " 帧开始不等：" + firstMismatchA + " vs " + firstMismatchB);
+
+            // ---- ③ ⭐ 登记顺序无关（判据②的可观测形式）----
+            WorldState ordered = NewStandardWorld(new[] { 1, 2, 3 });
+            WorldState shuffled = NewStandardWorld(new[] { 3, 1, 2 });
+
+            Check("§S4b⭐ **顺序无关**：同一批实体换登记顺序 ⇒ **初始哈希就相等**",
+                WorldStateHash.Compute(ordered) == WorldStateHash.Compute(shuffled),
+                "顺序登记 " + WorldStateHash.Compute(ordered) + " vs 打乱登记 " + WorldStateHash.Compute(shuffled));
+
+            for (int frame = 0; frame < 16; frame++)
+            {
+                List<SimInput> stepInputs = BuildFrameInputs(frame);
+                WorldStep.Step(ordered, stepInputs, 1);
+                WorldStep.Step(shuffled, stepInputs, 1);
+            }
+
+            Check("§S4b⭐ **顺序无关（跑 16 帧后仍相等）**：登记顺序不影响任何结果",
+                WorldStateHash.Compute(ordered) == WorldStateHash.Compute(shuffled),
+                "跑完 16 帧：" + WorldStateHash.Compute(ordered) + " vs " + WorldStateHash.Compute(shuffled));
+
+            // ---- ④ ⭐ 阳性对照：分歧**必须**能被抓到（否则上面三条可能是假绿）----
+            WorldState diverge = NewStandardWorld(new[] { 1, 2, 3 });
+
+            for (int frame = 0; frame < 16; frame++)
+            {
+                List<SimInput> stepInputs = BuildFrameInputs(frame);
+                WorldStep.Step(diverge, stepInputs, 1);
+            }
+
+            // 让它在同一帧"少走一步"：输入不同 ⇒ 状态不同
+            var nudged = new List<SimInput>
+            {
+                new SimInput { EntityId = 1, MoveDirection = new FixVector3(0, 1, 0), AttackTargetId = 0 },
+            };
+
+            WorldStep.Step(diverge, nudged, 1);
+
+            Check("§S4b⭐ **阳性对照**：故意让一边多走一帧不同的输入 ⇒ 哈希**必须不等**",
+                WorldStateHash.Compute(diverge) != WorldStateHash.Compute(ordered),
+                "两边算出同一个哈希 = 哈希恒为常量 ⇒ 前面那些「相等」全是假绿");
+
+            // 再来一条更细的：只差一个位置分量
+            WorldState probeA = NewStandardWorld(new[] { 1, 2, 3 });
+            WorldState probeB = NewStandardWorld(new[] { 1, 2, 3 });
+
+            WorldStep.Step(probeA, new List<SimInput>
+            {
+                new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 0, 0) },
+            }, 1);
+
+            WorldStep.Step(probeB, new List<SimInput>
+            {
+                new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 1, 0) },
+            }, 1);
+
+            Check("§S4b⭐ 阳性对照（细）：只差一个方向分量 ⇒ 哈希也**必须不等**",
+                WorldStateHash.Compute(probeA) != WorldStateHash.Compute(probeB),
+                "两个不同方向算出了同一个哈希 ⇒ 哈希丢了位置信息");
+
+            // 空世界 vs 有实体的世界：哈希不能相同（"少一个实体"要能被发现）
+            Check("§S4b：空世界与有实体的世界哈希不同（实体个数进哈希了）",
+                WorldStateHash.Compute(new WorldState()) != WorldStateHash.Compute(NewStandardWorld(new[] { 1, 2, 3 })),
+                "空世界哈希与 3 实体世界相同 ⇒ 实体个数没进哈希");
+        }
+
+        /// <summary>造第 N 帧的输入（两边必须拿到**同一批值**）。</summary>
+        /// <param name="frame">帧号。</param>
+        /// <returns>输入列表。</returns>
+        private static List<SimInput> BuildFrameInputs(int frame)
+        {
+            // 前 8 帧：1 朝 +X 走；2 一直打 1；3 站着不动
+            // 之后：1 停住、2 继续打、3 朝 −X 走（让位置与血量的组合随时间变化）
+            var list = new List<SimInput>(3);
+
+            if (frame < 8)
+            {
+                list.Add(new SimInput { EntityId = 1, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 });
+            }
+            else
+            {
+                list.Add(new SimInput { EntityId = 1, MoveDirection = FixVector3.Zero, AttackTargetId = 0 });
+            }
+
+            list.Add(new SimInput { EntityId = 2, MoveDirection = FixVector3.Zero, AttackTargetId = 1 });
+            list.Add(new SimInput
+            {
+                EntityId = 3,
+                MoveDirection = frame < 8 ? FixVector3.Zero : new FixVector3(-1, 0, 0),
+                AttackTargetId = 0
+            });
+
+            return list;
         }
 
         private static QuestTables LoadQuestTables()
