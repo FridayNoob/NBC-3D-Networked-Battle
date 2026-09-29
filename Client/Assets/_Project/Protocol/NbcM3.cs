@@ -62,22 +62,28 @@ namespace NBC.Protocol {
             "dGlvblByb2dyZXNzRW50cnkSFQoNY29uZGl0aW9uX2tleRgBIAEoBRIPCgdj",
             "dXJyZW50GAIgASgFEhAKCHJlcXVpcmVkGAMgASgFEgsKA21ldBgEIAEoCCJU",
             "CgxQcm9ncmVzc1N5bmMSLwoHZW50cmllcxgBIAMoCzIeLm5iYy5tMy5Db25k",
-            "aXRpb25Qcm9ncmVzc0VudHJ5EhMKC3NlcnZlcl90aWNrGAIgASgDIrgCCg1T",
-            "ZXJ2ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsyFC5uYmMubTMu",
-            "SGFuZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5tMy5Qb25nSAAS",
-            "JwoKcm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3RhdGVIABIpCghz",
-            "bmFwc2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90SAASJAoFZXZl",
-            "bnQYBSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVlcnJvchgGIAEo",
-            "CzIVLm5iYy5tMy5FcnJvclJlc3BvbnNlSAASLQoNcHJvZ3Jlc3Nfc3luYxgH",
-            "IAEoCzIULm5iYy5tMy5Qcm9ncmVzc1N5bmNIAEIJCgdwYXlsb2FkIuQBCg1D",
-            "bGllbnRNZXNzYWdlEiYKCWhhbmRzaGFrZRgBIAEoCzIRLm5iYy5tMy5IYW5k",
-            "c2hha2VIABIcCgRwaW5nGAIgASgLMgwubmJjLm0zLlBpbmdIABIsCglqb2lu",
-            "X3Jvb20YAyABKAsyFy5uYmMubTMuSm9pblJvb21SZXF1ZXN0SAASJAoFaW5w",
-            "dXQYBCABKAsyEy5uYmMubTMuUGxheWVySW5wdXRIABIuCgpsZWF2ZV9yb29t",
-            "GAUgASgLMhgubmJjLm0zLkxlYXZlUm9vbVJlcXVlc3RIAEIJCgdwYXlsb2Fk",
-            "KlQKCVJvb21QaGFzZRIWChJST09NX1BIQVNFX1dBSVRJTkcQABIWChJST09N",
-            "X1BIQVNFX1JVTk5JTkcQARIXChNST09NX1BIQVNFX0ZJTklTSEVEEAJCD6oC",
-            "DE5CQy5Qcm90b2NvbGIGcHJvdG8z"));
+            "aXRpb25Qcm9ncmVzc0VudHJ5EhMKC3NlcnZlcl90aWNrGAIgASgDIjYKElF1",
+            "ZXN0QWN0aW9uUmVxdWVzdBIQCghxdWVzdF9pZBgBIAEoBRIOCgZhY3Rpb24Y",
+            "AiABKAUiMgoPUXVlc3RTdGF0ZUVudHJ5EhAKCHF1ZXN0X2lkGAEgASgFEg0K",
+            "BXN0YXRlGAIgASgFIk8KDlF1ZXN0U3RhdGVTeW5jEigKB2VudHJpZXMYASAD",
+            "KAsyFy5uYmMubTMuUXVlc3RTdGF0ZUVudHJ5EhMKC3NlcnZlcl90aWNrGAIg",
+            "ASgDIucCCg1TZXJ2ZXJNZXNzYWdlEi0KDWhhbmRzaGFrZV9hY2sYASABKAsy",
+            "FC5uYmMubTMuSGFuZHNoYWtlQWNrSAASHAoEcG9uZxgCIAEoCzIMLm5iYy5t",
+            "My5Qb25nSAASJwoKcm9vbV9zdGF0ZRgDIAEoCzIRLm5iYy5tMy5Sb29tU3Rh",
+            "dGVIABIpCghzbmFwc2hvdBgEIAEoCzIVLm5iYy5tMy5Xb3JsZFNuYXBzaG90",
+            "SAASJAoFZXZlbnQYBSABKAsyEy5uYmMubTMuU2VydmVyRXZlbnRIABImCgVl",
+            "cnJvchgGIAEoCzIVLm5iYy5tMy5FcnJvclJlc3BvbnNlSAASLQoNcHJvZ3Jl",
+            "c3Nfc3luYxgHIAEoCzIULm5iYy5tMy5Qcm9ncmVzc1N5bmNIABItCgtxdWVz",
+            "dF9zdGF0ZRgIIAEoCzIWLm5iYy5tMy5RdWVzdFN0YXRlU3luY0gAQgkKB3Bh",
+            "eWxvYWQimAIKDUNsaWVudE1lc3NhZ2USJgoJaGFuZHNoYWtlGAEgASgLMhEu",
+            "bmJjLm0zLkhhbmRzaGFrZUgAEhwKBHBpbmcYAiABKAsyDC5uYmMubTMuUGlu",
+            "Z0gAEiwKCWpvaW5fcm9vbRgDIAEoCzIXLm5iYy5tMy5Kb2luUm9vbVJlcXVl",
+            "c3RIABIkCgVpbnB1dBgEIAEoCzITLm5iYy5tMy5QbGF5ZXJJbnB1dEgAEi4K",
+            "CmxlYXZlX3Jvb20YBSABKAsyGC5uYmMubTMuTGVhdmVSb29tUmVxdWVzdEgA",
+            "EjIKDHF1ZXN0X2FjdGlvbhgGIAEoCzIaLm5iYy5tMy5RdWVzdEFjdGlvblJl",
+            "cXVlc3RIAEIJCgdwYXlsb2FkKlQKCVJvb21QaGFzZRIWChJST09NX1BIQVNF",
+            "X1dBSVRJTkcQABIWChJST09NX1BIQVNFX1JVTk5JTkcQARIXChNST09NX1BI",
+            "QVNFX0ZJTklTSEVEEAJCD6oCDE5CQy5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -99,8 +105,11 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerEvent), global::NBC.Protocol.ServerEvent.Parser, new[]{ "Damage", "Death", "Drop" }, new[]{ "Event" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ConditionProgressEntry), global::NBC.Protocol.ConditionProgressEntry.Parser, new[]{ "ConditionKey", "Current", "Required", "Met" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ProgressSync), global::NBC.Protocol.ProgressSync.Parser, new[]{ "Entries", "ServerTick" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync" }, new[]{ "Payload" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom" }, new[]{ "Payload" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestActionRequest), global::NBC.Protocol.QuestActionRequest.Parser, new[]{ "QuestId", "Action" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestStateEntry), global::NBC.Protocol.QuestStateEntry.Parser, new[]{ "QuestId", "State" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.QuestStateSync), global::NBC.Protocol.QuestStateSync.Parser, new[]{ "Entries", "ServerTick" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction" }, new[]{ "Payload" }, null, null, null)
           }));
     }
     #endregion
@@ -5577,6 +5586,718 @@ namespace NBC.Protocol {
   }
 
   /// <summary>
+  //// 客户端 → 服务端：**任务动作请求**（M4-S3 §二十六：接取 / 交付）。
+  ////
+  //// ⚠️ **为什么合成一条消息 + 一个 `action` 整数**，而不是 `AcceptQuestRequest` /
+  ////    `SubmitQuestRequest` 两条：
+  ////      · 两条消息 ⇒ **两条处理器**，而"身份校验（游客拒绝）→ 状态机 → 回状态同步 → 推送"
+  ////        这套流程两边**一字不差**；写两遍就是两处会不一致的地方（本项目最忌讳的形状）。
+  ////      · 合成一条之后，**校验与推送只有一份**，加动作（放弃/追踪）也只是多一个数字。
+  ////    ⚠️ 代价（如实记）：动作是**数字**，映射关系靠注释和代码约定 ——
+  ////    与 `owner_kind`（台账）/ `state`（`quest_state` 表）**同一个套路**，
+  ////    所以它必须在**两端**都有一份说清数字的含义（见 `ClientMessage` 下面的取值表）。
+  /// </summary>
+  public sealed partial class QuestActionRequest : pb::IMessage<QuestActionRequest>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<QuestActionRequest> _parser = new pb::MessageParser<QuestActionRequest>(() => new QuestActionRequest());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<QuestActionRequest> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[18]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestActionRequest() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestActionRequest(QuestActionRequest other) : this() {
+      questId_ = other.questId_;
+      action_ = other.action_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestActionRequest Clone() {
+      return new QuestActionRequest(this);
+    }
+
+    /// <summary>Field number for the "quest_id" field.</summary>
+    public const int QuestIdFieldNumber = 1;
+    private int questId_;
+    /// <summary>
+    /// `Quest` 表主键
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int QuestId {
+      get { return questId_; }
+      set {
+        questId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "action" field.</summary>
+    public const int ActionFieldNumber = 2;
+    private int action_;
+    /// <summary>
+    /// **动作**（不是状态）：1 = 接取；2 = 交付
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Action {
+      get { return action_; }
+      set {
+        action_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as QuestActionRequest);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(QuestActionRequest other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (QuestId != other.QuestId) return false;
+      if (Action != other.Action) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (QuestId != 0) hash ^= QuestId.GetHashCode();
+      if (Action != 0) hash ^= Action.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (QuestId != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(QuestId);
+      }
+      if (Action != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Action);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (QuestId != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(QuestId);
+      }
+      if (Action != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Action);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (QuestId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(QuestId);
+      }
+      if (Action != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Action);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(QuestActionRequest other) {
+      if (other == null) {
+        return;
+      }
+      if (other.QuestId != 0) {
+        QuestId = other.QuestId;
+      }
+      if (other.Action != 0) {
+        Action = other.Action;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            QuestId = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Action = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            QuestId = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Action = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 一个任务的**当前状态**。
+  /// </summary>
+  public sealed partial class QuestStateEntry : pb::IMessage<QuestStateEntry>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<QuestStateEntry> _parser = new pb::MessageParser<QuestStateEntry>(() => new QuestStateEntry());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<QuestStateEntry> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[19]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateEntry() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateEntry(QuestStateEntry other) : this() {
+      questId_ = other.questId_;
+      state_ = other.state_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateEntry Clone() {
+      return new QuestStateEntry(this);
+    }
+
+    /// <summary>Field number for the "quest_id" field.</summary>
+    public const int QuestIdFieldNumber = 1;
+    private int questId_;
+    /// <summary>
+    /// `Quest` 表主键
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int QuestId {
+      get { return questId_; }
+      set {
+        questId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "state" field.</summary>
+    public const int StateFieldNumber = 2;
+    private int state_;
+    /// <summary>
+    /// **状态数字**：1=Accepted 2=Completed 3=Submitted
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int State {
+      get { return state_; }
+      set {
+        state_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as QuestStateEntry);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(QuestStateEntry other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (QuestId != other.QuestId) return false;
+      if (State != other.State) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (QuestId != 0) hash ^= QuestId.GetHashCode();
+      if (State != 0) hash ^= State.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (QuestId != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(QuestId);
+      }
+      if (State != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(State);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (QuestId != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(QuestId);
+      }
+      if (State != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(State);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (QuestId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(QuestId);
+      }
+      if (State != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(State);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(QuestStateEntry other) {
+      if (other == null) {
+        return;
+      }
+      if (other.QuestId != 0) {
+        QuestId = other.QuestId;
+      }
+      if (other.State != 0) {
+        State = other.State;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            QuestId = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            State = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            QuestId = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            State = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 服务端 → 客户端：**任务状态同步**（M4-S3 §二十六）。
+  ////
+  //// ⚠️ **全量**（这个玩家**全部**任务的状态），不是"只发变化的那一个"：
+  ////    与 `ProgressSync` / 每 tick 全量快照同一个判据（D5）——
+  ////    增量一旦漏一条就会**永久**少一个任务的状态，而且**不报错**。
+  ////    全量的代价是重复传输，但任务数量是个位数，可以忽略。
+  ////
+  //// ⚠️ 与 `ProgressSync` 的**分工**（两者都别省）：
+  ////    · `ProgressSync`  = "**某个条件**累计了多少"（任务与成就**共用**那一套）
+  ////    · `QuestStateSync` = "**某个任务**到哪一步了"（只有任务有状态机）
+  ////    成就没有"接取/交付"，所以它只需要前者。
+  ////
+  //// ⚠️ 兼容性：**只加消息 + 只加 oneof 分支** ⇒ `CONTRACT_VERSION` **保持 1**。
+  /// </summary>
+  public sealed partial class QuestStateSync : pb::IMessage<QuestStateSync>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<QuestStateSync> _parser = new pb::MessageParser<QuestStateSync>(() => new QuestStateSync());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<QuestStateSync> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[20]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateSync() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateSync(QuestStateSync other) : this() {
+      entries_ = other.entries_.Clone();
+      serverTick_ = other.serverTick_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public QuestStateSync Clone() {
+      return new QuestStateSync(this);
+    }
+
+    /// <summary>Field number for the "entries" field.</summary>
+    public const int EntriesFieldNumber = 1;
+    private static readonly pb::FieldCodec<global::NBC.Protocol.QuestStateEntry> _repeated_entries_codec
+        = pb::FieldCodec.ForMessage(10, global::NBC.Protocol.QuestStateEntry.Parser);
+    private readonly pbc::RepeatedField<global::NBC.Protocol.QuestStateEntry> entries_ = new pbc::RepeatedField<global::NBC.Protocol.QuestStateEntry>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::NBC.Protocol.QuestStateEntry> Entries {
+      get { return entries_; }
+    }
+
+    /// <summary>Field number for the "server_tick" field.</summary>
+    public const int ServerTickFieldNumber = 2;
+    private long serverTick_;
+    /// <summary>
+    /// 服务端逻辑帧号（排查"这条是什么时候的"）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long ServerTick {
+      get { return serverTick_; }
+      set {
+        serverTick_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as QuestStateSync);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(QuestStateSync other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if(!entries_.Equals(other.entries_)) return false;
+      if (ServerTick != other.ServerTick) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      hash ^= entries_.GetHashCode();
+      if (ServerTick != 0L) hash ^= ServerTick.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      entries_.WriteTo(output, _repeated_entries_codec);
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      entries_.WriteTo(ref output, _repeated_entries_codec);
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      size += entries_.CalculateSize(_repeated_entries_codec);
+      if (ServerTick != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTick);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(QuestStateSync other) {
+      if (other == null) {
+        return;
+      }
+      entries_.Add(other.entries_);
+      if (other.ServerTick != 0L) {
+        ServerTick = other.ServerTick;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(input, _repeated_entries_codec);
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(ref input, _repeated_entries_codec);
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   //// 服务端 → 客户端。
   /// </summary>
   public sealed partial class ServerMessage : pb::IMessage<ServerMessage>
@@ -5593,7 +6314,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[18]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[21]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5634,6 +6355,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.ProgressSync:
           ProgressSync = other.ProgressSync.Clone();
+          break;
+        case PayloadOneofCase.QuestState:
+          QuestState = other.QuestState.Clone();
           break;
       }
 
@@ -5736,6 +6460,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "quest_state" field.</summary>
+    public const int QuestStateFieldNumber = 8;
+    /// <summary>
+    /// M4-S3 §二十六 追加（兼容：同上）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.QuestStateSync QuestState {
+      get { return payloadCase_ == PayloadOneofCase.QuestState ? (global::NBC.Protocol.QuestStateSync) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.QuestState;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -5747,6 +6486,7 @@ namespace NBC.Protocol {
       Event = 5,
       Error = 6,
       ProgressSync = 7,
+      QuestState = 8,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5784,6 +6524,7 @@ namespace NBC.Protocol {
       if (!object.Equals(Event, other.Event)) return false;
       if (!object.Equals(Error, other.Error)) return false;
       if (!object.Equals(ProgressSync, other.ProgressSync)) return false;
+      if (!object.Equals(QuestState, other.QuestState)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -5799,6 +6540,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.Event) hash ^= Event.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.Error) hash ^= Error.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.ProgressSync) hash ^= ProgressSync.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.QuestState) hash ^= QuestState.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -5846,6 +6588,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(58);
         output.WriteMessage(ProgressSync);
       }
+      if (payloadCase_ == PayloadOneofCase.QuestState) {
+        output.WriteRawTag(66);
+        output.WriteMessage(QuestState);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -5884,6 +6630,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(58);
         output.WriteMessage(ProgressSync);
       }
+      if (payloadCase_ == PayloadOneofCase.QuestState) {
+        output.WriteRawTag(66);
+        output.WriteMessage(QuestState);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5914,6 +6664,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.ProgressSync) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(ProgressSync);
+      }
+      if (payloadCase_ == PayloadOneofCase.QuestState) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(QuestState);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -5969,6 +6722,12 @@ namespace NBC.Protocol {
             ProgressSync = new global::NBC.Protocol.ProgressSync();
           }
           ProgressSync.MergeFrom(other.ProgressSync);
+          break;
+        case PayloadOneofCase.QuestState:
+          if (QuestState == null) {
+            QuestState = new global::NBC.Protocol.QuestStateSync();
+          }
+          QuestState.MergeFrom(other.QuestState);
           break;
       }
 
@@ -6050,6 +6809,15 @@ namespace NBC.Protocol {
             ProgressSync = subBuilder;
             break;
           }
+          case 66: {
+            global::NBC.Protocol.QuestStateSync subBuilder = new global::NBC.Protocol.QuestStateSync();
+            if (payloadCase_ == PayloadOneofCase.QuestState) {
+              subBuilder.MergeFrom(QuestState);
+            }
+            input.ReadMessage(subBuilder);
+            QuestState = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -6128,6 +6896,15 @@ namespace NBC.Protocol {
             ProgressSync = subBuilder;
             break;
           }
+          case 66: {
+            global::NBC.Protocol.QuestStateSync subBuilder = new global::NBC.Protocol.QuestStateSync();
+            if (payloadCase_ == PayloadOneofCase.QuestState) {
+              subBuilder.MergeFrom(QuestState);
+            }
+            input.ReadMessage(subBuilder);
+            QuestState = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -6152,7 +6929,7 @@ namespace NBC.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[19]; }
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[22]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6187,6 +6964,9 @@ namespace NBC.Protocol {
           break;
         case PayloadOneofCase.LeaveRoom:
           LeaveRoom = other.LeaveRoom.Clone();
+          break;
+        case PayloadOneofCase.QuestAction:
+          QuestAction = other.QuestAction.Clone();
           break;
       }
 
@@ -6262,6 +7042,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "quest_action" field.</summary>
+    public const int QuestActionFieldNumber = 6;
+    /// <summary>
+    /// M4-S3 §二十六 追加（兼容）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.QuestActionRequest QuestAction {
+      get { return payloadCase_ == PayloadOneofCase.QuestAction ? (global::NBC.Protocol.QuestActionRequest) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.QuestAction;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -6271,6 +7066,7 @@ namespace NBC.Protocol {
       JoinRoom = 3,
       Input = 4,
       LeaveRoom = 5,
+      QuestAction = 6,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6306,6 +7102,7 @@ namespace NBC.Protocol {
       if (!object.Equals(JoinRoom, other.JoinRoom)) return false;
       if (!object.Equals(Input, other.Input)) return false;
       if (!object.Equals(LeaveRoom, other.LeaveRoom)) return false;
+      if (!object.Equals(QuestAction, other.QuestAction)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -6319,6 +7116,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.JoinRoom) hash ^= JoinRoom.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.Input) hash ^= Input.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LeaveRoom) hash ^= LeaveRoom.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.QuestAction) hash ^= QuestAction.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -6358,6 +7156,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(42);
         output.WriteMessage(LeaveRoom);
       }
+      if (payloadCase_ == PayloadOneofCase.QuestAction) {
+        output.WriteRawTag(50);
+        output.WriteMessage(QuestAction);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -6388,6 +7190,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(42);
         output.WriteMessage(LeaveRoom);
       }
+      if (payloadCase_ == PayloadOneofCase.QuestAction) {
+        output.WriteRawTag(50);
+        output.WriteMessage(QuestAction);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -6412,6 +7218,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.LeaveRoom) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(LeaveRoom);
+      }
+      if (payloadCase_ == PayloadOneofCase.QuestAction) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(QuestAction);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6455,6 +7264,12 @@ namespace NBC.Protocol {
             LeaveRoom = new global::NBC.Protocol.LeaveRoomRequest();
           }
           LeaveRoom.MergeFrom(other.LeaveRoom);
+          break;
+        case PayloadOneofCase.QuestAction:
+          if (QuestAction == null) {
+            QuestAction = new global::NBC.Protocol.QuestActionRequest();
+          }
+          QuestAction.MergeFrom(other.QuestAction);
           break;
       }
 
@@ -6518,6 +7333,15 @@ namespace NBC.Protocol {
             LeaveRoom = subBuilder;
             break;
           }
+          case 50: {
+            global::NBC.Protocol.QuestActionRequest subBuilder = new global::NBC.Protocol.QuestActionRequest();
+            if (payloadCase_ == PayloadOneofCase.QuestAction) {
+              subBuilder.MergeFrom(QuestAction);
+            }
+            input.ReadMessage(subBuilder);
+            QuestAction = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -6576,6 +7400,15 @@ namespace NBC.Protocol {
             }
             input.ReadMessage(subBuilder);
             LeaveRoom = subBuilder;
+            break;
+          }
+          case 50: {
+            global::NBC.Protocol.QuestActionRequest subBuilder = new global::NBC.Protocol.QuestActionRequest();
+            if (payloadCase_ == PayloadOneofCase.QuestAction) {
+              subBuilder.MergeFrom(QuestAction);
+            }
+            input.ReadMessage(subBuilder);
+            QuestAction = subBuilder;
             break;
           }
         }

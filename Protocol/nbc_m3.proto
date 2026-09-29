@@ -276,6 +276,53 @@ message ProgressSync
     int64 server_tick = 2;   // 服务端逻辑帧号（排查"这条是什么时候的"）
 }
 
+/// 客户端 → 服务端：**任务动作请求**（M4-S3 §二十六：接取 / 交付）。
+///
+/// ⚠️ **为什么合成一条消息 + 一个 `action` 整数**，而不是 `AcceptQuestRequest` /
+///    `SubmitQuestRequest` 两条：
+///      · 两条消息 ⇒ **两条处理器**，而"身份校验（游客拒绝）→ 状态机 → 回状态同步 → 推送"
+///        这套流程两边**一字不差**；写两遍就是两处会不一致的地方（本项目最忌讳的形状）。
+///      · 合成一条之后，**校验与推送只有一份**，加动作（放弃/追踪）也只是多一个数字。
+///    ⚠️ 代价（如实记）：动作是**数字**，映射关系靠注释和代码约定 ——
+///    与 `owner_kind`（台账）/ `state`（`quest_state` 表）**同一个套路**，
+///    所以它必须在**两端**都有一份说清数字的含义（见 `ClientMessage` 下面的取值表）。
+message QuestActionRequest
+{
+    int32 quest_id = 1;   // `Quest` 表主键
+    int32 action   = 2;   // **动作**（不是状态）：1 = 接取；2 = 交付
+}
+
+/// 一个任务的**当前状态**。
+message QuestStateEntry
+{
+    int32 quest_id = 1;   // `Quest` 表主键
+    int32 state    = 2;   // **状态数字**：1=Accepted 2=Completed 3=Submitted
+                          // ⚠️ 必须与 `EQuestStage`（服务端）/ `EQuestState`（客户端）
+                          //    **数字完全一致** —— 两端靠数字对齐、**不共享类型**，
+                          //    所以动枚举时**两边都要重核**（已逐个核过一轮）。
+                          // ⚠️ **没有 0**：0 = "表里没有这一行" = 未接取。
+                          //    这条消息里**不会**出现 0（没接过的任务压根不发）。
+}
+
+/// 服务端 → 客户端：**任务状态同步**（M4-S3 §二十六）。
+///
+/// ⚠️ **全量**（这个玩家**全部**任务的状态），不是"只发变化的那一个"：
+///    与 `ProgressSync` / 每 tick 全量快照同一个判据（D5）——
+///    增量一旦漏一条就会**永久**少一个任务的状态，而且**不报错**。
+///    全量的代价是重复传输，但任务数量是个位数，可以忽略。
+///
+/// ⚠️ 与 `ProgressSync` 的**分工**（两者都别省）：
+///    · `ProgressSync`  = "**某个条件**累计了多少"（任务与成就**共用**那一套）
+///    · `QuestStateSync` = "**某个任务**到哪一步了"（只有任务有状态机）
+///    成就没有"接取/交付"，所以它只需要前者。
+///
+/// ⚠️ 兼容性：**只加消息 + 只加 oneof 分支** ⇒ `CONTRACT_VERSION` **保持 1**。
+message QuestStateSync
+{
+    repeated QuestStateEntry entries = 1;
+    int64 server_tick = 2;   // 服务端逻辑帧号（排查"这条是什么时候的"）
+}
+
 /// 服务端 → 客户端。
 message ServerMessage
 {
@@ -288,6 +335,7 @@ message ServerMessage
         ServerEvent   event         = 5;
         ErrorResponse error         = 6;   // M3-S4 追加（兼容：只是多一个 oneof 分支）
         ProgressSync  progress_sync = 7;   // M4-S3 收口追加（兼容：同上）
+        QuestStateSync quest_state  = 8;   // M4-S3 §二十六 追加（兼容：同上）
     }
 }
 
@@ -301,5 +349,6 @@ message ClientMessage
         JoinRoomRequest join_room  = 3;
         PlayerInput     input      = 4;
         LeaveRoomRequest leave_room = 5;   // M3-S4 追加（兼容）
+        QuestActionRequest quest_action = 6;   // M4-S3 §二十六 追加（兼容）
     }
 }
