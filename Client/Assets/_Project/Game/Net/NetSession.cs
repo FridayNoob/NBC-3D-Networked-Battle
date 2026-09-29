@@ -1204,21 +1204,9 @@ namespace NBC.Game.Net
 
             EnsureLockstep();
 
-            var entities = new List<SimEntity>(start.Entities.Count);
-
-            for (int i = 0; i < start.Entities.Count; i++)
-            {
-                LockstepStartEntity raw = start.Entities[i];
-
-                SimEntity e;
-                e.Id = (int)raw.EntityId;       // wire 是 int64、内存是 int：**显式**（协议里写明了这一点）
-                e.Position = new FixVector3(
-                    Fix64.FromRaw(raw.PosXRaw), Fix64.FromRaw(raw.PosYRaw), Fix64.FromRaw(raw.PosZRaw));
-                e.Hp = raw.Hp;
-                e.MaxHp = raw.MaxHp;
-                e.AttackReadyTick = raw.AttackReadyTick;
-                entities.Add(e);
-            }
+            // ⚠️ 转换在 `LockstepWire`（`Game\Net\`：`NBC.Protocol` + `NBC.Shared` 两边都引得到，
+            //    且**探针也编得到** ⇒ 能被逐字段验证。别搬进 `Shared\Sim\` —— 见 W22）
+            List<SimEntity> entities = LockstepWire.ToPlainEntities(start);
 
             bool ok = m_lockstep != null && m_lockstep.ApplyStart(start.Frame, start.InitialHash, entities);
 
@@ -1237,20 +1225,7 @@ namespace NBC.Game.Net
 
             EnsureLockstep();
 
-            var inputs = new List<FrameInput>(frame.Inputs.Count);
-
-            for (int i = 0; i < frame.Inputs.Count; i++)
-            {
-                LockstepFrameInput raw = frame.Inputs[i];
-
-                FrameInput f;
-                f.PlayerId = raw.PlayerId;
-                f.MoveDirection = new FixVector3(Fix64.FromRaw(raw.MoveXRaw), Fix64.FromRaw(raw.MoveYRaw), Fix64.Zero);
-                f.Buttons = raw.Buttons;
-                f.TargetEntityId = raw.TargetEntityId;
-                f.Missing = raw.Missing;
-                inputs.Add(f);
-            }
+            List<FrameInput> inputs = LockstepWire.ToPlainInputs(frame);
 
             if (m_lockstep != null)
             {
