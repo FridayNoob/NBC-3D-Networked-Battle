@@ -158,6 +158,12 @@ namespace NBC.Game.Net
         /// <summary>收到过多少条权威进度同步。</summary>
         private long m_progressSyncs;
 
+        /// <summary>最近一次收到的**任务状态**（null = 还没收到过 —— 见 `FindQuestState` 的语义）。</summary>
+        private QuestStateSync m_lastQuestStates;
+
+        /// <summary>收到过多少条任务状态同步。</summary>
+        private long m_questStatesReceived;
+
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
 
@@ -370,6 +376,61 @@ namespace NBC.Game.Net
             get { return m_progressSyncs; }
         }
 
+        /// <summary>最近一次收到的**任务状态**（null = 还没收到过）。</summary>
+        public QuestStateSync LastQuestStates
+        {
+            get { return m_lastQuestStates; }
+        }
+
+        /// <summary>累计收到多少条任务状态同步。</summary>
+        public long QuestStatesReceived
+        {
+            get { return m_questStatesReceived; }
+        }
+
+        /// <summary>
+        /// 取一个任务的**权威状态**（M4-S3 §二十六）。
+        ///
+        /// <para>⚠️ 三种返回值必须分得开，这是本方法存在的全部理由：</para>
+        /// <list type="bullet">
+        ///   <item><description><c>null</c> = **服务端没说**（还没收到过同步）——
+        ///   界面应当退回本地那份并**标成预测**，**绝不许**当成"未接取"。</description></item>
+        ///   <item><description><c>0</c> = **未接取**（收到过全量同步，但里面没有这个任务）——
+        ///   这是服务端的**明确表态**，可以当真。</description></item>
+        ///   <item><description><c>1/2/3</c> = 服务端说这个任务在哪个阶段。</description></item>
+        /// </list>
+        ///
+        /// <para>⚠️ 为什么"不在全量里"能等于"未接取"：服务端那条是**全量**
+        /// （`QuestAuthority.TryBuildQuestStateView` 遍历**所有**任务，只跳过 `None`）。
+        /// 所以"收到过同步"之后，"没有这个任务"就是"没接过"。</para>
+        ///
+        /// <para>⚠️ 一个如实的边界：玩家**一个任务都没接过**时服务端**根本不发**这条
+        /// （视图为空 ⇒ 没东西可发）⇒ 客户端停在 <c>null</c>、显示本地预测。
+        /// 这不是 bug，但要写进文档（见 `Docs\27` §26）。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>权威状态；服务端没说时返回 null。</returns>
+        public int? FindQuestState(int questId)
+        {
+            QuestStateSync snapshot = m_lastQuestStates;
+
+            if (snapshot == null)
+            {
+                return null;        // ⚠️ 服务端**没说** —— 与"未接取(0)"是两件事
+            }
+
+            for (int i = 0; i < snapshot.Entries.Count; i++)
+            {
+                if (snapshot.Entries[i].QuestId == questId)
+                {
+                    return snapshot.Entries[i].State;
+                }
+            }
+
+            // 收到过**全量**同步，里面没有它 ⇒ 服务端明确表示"没接过"
+            return 0;
+        }
+
         /// <summary>
         /// 按条件编号取权威进度（没收到过、或那个条件不在这一条里 ⇒ 返回 null）。
         /// <para>⚠️ 返回 null 表示"**服务端没说**"，**不是**"进度是 0" ——
@@ -469,6 +530,15 @@ namespace NBC.Game.Net
         /// 所以客户端可以**直接覆盖**，不需要自己合并增量。</para>
         /// </summary>
         public event Action<ProgressSync> ProgressReceived;
+
+        /// <summary>
+        /// 收到一条**任务状态同步**（M4-S3 §二十六）。
+        /// <para>⚠️ 收到它就意味着**以服务端为准落定**：包括"服务端说这个任务没接过"
+        /// （全量同步里没有它 ⇒ `FindQuestState` 返回 0）这种**往回退**的情况 ——
+        /// 界面必须跟着退回去，不能因为"本地以为接过"就留住绿色。</para>
+        /// </summary>
+        public event Action<QuestStateSync> QuestStateReceived;
+
 
         /// <summary>收到一条死亡事件（M4-S1；怪与英雄都走这里，**按 `kind` 分派**）。</summary>
         public event Action<DeathEvent> DeathReceived;
@@ -822,6 +892,10 @@ namespace NBC.Game.Net
                     HandleProgressSync(message.ProgressSync);
                     break;
 
+                case ServerMessage.PayloadOneofCase.QuestState:
+                    HandleQuestState(message.QuestState);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -1056,6 +1130,42 @@ namespace NBC.Game.Net
 
             Log($"死亡：单位 {death.ConfigId}（实例 {death.EntityId}，kind {death.Kind}，" +
                 $"击杀者 {death.KillerId}）");
+        }
+
+        /// <summary>
+        /// 发一条**任务动作**请求（接取 / 交付）（M4-S3 §二十六）。
+        /// <para>⚠️ 本地**不**改任何任务状态：服务端才是权威，回来的是 `quest_state`。
+        /// 界面那边的做法是"乐观置一个**待确认**标记"（见 `QuestPanelModel`）——
+        /// 标记只是 UI 上的一行提示，**不会被当成"已接取"用**。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="action">动作（1 = 接取；2 = 交付）。</param>
+        /// <returns>真的发出去了返回 true（没连上/没握手时为 false）。</returns>
+        public bool SendQuestAction(int questId, int action)
+        {
+            return Send(new ClientMessage
+            {
+                QuestAction = new QuestActionRequest { QuestId = questId, Action = action }
+            });
+        }
+
+        /// <summary>一条**任务状态**：存下来、记数、发事件、写日志。</summary>
+        /// <param name="states">任务状态（null 会被忽略 —— 0 长度帧解出来就是 null）。</param>
+        private void HandleQuestState(QuestStateSync states)
+        {
+            if (states == null)
+            {
+                return;
+            }
+
+            // ⚠️ **整体替换**，不是合并：服务端发的是全量（见 `FindQuestState` 的说明）。
+            //    合并增量在这里是错的 —— 漏一条就永久少一个任务的状态，而且不报错。
+            m_lastQuestStates = states;
+            m_questStatesReceived++;
+
+            QuestStateReceived?.Invoke(states);
+
+            Log("收到**任务状态**：服务端帧 " + states.ServerTick + "，" + states.Entries.Count + " 个任务");
         }
 
         /// <summary>一条**服务端权威进度**：存下来、记数、发事件、写日志。</summary>

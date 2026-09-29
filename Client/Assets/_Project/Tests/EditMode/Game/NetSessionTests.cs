@@ -23,6 +23,7 @@ using System.Collections.Generic;
 using Google.Protobuf;
 using NBC.Framework.Net;
 using NBC.Game.Net;
+using NBC.Game.Quest;   // M4-S3 §二十六：NetSessionQuestStateAuthority（缝：null → false）
 using NBC.Protocol;
 using NBC.Shared.Net;
 using NUnit.Framework;
@@ -698,6 +699,69 @@ namespace NBC.Tests.EditMode
         /// <param name="capacity">容量。</param>
         /// <param name="members">成员（名字 + 是否房主）。</param>
         /// <returns>序列化后的载荷。</returns>
+        /// <summary>
+        /// ⚠️ **本片最容易回归的一条**：`FindQuestState` 返回 `null` = 「服务端没说」，
+        /// 与 `0` = 「未接取」**是两件事**（把 null 画成"未接取"就是 §二十四 那个 bug 的翻版）。
+        /// </summary>
+        [Test]
+        public void QuestStateSync_FindQuestState_NullMeansServerDidNotSay()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+
+            // 阳性对照：还没收到任何同步时必须是 null（而不是 0）
+            Assert.AreEqual(0, session.QuestStatesReceived, "还没收到过任何任务状态");
+            Assert.IsNull(session.FindQuestState(3003), "服务端还没说 ⇒ null");
+
+            fake.PushFrame(new ServerMessage
+            {
+                QuestState = new QuestStateSync
+                {
+                    ServerTick = 42,
+                    Entries = { new QuestStateEntry { QuestId = 3003, State = 1 } }
+                }
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.AreEqual(1, session.QuestStatesReceived);
+            Assert.AreEqual(42, session.LastQuestStates.ServerTick, "tick 要带出来（排查「这条是什么时候的」）");
+
+            int? state = session.FindQuestState(3003);
+            Assert.IsTrue(state.HasValue, "服务端说了 3003 ⇒ 必须有值");
+            Assert.AreEqual(1, state.Value);
+
+            // ⭐ 全部意义：**没被提到的任务**仍然是 null，绝不是 0
+            Assert.IsNull(session.FindQuestState(9999), "服务端没提过的任务必须是 null，不是 0");
+        }
+
+        /// <summary>缝：`null`（服务端没说）⇒ **false**，而不是「有值且是 0」。</summary>
+        [Test]
+        public void QuestStateAuthority_NullBecomesFalse_NotZero()
+        {
+            FakeTransport fake = new FakeTransport();
+            NetSession session = Online(fake);
+            NetSessionQuestStateAuthority authority = new NetSessionQuestStateAuthority(session);
+
+            int state;
+
+            Assert.IsFalse(authority.TryGetState(3003, out state),
+                "服务端没说 ⇒ false（不许 true + 0 —— 那等于把「不知道」画成「没接」）");
+
+            fake.PushFrame(new ServerMessage
+            {
+                QuestState = new QuestStateSync
+                {
+                    Entries = { new QuestStateEntry { QuestId = 3003, State = 2 } }
+                }
+            }.ToByteArray());
+
+            session.Pump(0);
+
+            Assert.IsTrue(authority.TryGetState(3003, out state));
+            Assert.AreEqual(2, state);
+            Assert.IsFalse(authority.TryGetState(9999, out state), "没提过的仍然是 false");
+        }
         private static byte[] Room(string roomId, int dungeonId, int capacity,
                                    (string Name, bool IsHost)[] members)
         {

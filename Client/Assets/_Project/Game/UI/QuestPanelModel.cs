@@ -83,6 +83,78 @@ namespace NBC.Game.UI
         /// </summary>
         public IQuestProgressAuthority Authority { get; set; }
 
+        /// <summary>`QuestActionRequest.action` = **接取**（与协议注释一致）。</summary>
+        public const int ActionAccept = 1;
+
+        /// <summary>`QuestActionRequest.action` = **交付**。</summary>
+        public const int ActionSubmit = 2;
+
+        /// <summary>
+        /// **把动作请求发给服务端**的出口（M4-S3 §二十六）。
+        /// <para>⚠️ 设了它之后 `Accept`/`Submit` **不再本地改任务状态** —— 服务端才是权威；
+        /// 本地自己改就是"客户端自己当权威"，正是 §二十一 修掉的那个洞。</para>
+        /// <para>传 null（**默认**）= 单机/既有用例：照旧走本地 `QuestRuntime`
+        /// （所以既有的 696 条 EditMode 用例行为不变）。</para>
+        /// </summary>
+        public Func<int, int, bool> SendAction { get; set; }
+
+        /// <summary>已经发出去、**还没被服务端确认**的任务编号（「待确认」）。</summary>
+        private readonly HashSet<int> m_pending = new HashSet<int>();
+
+        /// <summary>
+        /// 这个任务是不是"请求已发、等确认"。
+        /// <para>⚠️ **「待确认」不是「已接取」**：它只是给玩家看的一行提示，
+        /// **不许**拿它去点亮"可交付"、也不许让本地状态机往前走一格（那样就成了乐观地谎报成功）。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>待确认返回 true。</returns>
+        public bool IsPending(int questId)
+        {
+            return m_pending.Contains(questId);
+        }
+
+        /// <summary>
+        /// 服务端**表态**了 ⇒ 清掉这个任务的「待确认」（由收包方在
+        /// `NetSession.QuestStateReceived` 里调）。
+        /// <para>⚠️ 无论是"确认成功"还是"服务端说没接过"，都要清 ——
+        /// 留着它界面就会一直显示「待确认」。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        public void ClearPending(int questId)
+        {
+            m_pending.Remove(questId);
+        }
+
+        /// <summary>
+        /// 收到错误 ⇒ 清掉「待确认」并把**服务端给的原因原文**放进 `LastMessage`（显示给玩家）。
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="reason">服务端给的原因（会原样显示）。</param>
+        public void FailPending(int questId, string reason)
+        {
+            m_pending.Remove(questId);
+            LastMessage = string.IsNullOrEmpty(reason) ? "任务动作被服务端拒绝（没给原因）" : reason;
+        }
+
+        /// <summary>
+        /// 收到**不针对某个任务**的错误 ⇒ 把当前所有「待确认」一起落定，并把原因原文放进 `LastMessage`。
+        /// <para>⚠️ 为什么需要它：`ErrorResponse` 里**没有任务编号**（它是"这次请求被拒"的通用回复），
+        /// 而界面上可能同时有两个任务在等确认 ⇒ 没法只针对一个落定。</para>
+        /// </summary>
+        /// <param name="reason">服务端给的原因（会原样显示）。</param>
+        /// <returns>落定了几个（**0 = 当时没有待确认的**，调用方据此可以不打扰玩家）。</returns>
+        public int FailAllPending(string reason)
+        {
+            int count = m_pending.Count;
+
+            if (count > 0)
+            {
+                m_pending.Clear();
+                LastMessage = string.IsNullOrEmpty(reason) ? "任务动作被服务端拒绝（没给原因）" : reason;
+            }
+
+            return count;
+        }
         /// <summary>复用的临时列表（避免每次刷新都分配）。</summary>
         private readonly List<QuestOffer> m_offers = new List<QuestOffer>();
 
@@ -217,6 +289,11 @@ namespace NBC.Game.UI
         /// <returns>结果。</returns>
         public QuestActionResult Accept(int questId)
         {
+            if (SendAction != null)
+            {
+                return RequestRemote(questId, ActionAccept, "接取");
+            }
+
             return Record(m_quests.Accept(questId));
         }
 
@@ -225,7 +302,37 @@ namespace NBC.Game.UI
         /// <returns>结果。</returns>
         public QuestActionResult Submit(int questId)
         {
+            if (SendAction != null)
+            {
+                return RequestRemote(questId, ActionSubmit, "交付");
+            }
+
             return Record(m_quests.Submit(questId));
+        }
+
+        /// <summary>
+        /// 把动作**发给服务端**并置「待确认」—— ⚠️ **本地一点任务状态都不改**。
+        /// <para>服务端认了（或拒了）之后，由收包路径调 `ClearPending` / `FailPending`。</para>
+        /// </summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="action">动作编号。</param>
+        /// <param name="verb">动作的中文说法（提示语用）。</param>
+        /// <returns>请求发出去了就算成功（**不代表任务已经接取/交付**）。</returns>
+        private QuestActionResult RequestRemote(int questId, int action, string verb)
+        {
+            bool sent = SendAction(questId, action);
+
+            if (!sent)
+            {
+                LastMessage = "「" + verb + "」请求**没能发出去**（没连上服务端？）—— 任务状态没有变化。";
+                return QuestActionResult.Fail(LastMessage);
+            }
+
+            m_pending.Add(questId);
+            LastMessage = "已把「" + verb + "」请求发给服务端（任务 " + questId + "），等它确认……";
+
+            // ⚠️ 返回"请求发出去了"，**不是**"任务接取成功了" —— 权威在服务端
+            return QuestActionResult.Success();
         }
 
         // ====================================================================
@@ -243,6 +350,13 @@ namespace NBC.Game.UI
             {
                 // 按钮名是**我们自己做出来的**，所以这里不可能是玩家输入错误 = 程序错误
                 LastMessage = "（内部错误：按钮名里的任务编号不是数字「" + idText + "」）";
+                return;
+            }
+
+            // ⚠️ 接了服务端就**不许**在本地改任务状态（见 `SendAction`）
+            if (SendAction != null)
+            {
+                RequestRemote(questId, accept ? ActionAccept : ActionSubmit, accept ? "接取" : "交付");
                 return;
             }
 

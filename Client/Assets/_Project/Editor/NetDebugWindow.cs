@@ -36,6 +36,7 @@ using NBC.Game.UI;             // M4-S1c：`QuestPanelModel` / `QuestRow`（真�
 using NBC.Protocol;           // M4-S3 收口：`ProgressSync` / `ConditionProgressEntry`（服务端权威进度）
 using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
+using NBC.Shared.Net;       // M4-S3 §二十六：NetErrors（把错误码翻译成人话）
 using UnityEditor;
 using UnityEngine;
 
@@ -171,6 +172,9 @@ namespace NBC.EditorTools
         /// </summary>
         private BattleSession m_questSession;
 
+        /// <summary>任务面板已经接到哪个联网会话上（换了会话就要重接；见 `WireQuestPanelToServer`）。</summary>
+        private NetSession m_questWiredSession;
+
         /// <summary>真面板用的**同一个视图模型**（`QuestPanel` 也用它）—— 窗口与面板一套逻辑。</summary>
         private QuestPanelModel m_questModel;
 
@@ -297,11 +301,61 @@ namespace NBC.EditorTools
             m_questSession = BattleSession.FromConfigMgr(heroId, new EditorQuestRewardSink(this));
             m_questModel = new QuestPanelModel(m_questSession.Quests);
 
+            // §二十六：把面板的「接取 / 交付」接到**联网**会话上（列表仍来自本地 `BattleSession`）
+            WireQuestPanelToServer();
+
             AddLog("配置表就绪：真任务已装好（英雄 " + heroId + "）");
         }
 
         /// <summary>取 `Hero` 表里第一个英雄的编号（取不到就 1001 —— M3 服务端固定的那个）。</summary>
         /// <returns>英雄编号。</returns>
+        /// <summary>
+        ///     §二十六：任务面板 → 联网会话的**三行装配**。
+        ///     <para>⚠️ 面板的**列表**来自本地 `BattleSession`，而**动作**要发给服务端 ——
+        ///     这是两个对象，所以必须显式接一次。</para>
+        ///     <para>① 「接取 / 交付」⇒ `SendQuestAction`（本地**不自己改状态**，等它确认）；
+        ///     ② 收到 `quest_state` ⇒ 清「待确认」；③ 收到错误 ⇒ 落定并把**原因原文**显示出来。</para>
+        ///     <para>⚠️ 幂等：同一个会话只接一次；换了会话（重连）自动重接。</para>
+        /// </summary>
+        private void WireQuestPanelToServer()
+        {
+            if (m_questModel == null || m_session == null || ReferenceEquals(m_questWiredSession, m_session))
+            {
+                return;
+            }
+
+            m_questWiredSession = m_session;
+
+            // ① 点按钮 ⇒ 发请求（`SendAction` 一旦设上，`Accept`/`Submit` 就**不再本地改状态**）
+            m_questModel.SendAction = (questId, action) => m_session.SendQuestAction(questId, action);
+
+            // ② 服务端表态（无论"接了""已交付"还是"没接过"）⇒ 清掉「待确认」
+            m_session.QuestStateReceived += sync =>
+            {
+                for (int i = 0; i < sync.Entries.Count; i++)
+                {
+                    m_questModel.ClearPending(sync.Entries[i].QuestId);
+                }
+            };
+
+            // ③ 被拒 ⇒ 落定 + 原因原文（错误包里没有任务编号 ⇒ 只能一起落定，见 `FailAllPending`）
+            m_session.ErrorReceived += error =>
+            {
+                if (error.Code == NetErrors.QuestRejected ||
+                    error.Code == NetErrors.QuestUnavailable ||
+                    error.Code == NetErrors.PlayerMismatch)
+                {
+                    int settled = m_questModel.FailAllPending(error.Message);
+
+                    AddLog("[任务] 请求被服务端拒绝（码 " + error.Code + "：" +
+                           NetErrors.Describe(error.Code) + "）：" + error.Message +
+                           (settled > 0 ? "（落定 " + settled + " 个待确认）" : string.Empty));
+                }
+            };
+
+            AddLog("[任务] 面板已接到联网会话：点「接取 / 交付」会发给服务端（本地不再自己改状态）");
+        }
+
         private static int FirstHeroId()
         {
             if (!ConfigMgr.Instance.IsLoaded("Hero"))
@@ -1255,6 +1309,9 @@ namespace NBC.EditorTools
                 NetSession.DefaultHandshakeTimeoutMs,
                 m_account,
                 m_password);
+
+            // §二十六：会话刚建好 ⇒ 把任务面板接上（`m_questModel` 可能还没就绪，见那个方法的守卫）
+            WireQuestPanelToServer();
 
             m_session.Note += line => AddLog(line);
             m_session.StateChanged += state => AddLog("状态 → " + state);

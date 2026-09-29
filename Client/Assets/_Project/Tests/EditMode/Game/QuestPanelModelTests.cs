@@ -107,6 +107,68 @@ namespace NBC.Tests.EditMode
         /// <param name="rows">行列表。</param>
         /// <param name="actionName">按钮名。</param>
         /// <returns>行；没找到返回 null。</returns>
+        /// <summary>
+        /// ⚠️ 接上服务端出口之后：点「接取」**只发请求 + 标「待确认」**，
+        /// **本地状态机不许往前走一格** —— 那才是"客户端自己当权威"（§二十一 修掉的洞）。
+        /// </summary>
+        [Test]
+        public void SendAction_Set_SendsRequest_MarksPending_ButDoesNotChangeLocalState()
+        {
+            int sentQuestId = 0;
+            int sentAction = 0;
+
+            m_model.SendAction = (questId, action) =>
+            {
+                sentQuestId = questId;
+                sentAction = action;
+                return true;
+            };
+
+            m_model.Accept(GameTestTables.DemoQuest);
+
+            Assert.AreEqual(GameTestTables.DemoQuest, sentQuestId, "请求要带上任务编号");
+            Assert.AreEqual(QuestPanelModel.ActionAccept, sentAction, "动作用数字（1 = 接取）");
+            Assert.IsTrue(m_model.IsPending(GameTestTables.DemoQuest), "发出去了 ⇒ 显示「待确认」");
+
+            List<QuestTracking> trackings = new List<QuestTracking>();
+            m_runtime.CopyActiveTrackings(trackings);
+
+            Assert.AreEqual(0, trackings.Count,
+                "本地**不许**因为「待确认」就把任务推成「已接取」（等服务端回话才算）");
+        }
+
+        /// <summary>被拒 ⇒ 清「待确认」并把**服务端给的原因原文**显示出来。</summary>
+        [Test]
+        public void FailPending_ClearsPending_AndShowsServerReason()
+        {
+            m_model.SendAction = (questId, action) => true;
+            m_model.Accept(GameTestTables.DemoQuest);
+
+            Assert.IsTrue(m_model.IsPending(GameTestTables.DemoQuest));
+
+            m_model.FailPending(GameTestTables.DemoQuest, "现在不能交付（当前状态「未接取」）");
+
+            Assert.IsFalse(m_model.IsPending(GameTestTables.DemoQuest), "被拒之后不许再显示「待确认」");
+            StringAssert.Contains("现在不能交付", m_model.LastMessage, "原因原文要显示给玩家");
+        }
+
+        /// <summary>
+        /// 不针对某个任务的错误（例如「请先用账号登录」）⇒ 一起落定；
+        /// **没有待确认时返回 0 且不往界面上写失败消息**（别打扰玩家）。
+        /// </summary>
+        [Test]
+        public void FailAllPending_SettlesEveryPending_AndZeroWhenNothingPending()
+        {
+            Assert.AreEqual(0, m_model.FailAllPending("请先用账号登录"), "一条待确认都没有 ⇒ 返回 0");
+            Assert.AreEqual(string.Empty, m_model.LastMessage, "没有待确认就不该写失败消息");
+
+            m_model.SendAction = (questId, action) => true;
+            m_model.Accept(GameTestTables.DemoQuest);
+
+            Assert.AreEqual(1, m_model.FailAllPending("请先用账号登录"));
+            StringAssert.Contains("请先用账号登录", m_model.LastMessage);
+            Assert.IsFalse(m_model.IsPending(GameTestTables.DemoQuest));
+        }
         private static QuestRow Find(List<QuestRow> rows, string actionName)
         {
             for (int i = 0; i < rows.Count; i++)
