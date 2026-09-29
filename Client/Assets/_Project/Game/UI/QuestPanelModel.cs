@@ -335,9 +335,211 @@ namespace NBC.Game.UI
             return QuestActionResult.Success();
         }
 
-        // ====================================================================
-        //  内部
-        // ====================================================================
+        /// <summary>
+        /// **任务状态**的权威来源（M4-S3 §二十七）。
+        /// <para>⚠️ 与既有的 `Authority`（**条件进度**权威）**并排、不合并** ——
+        /// 一个答"这个任务到哪一步"，一个答"这条条件累计了多少"。</para>
+        /// <para>传 null（**默认**）= 一切照旧：分区完全按本地 `QuestRuntime`
+        /// （所以既有的 700+ 条 EditMode 行为不变）。</para>
+        /// </summary>
+        public IQuestStateAuthority StateAuthority { get; set; }
+
+        /// <summary>
+        /// **一次遍历填满四个区**（可接 / 进行中 / 可交付 / 已交付）。
+        ///
+        /// <para>⚠️⚠️ 这是本片最要紧的一处设计：**"挪列"必须一次遍历决定归属**，
+        /// 而不是"先从可接里删掉、再加到进行中" —— 后者只要漏掉加的那一步，
+        /// 那个任务就**从界面上消失了**，而且**不报错**（这类"多视图挪列"最经典的 bug）。</para>
+        ///
+        /// <para>做法：把"可接"和"已接"两个来源**放进同一次遍历**，每个任务
+        /// 用一个 `placed` 集合保证**只落一个区**；遍历结束四个区的并集 == 输入并集，
+        /// **每个任务恰好出现一次**。这条不变式有专门的 EditMode 用例盯着。</para>
+        ///
+        /// <para>分区规则（三值语义，见 `IQuestStateAuthority`）：
+        /// <list type="bullet">
+        ///   <item><description>`TryGetState` 返回 **false**（服务端没说）⇒ 按**本地**判断，标「（本地预测）」</description></item>
+        ///   <item><description>**true + 0** ⇒ 服务端明确说未接取 ⇒ 放**可接**</description></item>
+        ///   <item><description>**1** ⇒ 进行中；**2** ⇒ 可交付；**3** ⇒ 已交付</description></item>
+        /// </list></para>
+        /// </summary>
+        /// <param name="offerBuffer">可接区。</param>
+        /// <param name="activeBuffer">进行中区。</param>
+        /// <param name="readyBuffer">可交付区。</param>
+        /// <param name="doneBuffer">已交付区。</param>
+        public void CopySections(
+            List<QuestRow> offerBuffer, List<QuestRow> activeBuffer,
+            List<QuestRow> readyBuffer, List<QuestRow> doneBuffer)
+        {
+            if (offerBuffer == null || activeBuffer == null || readyBuffer == null || doneBuffer == null)
+            {
+                throw new ArgumentNullException(nameof(offerBuffer),
+                    "[QuestPanelModel] 四个区的列表都不能为 null。");
+            }
+
+            offerBuffer.Clear();
+            activeBuffer.Clear();
+            readyBuffer.Clear();
+            doneBuffer.Clear();
+
+            m_quests.CopyActiveTrackings(m_trackings);
+            m_quests.CopyOffers(m_offers);
+
+            // ⚠️ 这个集合就是"不挪丢"的保证：每个任务只落一个区
+            var placed = new HashSet<int>();
+
+            // 先走"已接"（它带着条件行，信息更全），再走"可接"
+            for (int i = 0; i < m_trackings.Count; i++)
+            {
+                QuestTracking tracking = m_trackings[i];
+
+                if (!placed.Add(tracking.QuestId))
+                {
+                    continue;
+                }
+
+                Place(BufferOf(offerBuffer, activeBuffer, readyBuffer, doneBuffer,
+                               SectionOf(tracking.QuestId, tracking.State)),
+                      BuildTrackingRow(tracking, SectionOf(tracking.QuestId, tracking.State)));
+            }
+
+            for (int i = 0; i < m_offers.Count; i++)
+            {
+                QuestOffer offer = m_offers[i];
+
+                if (!placed.Add(offer.QuestId))
+                {
+                    continue;       // 已经落过区了（例如本地既有 tracking 又是 offer）
+                }
+
+                // ⚠️ 服务端可能说它**已经接过**（本地却把它当"可接"）⇒ 靠 `SectionOf` 挪到正确的区，
+                //    并且**照样产出一行**（哪怕本地没有 tracking）—— 这就是"挪进来"的那一半。
+                int section = SectionOf(offer.QuestId, EQuestState.None);
+
+                Place(BufferOf(offerBuffer, activeBuffer, readyBuffer, doneBuffer, section),
+                      BuildOfferRow(offer, section));
+            }
+        }
+
+        /// <summary>按区号取对应的列表。</summary>
+        /// <param name="offers">可接。</param>
+        /// <param name="active">进行中。</param>
+        /// <param name="ready">可交付。</param>
+        /// <param name="done">已交付。</param>
+        /// <param name="section">区号（0..3，见 `EQuestState`）。</param>
+        /// <returns>该区的列表。</returns>
+        private static List<QuestRow> BufferOf(
+            List<QuestRow> offers, List<QuestRow> active, List<QuestRow> ready, List<QuestRow> done, int section)
+        {
+            switch (section)
+            {
+                case 1: return active;
+                case 2: return ready;
+                case 3: return done;
+                default: return offers;
+            }
+        }
+
+        /// <summary>把一个任务归到哪个区（权威优先，服务端没说才用本地）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <param name="local">本地认为的状态。</param>
+        /// <returns>区号（0..3）。</returns>
+        private int SectionOf(int questId, EQuestState local)
+        {
+            int authoritative;
+
+            // ⚠️ 三值语义：false = 服务端**没说**（不是"未接取"）⇒ 退回本地
+            if (StateAuthority != null && StateAuthority.TryGetState(questId, out authoritative))
+            {
+                return authoritative;
+            }
+
+            return (int)local;
+        }
+
+        /// <summary>这一行的状态是"服务端说的"还是"本地猜的"（标注文案只定义一次）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>标注文案（权威为空串）。</returns>
+        private string SourceMarkOf(int questId)
+        {
+            int ignored;
+
+            if (StateAuthority != null && StateAuthority.TryGetState(questId, out ignored))
+            {
+                return string.Empty;    // 服务端说的 ⇒ 不标
+            }
+
+            return QuestProgressOverlay.LocalMark;
+        }
+
+        /// <summary>"待确认"的标注（`IsPending` 时加）。</summary>
+        /// <param name="questId">任务编号。</param>
+        /// <returns>标注文案。</returns>
+        private string PendingMarkOf(int questId)
+        {
+            return IsPending(questId) ? "  ⏳待确认" : string.Empty;
+        }
+
+        /// <summary>把一个任务行放进去（**只放一次**，调用方保证）。</summary>
+        /// <param name="buffer">目标区。</param>
+        /// <param name="row">行。</param>
+        private static void Place(List<QuestRow> buffer, QuestRow row)
+        {
+            buffer.Add(row);
+        }
+
+        /// <summary>造"从可接那边来"的一行（服务端可能已经说它接过了 ⇒ 靠 `section` 决定放哪）。</summary>
+        /// <param name="offer">可接任务。</param>
+        /// <param name="section">归到哪个区（0..3）。</param>
+        /// <returns>行。</returns>
+        private QuestRow BuildOfferRow(QuestOffer offer, int section)
+        {
+            QuestRow row = new QuestRow();
+            row.QuestId = offer.QuestId;
+            row.ActionName = AcceptPrefix + offer.QuestId;
+            row.ActionLabel = "接取";
+
+            // ⚠️ **只有"可接"区能点接取**：被权威挪到别的区的（服务端说已接）不许再显示接取按钮 ——
+            //    否则玩家会对着一个"其实已经接过"的任务反复点接取。
+            row.ActionEnabled = section == 0 && !IsPending(offer.QuestId);
+
+            row.Title = "[" + offer.QuestId + "] " + offer.Name +
+                        PendingMarkOf(offer.QuestId) + SourceMarkOf(offer.QuestId);
+
+            // ⚠️ 本地**没有** tracking ⇒ 拿不到条件行（条件编号在配置里，面板没有那份数据）。
+            //    这里**绝不**编造「0/N」——那正是 §二十四 那条不变式禁止的事（把"没有数据"画成"进度是 0"）。
+            //    如实说一句，让玩家知道"明细还没同步过来"。
+            row.Detail = section == 0
+                ? offer.Description
+                : offer.Description + "\n（服务端说这个任务已经接取，但本地还没有它的进度明细 —— 等同步）";
+
+            return row;
+        }
+
+        /// <summary>造"从已接那边来"的一行（带逐条条件进度）。</summary>
+        /// <param name="tracking">追踪视图。</param>
+        /// <param name="section">归到哪个区（0..3）。</param>
+        /// <returns>行。</returns>
+        private QuestRow BuildTrackingRow(QuestTracking tracking, int section)
+        {
+            QuestRow row = new QuestRow();
+            row.QuestId = tracking.QuestId;
+            row.ActionName = SubmitPrefix + tracking.QuestId;
+            row.ActionLabel = "交付";
+
+            // ⚠️ **只有"可交付"区能点交付**，而且「待确认」期间不许再点（免得重复发请求）
+            row.ActionEnabled = section == 2 && !IsPending(tracking.QuestId);
+
+            row.Title = "[" + tracking.QuestId + "] " + tracking.Name +
+                        "（" + StateText(tracking.State) + "）" +
+                        PendingMarkOf(tracking.QuestId) + SourceMarkOf(tracking.QuestId);
+
+            // 条件那几行照旧：**权威进度优先**盖上去，服务端没说的条件保持本地值并标注（§二十四）
+            QuestProgressOverlay.Apply(tracking.Conditions, Authority);
+
+            row.Detail = BuildDetail(tracking);
+            return row;
+        }
+
 
         /// <summary>按按钮名解析出的动作真正执行。</summary>
         /// <param name="idText">按钮名里那截数字文本。</param>

@@ -554,5 +554,147 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual(EProgressSource.LocalPrediction, b.Source, "4002 服务端没说 ⇒ 保持预测");
             Assert.AreEqual(5, b.Current, "而且**不许**被改成 0");
         }
+
+        // ====================================================================
+        //  M4-S3 §二十七：面板**按权威状态挪列**
+        // ====================================================================
+
+        /// <summary>测试用的假任务状态权威：只回答"我认识的那个任务"，别的**一律沉默**。</summary>
+        private sealed class FakeStateAuthority : IQuestStateAuthority
+        {
+            /// <summary>我说过的那些任务。</summary>
+            private readonly Dictionary<int, int> m_known = new Dictionary<int, int>();
+
+            /// <summary>被问过几次（证明真的走了权威这条路）。</summary>
+            public int Asked { get; private set; }
+
+            /// <summary>让某个任务有权威状态。</summary>
+            /// <param name="questId">任务编号。</param>
+            /// <param name="state">状态（0..3）。</param>
+            public void Set(int questId, int state)
+            {
+                m_known[questId] = state;
+            }
+
+            /// <inheritdoc/>
+            public bool TryGetState(int questId, out int state)
+            {
+                Asked++;
+                return m_known.TryGetValue(questId, out state);
+            }
+        }
+
+        /// <summary>把四个区拼成一个序列（断言用）。</summary>
+        /// <param name="a">区一。</param>
+        /// <param name="b">区二。</param>
+        /// <param name="c">区三。</param>
+        /// <param name="d">区四。</param>
+        /// <returns>全部行。</returns>
+        private static List<QuestRow> Flatten(
+            List<QuestRow> a, List<QuestRow> b, List<QuestRow> c, List<QuestRow> d)
+        {
+            var all = new List<QuestRow>(a.Count + b.Count + c.Count + d.Count);
+            all.AddRange(a);
+            all.AddRange(b);
+            all.AddRange(c);
+            all.AddRange(d);
+            return all;
+        }
+
+        /// <summary>
+        /// ⚠️ **本片最要紧的一条**：挪列**不许把任务挪丢**。
+        ///
+        /// <para>做法：让权威说"某个原本在「可接」的任务已经接取了" ⇒ 它必须出现在「进行中」，
+        /// **同时**从「可接」消失，而且**四个区的总数不变**（= 没有任何任务从界面上消失）。</para>
+        ///
+        /// <para>📌 这是"多视图挪列"最经典的 bug：从 A 区删掉了、忘了加进 B 区 ⇒
+        /// 那个任务**从界面上消失**，而且**不报错**。只断言"B 区里有没有它"是**测不出来**的
+        /// （只测一边测不出丢行），必须**同时**断言总数与"恰好一次"。</para>
+        /// </summary>
+        [Test]
+        public void Sections_MovingByAuthority_NeverLosesARow()
+        {
+            var authority = new FakeStateAuthority();
+            m_model.StateAuthority = authority;
+
+            var offers = new List<QuestRow>();
+            var active = new List<QuestRow>();
+            var ready = new List<QuestRow>();
+            var done = new List<QuestRow>();
+
+            m_model.CopySections(offers, active, ready, done);
+
+            int total = offers.Count + active.Count + ready.Count + done.Count;
+
+            // 阳性对照：真的有任务，否则下面的"不丢"是空话
+            Assert.Greater(total, 0, "一个任务都没有 ⇒ 这条用例测不出任何东西");
+
+            List<QuestRow> before = Flatten(offers, active, ready, done);
+            var seen = new HashSet<int>();
+
+            for (int i = 0; i < before.Count; i++)
+            {
+                Assert.IsTrue(seen.Add(before[i].QuestId),
+                    "任务 " + before[i].QuestId + " 在四个区里出现了不止一次");
+            }
+
+            Assert.AreEqual(total, seen.Count, "各区并集里有重复行");
+
+            // ---- 权威说"第一个可接任务其实已经接取了" ----
+            int movedId = offers[0].QuestId;
+            authority.Set(movedId, 1);
+
+            m_model.CopySections(offers, active, ready, done);
+
+            Assert.Greater(authority.Asked, 0, "应当真的问过权威（而不是压根没接上）");
+
+            Assert.AreEqual(total, offers.Count + active.Count + ready.Count + done.Count,
+                "挪列之后**总数变了** ⇒ 有任务被挪丢了（这类 bug 的经典表现）");
+
+            Assert.IsTrue(active.Exists(r => r.QuestId == movedId),
+                "权威说已接取的任务**没有出现在「进行中」**");
+
+            Assert.IsFalse(offers.Exists(r => r.QuestId == movedId),
+                "它还留在「可接」⇒ 同一个任务出现在两个区");
+
+            QuestRow movedRow = active.Find(r => r.QuestId == movedId);
+            Assert.IsFalse(movedRow.ActionEnabled, "被挪进「进行中」的行不该还能点接取");
+        }
+
+        /// <summary>三值语义：`false`（服务端没说）按本地；`true + 0`（明确说未接取）放「可接」。</summary>
+        [Test]
+        public void Sections_SilentAuthorityFallsBackToLocal_ButExplicitZeroIsAuthoritative()
+        {
+            var authority = new FakeStateAuthority();
+            m_model.StateAuthority = authority;
+
+            var offers = new List<QuestRow>();
+            var active = new List<QuestRow>();
+            var ready = new List<QuestRow>();
+            var done = new List<QuestRow>();
+
+            m_model.CopySections(offers, active, ready, done);
+            Assert.Greater(offers.Count, 0, "本地一个都没接 ⇒ 应当全在「可接」");
+
+            int someId = offers[0].QuestId;
+
+            // 权威**沉默** ⇒ 按本地（= 可接），而且**标成预测**
+            Assert.IsTrue(offers.Exists(r => r.QuestId == someId), "服务端没说 ⇒ 应当留在本地判断的可接区");
+            Assert.Greater(authority.Asked, 0, "应当真的问过权威");
+
+            QuestRow localRow = offers.Find(r => r.QuestId == someId);
+            StringAssert.Contains(QuestProgressOverlay.LocalMark, localRow.Title,
+                "服务端没说 ⇒ 必须标出这是本地预测");
+
+            // 权威**明确说未接取（0）** ⇒ 仍放可接，但**不再**标预测
+            authority.Set(someId, 0);
+            m_model.CopySections(offers, active, ready, done);
+
+            Assert.IsTrue(offers.Exists(r => r.QuestId == someId), "明确说未接取 ⇒ 放「可接」");
+
+            QuestRow authoritativeRow = offers.Find(r => r.QuestId == someId);
+            StringAssert.DoesNotContain(QuestProgressOverlay.LocalMark, authoritativeRow.Title,
+                "服务端明确表态了 ⇒ 不该再标成本地预测");
+        }
     }
 }

@@ -184,6 +184,12 @@ namespace NBC.EditorTools
         /// <summary>进行中任务的显示行。</summary>
         private readonly List<QuestRow> m_trackingRows = new List<QuestRow>();
 
+        /// <summary>§二十七：**可交付**区（服务端说 `Completed`）。</summary>
+        private readonly List<QuestRow> m_readyRows = new List<QuestRow>();
+
+        /// <summary>§二十七：**已交付**区（服务端说 `Submitted`）。</summary>
+        private readonly List<QuestRow> m_doneRows = new List<QuestRow>();
+
         /// <summary>M4-S2：成就的追踪视图（每帧重填，避免每帧分配新列表）。</summary>
         private readonly List<AchievementTracking> m_achievementRows = new List<AchievementTracking>();
 
@@ -328,6 +334,11 @@ namespace NBC.EditorTools
 
             // ① 点按钮 ⇒ 发请求（`SendAction` 一旦设上，`Accept`/`Submit` 就**不再本地改状态**）
             m_questModel.SendAction = (questId, action) => m_session.SendQuestAction(questId, action);
+
+            // ①′ §二十七：**任务状态**的权威来源（与条件进度那个 `Authority` 并排，不合并）
+            //     —— 面板据此把任务分区（可接 / 进行中 / 可交付 / 已交付）；服务端没说时返回 false，
+            //     面板退回本地判断并标「（本地预测）」。
+            m_questModel.StateAuthority = new NetSessionQuestStateAuthority(m_session);
 
             // ② 服务端表态（无论"接了""已交付"还是"没接过"）⇒ 清掉「待确认」
             m_session.QuestStateReceived += sync =>
@@ -1142,22 +1153,16 @@ namespace NBC.EditorTools
                 return;
             }
 
-            m_questModel.CopyOfferRows(m_offerRows);
-            m_questModel.CopyTrackingRows(m_trackingRows);
+            // §二十七：**一次遍历填四区** —— 分区（可接 / 进行中 / 可交付 / 已交付）由
+            // `CopySections` 按**服务端权威状态**决定（服务端没说才退回本地并标「（本地预测）」）。
+            // ⚠️ 不要在窗口里自己"从可接删掉、再加到进行中"：漏掉"加"的那一步，任务就会
+            //    从界面上**消失且不报错** —— 这正是 `CopySections` 里那个 `placed` 集合要防的。
+            m_questModel.CopySections(m_offerRows, m_trackingRows, m_readyRows, m_doneRows);
 
-            EditorGUILayout.LabelField("可接取", m_offerRows.Count == 0 ? "（没有）" : m_offerRows.Count + " 个");
-
-            for (int i = 0; i < m_offerRows.Count; i++)
-            {
-                DrawQuestRow(m_offerRows[i]);
-            }
-
-            EditorGUILayout.LabelField("进行中", m_trackingRows.Count == 0 ? "（没有）" : m_trackingRows.Count + " 个");
-
-            for (int i = 0; i < m_trackingRows.Count; i++)
-            {
-                DrawQuestRow(m_trackingRows[i]);
-            }
+            DrawQuestSection("可接取", m_offerRows);
+            DrawQuestSection("进行中", m_trackingRows);
+            DrawQuestSection("可交付", m_readyRows);
+            DrawQuestSection("已交付", m_doneRows);
 
             if (!string.IsNullOrEmpty(m_questModel.LastMessage))
             {
@@ -1245,6 +1250,19 @@ namespace NBC.EditorTools
 
         /// <summary>画一行任务（标题 + 详情 + 一个动作按钮）。</summary>
         /// <param name="row">显示行。</param>
+        /// <summary>画一个区（标题 + 该区的行）。§二十七 起四个区共用这一段。</summary>
+        /// <param name="title">区名。</param>
+        /// <param name="rows">该区的行。</param>
+        private void DrawQuestSection(string title, List<QuestRow> rows)
+        {
+            EditorGUILayout.LabelField(title, rows.Count == 0 ? "（没有）" : rows.Count + " 个");
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                DrawQuestRow(rows[i]);
+            }
+        }
+
         private void DrawQuestRow(QuestRow row)
         {
             using (new EditorGUILayout.HorizontalScope())
