@@ -37,6 +37,7 @@ using NBC.Protocol;           // M4-S3 收口：`ProgressSync` / `ConditionProgr
 using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
 using NBC.Shared.Net;       // M4-S3 §二十六：NetErrors（把错误码翻译成人话）
+using NBC.Shared.Sim;       // M4-S4 S4-e：`LockstepClient`（帧同步面板要读它的只读状态）
 using UnityEditor;
 using UnityEngine;
 
@@ -120,6 +121,11 @@ namespace NBC.EditorTools
 
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
+
+        /// <summary>
+        /// 「帧同步（锁步）」模式的勾选态（**当前只影响本窗口显示**，见 `DrawLockstepSection` 的说明）。
+        /// </summary>
+        private bool m_lockstepMode;
 
         /// <summary>M4-S1：把服务端事件接进事件中心的桥（**联机战斗能推进任务**就靠它）。</summary>
         private ServerEventBridge m_eventBridge;
@@ -604,9 +610,48 @@ namespace NBC.EditorTools
         }
 
         /// <summary>画界面。</summary>
-        private void OnGUI()
+        /// <summary>
+        /// 同步模式开关 + 帧同步（锁步）状态面板（M4-S4 S4-e）。
+        /// <para>⚠️ 这个开关**当前只影响本窗口的显示**：两条链在服务端/客户端**都已并存**，
+        /// 但"一局里真正选哪条"**还没接到开局流程上**（见 `Docs\27` §35.0）。**不做假开关** —— 如实写在界面上。</para>
+        /// </summary>
+        private void DrawLockstepSection()
         {
-            // ⚠️ 2026-09-26：这个窗口原来是一整列、**没有滚动**的 —— 节一多（状态/房间/世界/掉落/输入/
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("【同步模式】", EditorStyles.boldLabel);
+
+            m_lockstepMode = EditorGUILayout.ToggleLeft(
+                "帧同步（锁步）：服务端按帧广播输入、客户端自己 Step 并对账　／　关闭 = 状态同步（快照）",
+                m_lockstepMode);
+
+            EditorGUILayout.HelpBox(
+                "该开关当前只影响本窗口的显示：两条链都已并存，但「一局里选哪条」还没接到开局流程（见 Docs/27 §35.0）。",
+                MessageType.Warning);
+
+            NetSession session = m_session;
+
+            EditorGUILayout.LabelField("当前模式（显示用）", m_lockstepMode ? "帧同步（锁步）" : "状态同步（快照）");
+
+            if (session == null || session.Lockstep == null)
+            {
+                EditorGUILayout.LabelField("锁步运行器", "未创建（还没收到任何锁步消息）");
+                return;
+            }
+
+            LockstepClient client = session.Lockstep;
+
+            EditorGUILayout.LabelField("锁步已开局", client.Started ? "是" : "否");
+            EditorGUILayout.LabelField("帧号推进", client.StepsExecuted + " 帧（末帧 " + client.LastSteppedFrame + "）");
+            EditorGUILayout.LabelField("⭐ 分歧计数（应为 0）", client.DesyncCount.ToString());
+            EditorGUILayout.LabelField("未开局忽略", client.IgnoredBeforeStart.ToString());
+            EditorGUILayout.LabelField("重复/倒退被拒", client.RejectedFrames.ToString());
+            EditorGUILayout.LabelField("胜负判定不一致", session.MatchMismatchCount.ToString());
+            EditorGUILayout.LabelField("结果", session.MatchOutcome == null ? "未宣布" : session.MatchOutcome.Value.ToString());
+            EditorGUILayout.LabelField("一句话", client.Describe());
+        }
+
+        private void OnGUI()
+        {            // ⚠️ 2026-09-26：这个窗口原来是一整列、**没有滚动**的 —— 节一多（状态/房间/世界/掉落/输入/
             //    任务条件/日志），下半截就被裁掉且**翻不到**（负责人："全屏也看不到任务完成情况"）。
             //    现在分两层：
             //      ① **顶部常驻摘要行**（在滚动视图外面）—— 最要紧的几个数不用滚就能看到；
@@ -683,6 +728,8 @@ namespace NBC.EditorTools
 
             bool online = m_session != null && m_session.IsOnline;
             bool inRoom = m_session != null && m_session.InRoom;
+
+            DrawLockstepSection();
 
             using (new EditorGUILayout.HorizontalScope())
             {
