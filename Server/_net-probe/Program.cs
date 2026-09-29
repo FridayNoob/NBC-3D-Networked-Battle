@@ -4591,6 +4591,36 @@ namespace NBC.NetProbe
                 Check("§S4c2：拒绝计数如实（三条失败都记上了）",
                     service.RejectedInputs >= 3, "RejectedInputs=" + service.RejectedInputs);
 
+                // ---- 失败④：**已登录但不在锁步房间**（用 `bob`；他登录了但没进房）----
+                //  ⚠️ 上一版我怀疑"同账号二次登录会挂" ⇒ 负责人已确认那是**误判**
+                //     （真因是 `while` 死循环；而"同账号二次登录"在 §十五 早已测过、不挂）。
+                Client bob = h.ConnectAndLogin("bob", "pw-bob");
+                HandshakeAck bobAck = AckOf(bob, "bob 登录");
+                h.PumpFor(150);
+                ClientSession bobSession = h.Sessions[h.Sessions.Count - 1];
+
+                Check("§S4c2：阳性对照 —— bob **确实已登录**（正 id，不是游客）",
+                    bobAck.PlayerId > 0, "player_id=" + bobAck.PlayerId);
+
+                Check("§S4c2：阳性对照 —— bob **确实不在那个房间里**（否则这条测的不是我们要的分支）",
+                    h.Registry.FindBySession(bobSession) == null,
+                    "bob 竟然在房间里");
+
+                DispatchResult noRoom = h.Router.Dispatch(bobSession, new ClientMessage
+                {
+                    LockstepInput = new LockstepInput { Frame = 0, Seq = 1, MoveXRaw = 0, MoveYRaw = 0 }
+                });
+
+                Check("§S4c2⭐ 失败④：**不在锁步房间** ⇒ 回 `ErrorResponse` 且原因点名「锁步房间」",
+                    noRoom.Reply != null && noRoom.Reply.Error != null &&
+                    noRoom.Reply.Error.Message.Contains("锁步房间"),
+                    noRoom.Reply == null || noRoom.Reply.Error == null
+                        ? "没回错误（静默了）"
+                        : ("code=" + noRoom.Reply.Error.Code + "；" + noRoom.Reply.Error.Message));
+
+                Check("§S4c2：拒绝计数如实（**四条**失败都记上了）",
+                    service.RejectedInputs >= 4, "RejectedInputs=" + service.RejectedInputs);
+
                 Check("§S4c2：**单飞闸一次都没挡**（主循环单线程 ⇒ 正常应恒为 0）",
                     service.GuardBlocked == 0, "GuardBlocked=" + service.GuardBlocked + "；" + service.Describe());
             }
