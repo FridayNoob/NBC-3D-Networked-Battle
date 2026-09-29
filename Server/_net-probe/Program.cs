@@ -224,6 +224,10 @@ namespace NBC.NetProbe
             Console.WriteLine("【二十三】M4-S4 S4-c：**锁步调度**（逐帧对账 / 缺输入 / 去重 / 乱序；纯逻辑直驱）");
             LockstepScheduler_FramesMatchAcrossPeers();
 
+            Console.WriteLine();
+            Console.WriteLine("【二十四】M4-S4 S4-c 第二半·第 1 步：`LockstepService` 开局（直驱，不接 Host）");
+            LockstepService_StartAndInitialHash();
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -4322,6 +4326,274 @@ namespace NBC.NetProbe
                 divergedHash != WorldStateHash.Compute(serverWorld),
                 "改过的一端 " + divergedHash + " vs 正常端 " + WorldStateHash.Compute(serverWorld) +
                 "（相同 = 哈希恒为常量 ⇒ 前面那些「相等」全是假绿）");
+        }
+
+        /// <summary>造一个测试实体。</summary>
+        /// <param name="id">编号。</param>
+        /// <param name="x">X 位置（米）。</param>
+        /// <param name="hp">血量。</param>
+        /// <returns>实体。</returns>
+        private static SimEntity MakeEntity(int id, int x, int hp)
+        {
+            SimEntity e;
+            e.Id = id;
+            e.Position = new FixVector3(x, 0, 0);
+            e.Hp = hp;
+            e.MaxHp = hp;
+            e.AttackReadyTick = 0;
+            return e;
+        }
+
+        /// <summary>找客户端收到的最后一条 `lockstep_start`。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>开局消息或 null。</returns>
+        private static LockstepStart FindLockstepStart(Client client)
+        {
+            for (int i = client.Received.Count - 1; i >= 0; i--)
+            {
+                if (client.Received[i].LockstepStart != null)
+                {
+                    return client.Received[i].LockstepStart;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 【二十四·第 1 步】**只验一条**：`StartRoom` ⇒ 会话收到 `lockstep_start`
+        /// 且 `InitialHash` == 服务端按同一份实体建出来的世界哈希（"**能不能开始**"的判据）。
+        ///
+        /// <para>⚠️ 刻意**最小**：先让这一条跑通，再逐条加其余的。
+        /// 上一版一次加四条，撞上 `LockstepService.Tick` 的 `while (AdvanceTick)` 死循环
+        /// ⇒ 挂 600s，而且 `dotnet build` **全绿**（连失败都吐不出来）。
+        /// ⇒ **加检查要一条一条来；跑的时候必须能看出"是挂还是慢"。**</para>
+        /// </summary>
+        private static void LockstepService_StartAndInitialHash()
+        {
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                var service = new LockstepService(h.Server, h.Registry);
+                service.RegisterHandlers(h.Router);
+
+                Client a = h.ConnectAndLogin("alice", "pw-alice");
+                long aliceId = AckOf(a, "alice 登录").PlayerId;
+                h.JoinSameRoom(a);
+
+                Room room = null;
+
+                foreach (Room r in h.Registry.Rooms)
+                {
+                    room = r;
+                    break;
+                }
+
+                Check("§S4c2：阳性对照 —— 拿到了房间（拿不到就无从广播）", room != null, "房间表为空");
+
+                if (room == null)
+                {
+                    return;
+                }
+
+                var entities = new List<SimEntity>
+                {
+                    MakeEntity((int)aliceId, 0, 100),
+                    MakeEntity((int)aliceId + 1, 1, 100),
+                };
+
+                Check("§S4c2：`StartRoom` 返回成功（房号认得出来）",
+                    service.StartRoom(room.RoomId, entities, 2), "返回 false");
+
+                h.PumpFor(200);
+
+                LockstepStart start = FindLockstepStart(a);
+
+                Check("§S4c2⭐：会话**收到了 `lockstep_start`**（阳性对照：真的收到了东西）",
+                    start != null, "一条都没收到；共 " + a.Received.Count + " 条消息");
+
+                // 独立建一份世界（**故意反序登记**，顺带证明顺序不影响哈希）
+                var mirror = new WorldState();
+                mirror.Add(entities[1].Id, entities[1].Position, entities[1].Hp);
+                mirror.Add(entities[0].Id, entities[0].Position, entities[0].Hp);
+                mirror.SetTick(0);
+
+                Check("§S4c2⭐：`InitialHash` == 服务端按同一份实体建出来的世界哈希（**能不能开始**的判据）",
+                    start != null && start.InitialHash == WorldStateHash.Compute(mirror),
+                    start == null
+                        ? "没收到 start"
+                        : "消息里 " + start.InitialHash + " vs 独立算 " + WorldStateHash.Compute(mirror));
+
+                Check("§S4c2：开局消息里的实体按 `entity_id` **升序**（不依赖调用方给的顺序）",
+                    start != null && start.Entities.Count == 2 &&
+                    start.Entities[0].EntityId < start.Entities[1].EntityId,
+                    start == null ? "没收到 start" : ("条数 " + start.Entities.Count));
+
+                // ================================================================
+                //  第 2 步：交输入 → 单调 + 广播数一致 + 缺输入 + 失败路径
+                // ================================================================
+                ClientSession mine = h.Sessions[h.Sessions.Count - 1];
+                const int framesToRun = 6;
+                int accepted = 0;
+
+                for (int f = 0; f < framesToRun; f++)
+                {
+                    var msg = new ClientMessage
+                    {
+                        LockstepInput = new LockstepInput
+                        {
+                            Frame = f,
+                            Seq = f,
+                            MoveXRaw = Fix64.One.RawValue,   // 朝 +X 走
+                            MoveYRaw = 0,
+                            Buttons = 0,
+                            TargetEntityId = 0,
+                        }
+                    };
+
+                    // ⚠️ 阳性对照：合法输入**不回错误**（下面的四条失败路径都以此为基准）
+                    if (h.Router.Dispatch(mine, msg).Reply == null)
+                    {
+                        accepted++;
+                    }
+                }
+
+                Check("§S4c2：阳性对照 —— 合法的同一个请求形状是被**接受**的（没回错误）",
+                    accepted == framesToRun, "被接受 " + accepted + " / " + framesToRun);
+
+                // delay = 2 ⇒ tick 8 次刚好广播帧 0..5（`Tick` 现在是**单次**调用，不再 while）
+                for (int t = 0; t < framesToRun + 2; t++)
+                {
+                    service.Tick();
+                }
+
+                h.PumpFor(300);
+
+                var frames = new List<LockstepFrame>();
+
+                for (int i = 0; i < a.Received.Count; i++)
+                {
+                    if (a.Received[i].LockstepFrame != null)
+                    {
+                        frames.Add(a.Received[i].LockstepFrame);
+                    }
+                }
+
+                Check("§S4c2：阳性对照 —— 真的收到了帧（否则下面的单调/对账是空话）",
+                    frames.Count > 0, "收到 " + frames.Count + " 帧");
+
+                bool monotonic = true;
+
+                for (int i = 1; i < frames.Count; i++)
+                {
+                    if (frames[i].Frame <= frames[i - 1].Frame)
+                    {
+                        monotonic = false;
+                    }
+                }
+
+                Check("§S4c2⭐ 帧号**单调递增**", monotonic,
+                    frames.Count == 0 ? "没有帧" : ("共 " + frames.Count + " 帧"));
+
+                Check("§S4c2⭐ **广播帧数一致**：服务端说的帧数 == 客户端收到的帧数（没漏发/多发）",
+                    service.BroadcastFrames == frames.Count,
+                    "服务端 " + service.BroadcastFrames + " vs 客户端 " + frames.Count);
+
+                int missingEntries = 0;
+
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    for (int k = 0; k < frames[i].Inputs.Count; k++)
+                    {
+                        if (frames[i].Inputs[k].PlayerId == entities[1].Id && frames[i].Inputs[k].Missing)
+                        {
+                            missingEntries++;
+                        }
+                    }
+                }
+
+                Check("§S4c2⭐ 缺输入：没人控制的玩家**每一帧都标 `Missing = true`**（缺人看得见）",
+                    frames.Count > 0 && missingEntries == frames.Count,
+                    "广播 " + frames.Count + " 帧，标了 Missing 的 " + missingEntries + " 条");
+
+                // 独立复算同样 6 帧 ⇒ 终局哈希必须等于**最后一帧广播里的**
+                var recompute = new WorldState();
+                recompute.Add(entities[0].Id, entities[0].Position, entities[0].Hp);
+                recompute.Add(entities[1].Id, entities[1].Position, entities[1].Hp);
+                recompute.SetTick(0);
+
+                // ⚠️ 复算的步数必须 == **服务端真的广播了几帧**（这里是 `frames.Count`，不是 `framesToRun`）：
+                //    第一版我写死 `framesToRun`(6)，而服务端广播了 7 帧（第 7 帧连 alice 也缺输入）
+                //    ⇒ 对账那条红，**红的是我的算术不是产品**。这条注释留着免得下次再犯。
+                for (int f = 0; f < frames.Count; f++)
+                {
+                    // 前 `framesToRun` 帧 alice 朝 +X 走；之后她也没再交 ⇒ 默认输入（不动）
+                    FixVector3 move = f < framesToRun ? new FixVector3(1, 0, 0) : FixVector3.Zero;
+
+                    var stepInputs = new List<SimInput>
+                    {
+                        new SimInput { EntityId = entities[0].Id, MoveDirection = move, AttackTargetId = 0 },
+                        new SimInput { EntityId = entities[1].Id, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                    };
+
+                    WorldStep.Step(recompute, stepInputs, 1);
+                }
+
+                ulong lastHash = frames.Count == 0 ? 0UL : frames[frames.Count - 1].ServerHash;
+
+                Check("§S4c2⭐ 对账：最后一帧广播里的 `server_hash` == **独立复算**出来的世界哈希",
+                    frames.Count > 0 && lastHash == WorldStateHash.Compute(recompute),
+                    "广播 " + lastHash + " vs 独立算 " + WorldStateHash.Compute(recompute));
+
+                // ---- 失败路径（**各自**断言，且都有上面的阳性对照）----
+                DispatchResult dup = h.Router.Dispatch(mine, new ClientMessage
+                {
+                    LockstepInput = new LockstepInput { Frame = 0, Seq = 99, MoveXRaw = 0, MoveYRaw = 0 }
+                });
+
+                Check("§S4c2⭐ 失败①：**重复帧** ⇒ 回 `ErrorResponse` 且原因可读",
+                    dup.Reply != null && dup.Reply.Error != null && dup.Reply.Error.Message.Contains("拒绝"),
+                    dup.Reply == null || dup.Reply.Error == null
+                        ? "没回错误（静默了）"
+                        : ("code=" + dup.Reply.Error.Code + "；" + dup.Reply.Error.Message));
+
+                DispatchResult negative = h.Router.Dispatch(mine, new ClientMessage
+                {
+                    LockstepInput = new LockstepInput { Frame = -3, Seq = 1, MoveXRaw = 0, MoveYRaw = 0 }
+                });
+
+                Check("§S4c2⭐ 失败②：**帧号为负** ⇒ 回 `ErrorResponse` 且**点名那个帧号**",
+                    negative.Reply != null && negative.Reply.Error != null &&
+                    negative.Reply.Error.Message.Contains("-3"),
+                    negative.Reply == null || negative.Reply.Error == null
+                        ? "没回错误（静默了）"
+                        : negative.Reply.Error.Message);
+
+                Client guest = h.ConnectAndHandshake("游客锁步");
+                HandshakeAck guestAck = AckOf(guest, "游客握手");
+                ClientSession guestSession = h.Sessions[h.Sessions.Count - 1];
+
+                Check("§S4c2：阳性对照 —— 这个连接**确实是游客**（负 id）",
+                    guestAck.PlayerId <= 0, "player_id=" + guestAck.PlayerId);
+
+                DispatchResult asGuest = h.Router.Dispatch(guestSession, new ClientMessage
+                {
+                    LockstepInput = new LockstepInput { Frame = 0, Seq = 1, MoveXRaw = 0, MoveYRaw = 0 }
+                });
+
+                Check("§S4c2⭐ 失败③：**游客** ⇒ 回 `ErrorResponse`、用**身份**码、说明不能参与",
+                    asGuest.Reply != null && asGuest.Reply.Error != null &&
+                    asGuest.Reply.Error.Code == NBC.Shared.Net.NetErrors.PlayerMismatch &&
+                    asGuest.Reply.Error.Message.Contains("游客"),
+                    asGuest.Reply == null || asGuest.Reply.Error == null
+                        ? "没回错误（静默了）"
+                        : ("code=" + asGuest.Reply.Error.Code + "；" + asGuest.Reply.Error.Message));
+
+                Check("§S4c2：拒绝计数如实（三条失败都记上了）",
+                    service.RejectedInputs >= 3, "RejectedInputs=" + service.RejectedInputs);
+
+                Check("§S4c2：**单飞闸一次都没挡**（主循环单线程 ⇒ 正常应恒为 0）",
+                    service.GuardBlocked == 0, "GuardBlocked=" + service.GuardBlocked + "；" + service.Describe());
+            }
         }
 
         private static QuestTables LoadQuestTables()
