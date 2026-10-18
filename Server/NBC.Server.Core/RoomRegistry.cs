@@ -37,6 +37,7 @@
 //  副本进度），只需要改这一个地方，**而且编译器会提醒你漏了字段**。
 // ============================================================================
 
+using System;
 using System.Collections.Generic;
 using NBC.Protocol;
 using NBC.Shared.Net;
@@ -402,13 +403,23 @@ public sealed class RoomRegistry
 {
     private readonly Dictionary<string, Room> _rooms = new(System.StringComparer.Ordinal);
     private readonly int _capacity;
+    private readonly Func<int, bool>? _dungeonExists;
     private int _nextRoomNumber = 1;
 
     /// <summary>建一张房间表。</summary>
     /// <param name="capacity">每房容量（默认 `NetContract.MaxRoomMembers`）。</param>
-    public RoomRegistry(int capacity = NetContract.MaxRoomMembers)
+    /// <param name="dungeonExists">
+    /// 「这个副本编号在 `Dungeon` 配置表里吗」（P0，§三十六）。
+    /// <para>⚠️ **为什么是注入而不是直接查表**：本类在 `NBC.Server.Core`（**纯规则、不认识配置表**
+    /// —— 读了 `ServerTables` 就得让 Core 引 Game，那会反过来）。配置表在 `NBC.Server.Game`，
+    /// 由**组合根**（Host 与探针）把谓词递进来，与 `IQuestRewardSink`「该不该发 / 怎么发分开」同一个套路。</para>
+    /// <para>⚠️ **留空 = 不校验**（既有纯房间规则用例全都这么建 ⇒ 零行为变化）。
+    /// 生产路径（Host / 探针 Harness）必须传 —— 不传就等于「未知副本号又能一路走到建战斗世界那一步」。</para>
+    /// </param>
+    public RoomRegistry(int capacity = NetContract.MaxRoomMembers, Func<int, bool>? dungeonExists = null)
     {
         _capacity = capacity <= 0 ? NetContract.MaxRoomMembers : capacity;
+        _dungeonExists = dungeonExists;
     }
 
     /// <summary>现在有几个房间。</summary>
@@ -464,11 +475,15 @@ public sealed class RoomRegistry
     }
 
     /// <summary>
-    /// 进房。三种拒绝都有明确原因（见 `RoomJoinResult`）。
+    /// 进房。四种拒绝都有明确原因（见 `RoomJoinResult`）。
     /// <para>
     /// 语义（`JoinRoomRequest.room_id` 的两种用法）：
     /// · **给了房号** → 必须是已存在的房间，且没满
     /// · **留空** → 找一个"同副本且没满"的房间加入；没有就**开一个新的**
+    /// </para>
+    /// <para>
+    /// ⚠️ P0（§三十六）：**留空**这条路还要先过一道「副本号在 `Dungeon` 表里吗」——
+    /// 不在就回 `DungeonNotFound`（不建房、不进房）。这是**唯一**新增的拒绝。
     /// </para>
     /// </summary>
     /// <param name="session">会话。</param>
@@ -502,6 +517,23 @@ public sealed class RoomRegistry
         }
         else
         {
+            // ⚠️ P0（Docs\27 §三十六）：**在建房之前**校验副本号 —— 不在 `Dungeon` 表里就**根本不建**。
+            //    为什么必须拒绝在**这一层**：
+            //      · 这里是**信息最全**的地方（谁在请求、要哪个副本，都还在手上）；
+            //      · 再往下走，副本号会被 `Room` 记住，直到 `RoomBattleService` 建战斗世界时才查出来
+            //        —— 而那里是**每帧都在跑的主循环**：异常抛出去就是整个 Host 进程死（已实测，
+            //        任何人发一个坏副本号就能做到）。
+            //    语义有没有变：**只多了一条拒绝**（未知副本 ⇒ `DungeonNotFound` + 人话原因，不建房、不进房）；
+            //    合法副本（表里有的，例如默认 1001）走的还是下面同样的两行，**一行未改**。
+            //    ⚠️ 只校验「要新开一个房间」这条路：带房号进已有房间时，副本号是**那个房间的**
+            //       （建房那一刻已经校验过），请求里的 `dungeonId` 本来就不参与决策（既有语义，别改）。
+            if (IsUnknownDungeon(dungeonId))
+            {
+                return RoomJoinResult.Rejected(
+                    NetErrors.DungeonNotFound,
+                    $"副本 {dungeonId} 不存在（`Dungeon` 表里没有这一行）");
+            }
+
             target = FindJoinableRoom(dungeonId);
 
             if (target == null)
@@ -545,6 +577,16 @@ public sealed class RoomRegistry
 
         return room;
     }
+
+    /// <summary>
+    /// 这个副本编号**不在** `Dungeon` 配置表里吗（P0，§三十六）。
+    /// <para>⚠️ **没接谓词 ⇒ 一律返回 false（= 不拦）**：那是既有纯房间规则用例的建法
+    /// （它们根本拿不到配置表），拦住它们就成了「为了修一个洞而拆一堆用例」。</para>
+    /// </summary>
+    /// <param name="dungeonId">副本编号。</param>
+    /// <returns>确实不在表里返回 true。</returns>
+    private bool IsUnknownDungeon(int dungeonId)
+        => _dungeonExists != null && !_dungeonExists(dungeonId);
 
     /// <summary>找一个"同一个副本、还没满"的房间（没有就返回 null）。</summary>
     /// <param name="dungeonId">副本编号。</param>

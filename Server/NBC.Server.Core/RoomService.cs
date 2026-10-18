@@ -142,6 +142,12 @@ public sealed class RoomService
         if (!result.Ok)
         {
             // 拒绝了：回一条**说清原因**的 ErrorResponse（见文件头第二节）
+            // ⚠️ 顺手记一行：拒绝是**故障侧**的事实，所以它和下面「进入房间」那句是**两句不同的话**
+            //    （§三十六 的日志规矩：同一句日志不许同时表示正常和故障）。
+            //    没有这一行，「客户端说进不去、服务端日志全是正常」就只能靠猜。
+            Note?.Invoke($"玩家 {session.PlayerId}（{session.PlayerName}）进房被拒" +
+                         $"（{result.ErrorCode}）：{result.Reason}");
+
             return DispatchResult.ReplyWith(Error(result.ErrorCode, result.Reason!));
         }
 

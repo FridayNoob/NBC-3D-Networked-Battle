@@ -34,8 +34,7 @@ using NBC.Protocol;
 using NBC.Framework.Log;        // SRV-14：日志（**与客户端编同一份源码**，见 NBC.Server.Core.csproj）
 using NBC.Server.Core;
 using NBC.Server.Data;          // SRV-13：战绩落库（`BattleRecordDao` / `BattleRecordWriter`）
-using NBC.Server.Game;
-using NBC.Shared.Sim;      // M4-S4 S4-c：`LockstepRoster`（按 player_id 升序生成开局实体表）          // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）
+using NBC.Server.Game;      // S5：`RoomBattleService`（权威世界 + 每 tick 快照下发）；S4-e：`LockstepService` / `RoomSetup`
 using NBC.Shared;
 using NBC.Shared.Net;
 
@@ -326,7 +325,13 @@ internal static class Program
         router.Register(ClientMessage.PayloadOneofCase.Ping, HandlePing);
 
         // 房间与席位（S4）：规则在 `RoomRegistry`，接线与广播在 `RoomService`
-        var rooms = new RoomService(transport, new RoomRegistry());
+        // ⚠️ P0（§三十六）：把「这个副本号在 `Dungeon` 表里吗」这句**注入**给房间表 ——
+        //    于是**进房那一步**就拒掉未知副本（`DungeonNotFound` + 人话原因），
+        //    而不是等 `RoomBattleService` 建战斗世界时才发现（那时异常抛在主循环里 ⇒ 整个 Host 死）。
+        //    ⚠️ 为什么是注入：`NBC.Server.Core` 是纯规则、**不引** `NBC.Server.Game`（配置表在那儿）
+        //    ⇒ 由这个组合根把谓词递进去；不传 = 不校验（只有纯房间规则用例会这么建）。
+        var rooms = new RoomService(transport, new RoomRegistry(
+            dungeonExists: id => tables.FindDungeon(id) != null));
         rooms.RegisterHandlers(router);
         rooms.Note += line => Log(quiet, "[房间] " + line);
 
@@ -540,23 +545,12 @@ internal static class Program
                 //    **"帧号在推进"这条判据对负责人真能验到**（否则他只会看到"未创建"）。
                 // ⚠️ 机器人只走"房间表"这一层（`ToState` 下发 + `RosterIds` 开局名单），
                 //    **状态同步链（`RoomBattleService` 等）遍历的是 `Seats` ⇒ 对它们不可见** ⇒ 零改动。
-                if (fillSeats > 0)
-                {
-                    foreach (Room fillRoom in rooms.Registry.Rooms)
-                    {
-                        if (fillRoom.SeatCount == 0)
-                        {
-                            continue;   // 没有真人 ⇒ 不补（别凭空把空房间填满）
-                        }
-
-                        // ⚠️ 编号用**保留段** `Room.BotIdBase` 起，且只在本房内唯一
-                        //    （队伍映射与锁步世界都是**按房**算的 ⇒ 跨房重号无害）
-                        for (int slot = fillRoom.SeatCount + fillRoom.BotCount; slot < fillSeats; slot++)
-                        {
-                            fillRoom.AddBot(Room.BotIdBase + slot, "Bot" + slot);
-                        }
-                    }
-                }
+                // ⚠️ P0（§三十六）：这两段**搬到 `RoomSetup`** 了 —— 判据、顺序、日志一个字没变，
+                //    唯一理由是让**探针能验到同一份代码**（原来它是进程入口里的内联循环，探针够不到，
+                //    于是「补席位 ⇒ 满员 ⇒ 锁步开局」这条只能靠人工步骤）。
+                //    ⚠️ 搬过来时补了一处**漏播**：名单变了要整份下发席位表（`FillSeats` 里广播）——
+                //       不播的话客户端手里的名单还是"只有我一个"，与服务端开局名单不同 ⇒ 假分歧。
+                RoomSetup.FillSeats(rooms, fillSeats);
 
                 // ---- ②′ 锁步：同一格里推进（每 tick **一次**）----------------
                 // ⚠️ **不要**在外面套 `while`：`LockstepService.Tick()` 内部已按房间各调一次
@@ -568,19 +562,7 @@ internal static class Program
                 //       这里只是**消费**它，不再自己判满员（否则就是两处规则）。
                 //    "只开局一次"的闸在 `LockstepService.StartRoom` 里（调用方会忘，闸不会忘）；
                 //    `HasRoom` 是第二道闸：**先问再开**，免得每 tick 去撞里面的闸刷计数。
-                foreach (Room lockstepRoom in rooms.Registry.Rooms)
-                {
-                    if (lockstepRoom.Phase != RoomPhase.Running || lockstep.HasRoom(lockstepRoom.RoomId))
-                    {
-                        continue;
-                    }
-
-                    // ⭐ 用 `RosterIds`（真人 + 机器人）—— **必须与 `ToState()` 下发给客户端的
-                    //    那份名单是同一个集合**，否则两端用同一个纯函数推出**不同**的队伍
-                    //    ⇒ 客户端报"分歧"（假警报，很难查）。探针里有专门一条断言这个等式。
-                    lockstep.StartRoom(
-                        lockstepRoom.RoomId, LockstepRoster.Build(lockstepRoom.RosterIds), lockstepDelayTicks);
-                }
+                RoomSetup.StartLockstepForRunningRooms(lockstep, rooms.Registry, lockstepDelayTicks);
 
                 lockstep.Tick();
             }

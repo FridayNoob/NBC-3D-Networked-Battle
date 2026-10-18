@@ -7,6 +7,10 @@
 //  一、它每逻辑帧做五件事（顺序有意义）
 //  ---------------------------------------------------------------------------
 //      ① **收拾**：房间没了（人都走了）就把它的战斗世界删掉
+//
+//  ⚠️ P0（Docs\27 §三十六）：副本号不在 `Dungeon` 表里的房间**开不了**。它是一个
+//     **房间级失败**（记一行只在故障时出现的日志 + 记进 `_unopenable` + 本帧及以后跳过），
+//     **不是异常** —— 这个方法跑在主循环里，异常抛出去就是整个 Host 进程死。
 //      ② **对齐**：让"房间席位"和"世界里的英雄"对上 —— 缺的补、走的删（`ReconcileHeroes`）
 //      ③ **吃输入**：把每个玩家最近一条输入应用到他的英雄上（**移动是状态**）
 //      ④ **推进**：`DungeonBattle.Step()` 走一帧
@@ -83,6 +87,17 @@ public sealed class RoomBattleService
     private readonly RoomRegistry _registry;
     private readonly ServerTables _tables;
     private readonly Dictionary<string, DungeonBattle> _battles = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// **开不了的房间**（副本号不在 `Dungeon` 表里）：记在这里 ⇒ 从推进里摘掉、也不重复刷日志。
+    /// <para>⚠️ P0（Docs\27 §三十六）：这条失败原来写成 `throw`，而它的调用点在**主循环**里
+    /// ⇒ 客户端发一个坏副本号就能让整个 Host 进程死（已实测，异常原文在主循环栈上）。
+    /// 也**不能**改成「静默开一个空世界」：那会表现成「进去什么都没有」，极难查。
+    /// ⇒ 房间级失败：一行**只在故障时出现**的日志 + 记进本表 + 不再推进这一步。
+    /// </para>
+    /// <para>⚠️ 房间空了要跟着清（见 `DropBattlesOfDeadRooms`）—— 否则这张表只涨不落。</para>
+    /// </summary>
+    private readonly HashSet<string> _unopenable = new(StringComparer.Ordinal);
 
     /// <summary>取掉落事件用的缓冲（每帧复用，避免每帧分配）。</summary>
     private readonly List<DropEvent> _dropBuffer = new();
@@ -164,6 +179,12 @@ public sealed class RoomBattleService
 
     /// <summary>现在有几个战斗世界。</summary>
     public int BattleCount => _battles.Count;
+
+    /// <summary>
+    /// 现在有几个**开不了**的房间（副本号不在 `Dungeon` 表里）。**正常恒为 0** —— 非 0 就是有房间
+    /// 走过了进房校验（那种房间已被摘出推进，见 `_unopenable`）。
+    /// </summary>
+    public int UnopenableRoomCount => _unopenable.Count;
 
     /// <summary>累计推进了多少逻辑帧（= 发了多少轮快照）。</summary>
     public long TicksRun { get; private set; }
@@ -255,7 +276,16 @@ public sealed class RoomBattleService
                 continue;       // 没人看的世界不用推进（房间会在离开时被删，这里只是兜底）
             }
 
-            DungeonBattle battle = EnsureBattle(room);
+            DungeonBattle? battle = EnsureBattle(room);
+
+            if (battle == null)
+            {
+                // ⚠️ P0（§三十六）：这个房间的副本号不在 `Dungeon` 表里 ⇒ **房间级失败**。
+                //    已经记过一行日志、也已经记进 `_unopenable` ⇒ 这里只是**不再推进**它。
+                //    ⚠️ 绝不能让失败往上抛：本方法跑在主循环里，抛出去 = 整个 Host 死。
+                //    也绝不「照常推一个空世界」：那会表现成「进去什么都没有」，极难查。
+                continue;
+            }
 
             ReconcileHeroes(battle, room);      // ② 先让"席位"与"英雄"对上，再吃输入
             ApplyInputs(battle, room);          // ③ 移动是状态：每帧用最新那条
@@ -273,8 +303,10 @@ public sealed class RoomBattleService
     /// 取这个房间的战斗世界（第一次调用时按 `DungeonId` 建一局）。
     /// </summary>
     /// <param name="room">房间。</param>
-    /// <returns>世界。</returns>
-    public DungeonBattle EnsureBattle(Room room)
+    /// <returns>
+    /// 世界；**副本号不在 `Dungeon` 表里时返回 null**（房间级失败，见 `_unopenable`）。
+    /// </returns>
+    public DungeonBattle? EnsureBattle(Room room)
     {
         DungeonBattle? existing;
 
@@ -283,13 +315,25 @@ public sealed class RoomBattleService
             return existing;
         }
 
+        if (_unopenable.Contains(room.RoomId))
+        {
+            // 已经判过「这个房间开不了」了：别每帧再记一遍同一句日志（刷屏比没日志更害人）
+            return null;
+        }
+
         DungeonBattle? built = DungeonBattle.FromDungeon(room.RoomId, room.DungeonId, _tables, out string error);
 
         if (built == null)
         {
-            // 副本人不在表里：**不静默开一个空世界**（那会表现成"进去什么都没有"，极难查）
-            Note?.Invoke($"房间 {room.RoomId} 开不了：{error}");
-            throw new InvalidOperationException($"[RoomBattleService] 房间 {room.RoomId} 开不了：{error}");
+            // 副本人不在表里：**不静默开一个空世界**（那会表现成「进去什么都没有」，极难查），
+            // 也**不 `throw`** —— P0（§三十六）：这一句原来抛的是 `InvalidOperationException`，
+            // 而调用点在**主循环** ⇒ 一个坏副本号就能打挂整个 Host（已实测）。
+            // ⇒ 改成**房间级失败**：一行只在故障时出现的日志 + 记进 `_unopenable` + 调用方跳过它。
+            // ⚠️ 日志规矩：这句只在「开不了」时出现，正常开局那句是「开打」 —— 两者不许混用。
+            _unopenable.Add(room.RoomId);
+            Note?.Invoke($"房间 {room.RoomId} 判定为开不了：{error}（副本 {room.DungeonId}）；" +
+                         "已把该房间从推进里摘掉，服务端继续运行");
+            return null;
         }
 
         DungeonBattle battle = built;
@@ -433,7 +477,16 @@ public sealed class RoomBattleService
             return DispatchResult.Handled;
         }
 
-        DungeonBattle battle = EnsureBattle(room);
+        DungeonBattle? battle = EnsureBattle(room);
+
+        if (battle == null)
+        {
+            // 这个房间开不了（副本号不在 `Dungeon` 表里，见 `_unopenable`）⇒ 没有世界可应用。
+            // ⚠️ **不回 ErrorResponse**：客户端那份世界同样不存在，回错误只会变成「按住键就每帧一条」
+            //    （文件头第三节那条规矩：由世界状态决定的拒绝只记日志）。
+            // ⚠️ 也**不再记日志**：失败那一行已经在 `EnsureBattle` 里记过一次了。
+            return DispatchResult.Handled;
+        }
 
         // ② 移动：只记最新的那条；钳位是**不信任客户端**的第一道门
         _inputs[input.PlayerId] = new PendingInput(
@@ -741,7 +794,7 @@ public sealed class RoomBattleService
 
     private void DropBattlesOfDeadRooms()
     {
-        if (_battles.Count == 0)
+        if (_battles.Count == 0 && _unopenable.Count == 0)
         {
             return;
         }
@@ -758,18 +811,41 @@ public sealed class RoomBattleService
             }
         }
 
-        if (dead == null)
+        if (dead != null)
         {
-            return;
+            for (int i = 0; i < dead.Count; i++)
+            {
+                _battles.Remove(dead[i]);
+                _recorded.Remove(dead[i]);      // ⚠️ 一起清：房号是**递增复用**的（r1、r2…），
+                                                //    留着旧记录会让「以后某个也叫 r1 的房间」被误判成交过了
+                BattlesDropped++;
+                Note?.Invoke($"房间 {dead[i]} 已经没人了，战斗世界已回收");
+            }
         }
 
-        for (int i = 0; i < dead.Count; i++)
+        // ⚠️ P0（§三十六）：`_unopenable` 也要跟着房间回收，否则那张表只涨不落。
+        //    这里**不记日志**：房间被回收是正常收尾，而「开不了」那一条故障日志已经在
+        //    `EnsureBattle` 里记过了（日志规矩：同一句不许同时表示正常和故障）。
+        if (_unopenable.Count > 0)
         {
-            _battles.Remove(dead[i]);
-            _recorded.Remove(dead[i]);      // ⚠️ 一起清：房号是**递增复用**的（r1、r2…），
-                                            //    留着旧记录会让"以后某个也叫 r1 的房间"被误判成交过了
-            BattlesDropped++;
-            Note?.Invoke($"房间 {dead[i]} 已经没人了，战斗世界已回收");
+            List<string>? gone = null;
+
+            foreach (string roomId in _unopenable)
+            {
+                if (_registry.Find(roomId) == null)
+                {
+                    gone ??= new List<string>();
+                    gone.Add(roomId);
+                }
+            }
+
+            if (gone != null)
+            {
+                for (int i = 0; i < gone.Count; i++)
+                {
+                    _unopenable.Remove(gone[i]);
+                }
+            }
         }
     }
 

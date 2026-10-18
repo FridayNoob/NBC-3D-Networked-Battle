@@ -53,6 +53,16 @@ namespace NBC.Shared.Net
         /// </summary>
         public const int QuestRejected = 1006;
 
+        /// <summary>
+        /// 进房请求里的**副本编号不在 `Dungeon` 配置表里**（P0，§三十六）。
+        /// <para>⚠️ 与「房间不存在」**必须分开**：1003 是「这个房号没有」，1007 是「这个副本不存在」。
+        /// 混成一个码，客户端会提示「房间不存在」，而真正的问题是**客户端发了一个坏副本号**
+        /// —— 排查方向会被这句话直接带偏。</para>
+        /// <para>⭐ 这条拒绝是**服务端防护的一部分**：不校验就得等到建战斗世界时才发现，
+        /// 而那时异常已经抛在主循环里 ⇒ 一个坏副本号能把整个 Host 打挂。</para>
+        /// </summary>
+        public const int DungeonNotFound = 1007;
+
         /// <summary>把错误码说成人话（服务端兜底用；正常情况下服务端会给出更具体的一句）。</summary>
         /// <param name="code">错误码。</param>
         /// <returns>人话。</returns>
@@ -72,6 +82,8 @@ namespace NBC.Shared.Net
                     return "服务端现在不能处理任务动作";
                 case QuestRejected:
                     return "任务动作被拒绝";
+                case DungeonNotFound:
+                    return "副本不存在";
                 default:
                     return "未知错误（" + code + "）";
             }

@@ -262,6 +262,10 @@ namespace NBC.NetProbe
             RoomBots_FillSeats();
 
             Console.WriteLine();
+            Console.WriteLine("【三十三】P0（§三十六）：**未知副本号打不挂服务端** + 合法副本照常开打 + 补席位 ⇒ 锁步开局");
+            RoomGuard_UnknownDungeonNeverKillsTheHost();
+
+            Console.WriteLine();
             Console.WriteLine("【S4e3】端到端：`NetSession` + **真 `TcpTransport`** 连**真 Host**（默认不启用）");
             EndToEnd_LockstepOverRealSocket(
                 Array.IndexOf(args, "--e2e") >= 0, ReadIntArg(args, "--e2e-port", 9000));
@@ -6105,6 +6109,233 @@ namespace NBC.NetProbe
         }
 
         /// <summary>
+        /// 【三十三】**P0（Docs\27 §三十六）：未知副本号不许打挂服务端**。
+        ///
+        /// <para>现场（负责人真 Host 的逐字输出）：客户端进房时发 `dungeon_id=0` ⇒
+        /// `RoomBattleService.EnsureBattle` 建世界时 `throw` ⇒ **异常抛在主循环里 ⇒ 整个 Host 进程死**。
+        /// 任何人发一个坏副本号就能做到 ⇒ 所以这一节验**两段**，缺一段都不算修好：</para>
+        /// <para>① **进房那一步就拒**（`ErrorResponse` + 可读原因，不建房、不进房）；
+        /// ⭐ 而且判据不是「回了错误」，是「**服务端还活着**」：同一条连接随后 Ping 仍收到 Pong。</para>
+        /// <para>② 万一有房间**绕过了**那道校验（修之前建出来的、或将来别处新建的），
+        /// `RoomBattleService` 也只做到**房间级失败**（摘掉、不崩），**不静默开空世界**
+        /// —— 两条都要守：崩了是 P0，静默开空世界是「进去什么都没有」那种极难查的假故障。</para>
+        /// <para>⚠️ 断言全部用协议消息 / 对象状态（W26），不抓日志中文。</para>
+        /// <para>⚠️ 这一节**不连真 Host**（不用 `--e2e`）：它跑在探针进程内的生产类上，
+        /// 所以「服务端还活着」= 同一条 socket 连接还能问出 Pong。</para>
+        /// </summary>
+        private static void RoomGuard_UnknownDungeonNeverKillsTheHost()
+        {
+            // ================================================================
+            //  ① 进房那一步：未知副本号 ⇒ ErrorResponse，且**服务端还活着**
+            // ================================================================
+            using (var h = new Harness())
+            {
+                Client bad = h.ConnectAndHandshake("坏副本号");
+
+                bad.JoinRoom(string.Empty, 0);      // ⚠️ 0 = `Dungeon` 表里没有的那一行
+                h.WaitUntil(() => bad.LastError() != null, "未知副本号的拒绝答复");
+
+                ErrorResponse rejected = bad.LastError();
+
+                Check("§P0⭐ 未知副本号（0）进房 ⇒ 收到 `ErrorResponse`，且原因**可读**（有副本号、说「不存在」）",
+                    rejected != null && rejected.Code == NetErrors.DungeonNotFound
+                    && rejected.Message != null && rejected.Message.Contains("0")
+                    && rejected.Message.Contains("不存在"),
+                    rejected == null
+                        ? "一条错误都没收到（服务端可能已经死了）"
+                        : "code=" + rejected.Code + "，message=" + rejected.Message);
+
+                Check("§P0⭐ 被拒之后**什么都没建**：房间数 0、一份席位表都没收到",
+                    h.Registry.RoomCount == 0 && bad.LastRoom() == null,
+                    "房间数=" + h.Registry.RoomCount +
+                    "；收到的席位表=" + (bad.LastRoom() == null ? "无" : bad.LastRoom().Members.Count + " 人"));
+
+                // ⭐⭐ 这条才是「打不死」的判据：前面那条只证明「回了错误」，
+                //    证明不了「进程还活着」（抛异常也可能在回包之后才发生）。
+                bad.Send(new ClientMessage { Ping = new Ping { ClientTimeMs = 424242 } });
+                h.WaitUntil(() => bad.FindPong() != null, "被拒之后的心跳答复");
+
+                Pong pong = bad.FindPong();
+
+                Check("§P0⭐⭐ **服务端还活着**：同一条连接随后 Ping ⇒ 收到 Pong（一个坏副本号打不死它）",
+                    pong != null && pong.ClientTimeMs == 424242 && bad.Transport.IsConnected,
+                    pong == null
+                        ? "没收到 Pong（服务端多半已经死了）"
+                        : "client_time=" + pong.ClientTimeMs + "；stillConnected=" + bad.Transport.IsConnected);
+
+                // ⭐ 把**实际收到的原文**打出来（给负责人对照「原因到底长什么样」，失败时也看得到）
+                Console.WriteLine("  [观察] 未知副本的拒绝答复：code=" +
+                                  (rejected == null ? "（没收到）" : rejected.Code + "，message=" + rejected.Message) +
+                                  "；随后 Ping ⇒ client_time=" +
+                                  (pong == null ? "（没收到 Pong）" : pong.ClientTimeMs.ToString()));
+
+                // ---- 阳性对照：**同一条连接**改发合法副本 1001 ⇒ 照常建起来、照常开打 ----
+                bad.JoinRoom(string.Empty, 1001);
+                h.WaitUntil(() => bad.LastRoom() != null, "合法副本的席位表");
+                h.TickBattles(3);
+
+                DungeonBattle opened = h.BattleOf(bad);
+
+                Check("§P0⭐ 阳性对照：合法副本 1001 ⇒ 进房成功、战斗世界照常开（副本号对、活怪数对、有快照）",
+                    opened != null && opened.DungeonId == 1001
+                    && opened.AliveMonsterCount == MonstersInDungeon(h, 1001)
+                    && bad.SnapshotCount() > 0,
+                    "世界=" + (opened == null ? "没建" : "副本 " + opened.DungeonId) +
+                    "；活怪=" + (opened == null ? -1 : opened.AliveMonsterCount) +
+                    "（表里 " + MonstersInDungeon(h, 1001) + "）；快照=" + bad.SnapshotCount() +
+                    "；最后一次错误=" + (bad.LastError() == null ? "无" : bad.LastError().Message));
+
+                // ============================================================
+                //  ② 房间级失败：**绕过进房校验**造一个坏房间 ⇒ 不崩、摘掉、不连累别人
+                //     ⚠️ `RoomRegistry.Create` 是「直接建」（校验在 `Join` 里）⇒ 正好用来
+                //        模拟「修之前建出来的坏房间」，证明第二道闸真的在。
+                // ============================================================
+                Room broken = h.Registry.Create(0);
+                broken.Add(h.Sessions[h.Sessions.Count - 1], "坏房间里的玩家");
+
+                int snapshotsBefore = bad.SnapshotCount();
+                bool threw = false;
+                string throwText = string.Empty;
+
+                try
+                {
+                    h.TickBattles(3);       // ⚠️ 包起来：变异（把 throw 放回去）时**要能读出红**，别让探针自己崩掉
+                }
+                catch (Exception ex)
+                {
+                    threw = true;
+                    throwText = ex.GetType().Name + "：" + ex.Message;
+                }
+
+                Check("§P0⭐ 坏房间在推进里 ⇒ **不抛异常**（房间级失败，不是进程级）",
+                    !threw, threw ? "抛了：" + throwText : "没抛（正确）");
+
+                Check("§P0⭐ 坏房间**被摘掉**：没有战斗世界、且计入 `UnopenableRoomCount`（不静默开空世界）",
+                    h.Battles.Find(broken.RoomId) == null && h.Battles.UnopenableRoomCount == 1,
+                    "世界=" + (h.Battles.Find(broken.RoomId) == null ? "没建" : "居然建了") +
+                    "；开不了计数=" + h.Battles.UnopenableRoomCount);
+
+                Check("§P0⭐ **失败不连累别人**：同一批 Tick 里合法房间的快照**照常在涨**",
+                    bad.SnapshotCount() > snapshotsBefore,
+                    "快照 " + snapshotsBefore + " → " + bad.SnapshotCount());
+            }
+
+            // ================================================================
+            //  ③ 合法副本 + `--fill-seats` 那条路：补席位 ⇒ 满员 ⇒ Running ⇒ 锁步**真的**开局
+            //     ⚠️ 这里调的是 `RoomSetup`（**Host 主循环用的就是它**）——
+            //        不是探针自己抄一段，否则验的是抄本（§三十六 就是为了这个把两段搬出来的）。
+            // ================================================================
+            using (var h = new Harness(accounts: new FakeAccounts()))
+            {
+                var lockstep = new LockstepService(h.Server, h.Registry);
+                lockstep.RegisterHandlers(h.Router);
+
+                // ⚠️ **必须用真登录（不是游客）**：`LockstepRoster.Build` 会把**非正数编号**
+                //    （= 游客）**跳过**（见那个类的文件头第二节）⇒ 游客进房只能得到 3 个机器人实体，
+                //    「实体数 = 4」那条就验不到「真人也在开局名单里」。这是 W15（登录 ⇒ 正数编号）的现场。
+                Client solo = h.ConnectAndLogin("alice", "pw-alice");
+                HandshakeAck soloAck = AckOf(solo, "alice 登录");
+
+                Check("§P0：阳性对照 —— 单排是**真登录**（playerId > 0，否则下面「实体数 4」验不到真人）",
+                    soloAck != null && soloAck.Accepted && soloAck.PlayerId > 0,
+                    soloAck == null ? "没收到握手答复" : Describe(soloAck));
+
+                solo.JoinRoom(string.Empty, 1001);
+                h.WaitUntil(() => solo.LastRoom() != null, "单排进房");
+
+                Room room = h.Registry.Find(solo.RoomId);
+
+                if (room == null)
+                {
+                    Check("§P0：阳性对照 —— 单排拿到了房间（拿不到就无从补席位）", false,
+                        "房号=" + (solo.RoomId ?? "无"));
+                    return;
+                }
+
+                // ⚠️ 顺序**必须与 Host 主循环一致**（`Program.cs` 的 ②″/②′/锁步 tick）：
+                //    状态同步链推进 → 补席位 → 相位消费（开局）→ 锁步推进。
+                for (int tick = 0; tick < 12; tick++)
+                {
+                    h.TickBattles(1);
+                    RoomSetup.FillSeats(h.Rooms, 4);                                        // ≈ `--fill-seats=4`
+                    RoomSetup.StartLockstepForRunningRooms(lockstep, h.Registry, 2);        // 相位 ⇒ 开一局
+                    lockstep.Tick();
+                }
+
+                h.PumpFor(50);      // 把最后几帧泵回客户端
+
+                Check("§P0⭐ 合法副本 1001 + 补席位 ⇒ **满员 4/4 ⇒ `RoomPhase.Running`**（1 真人 + 3 机器人）",
+                    room.IsFull && room.Phase == RoomPhase.Running
+                    && room.SeatCount == 1 && room.BotCount == 3,
+                    "满=" + room.IsFull + "；相位=" + room.Phase +
+                    "；真人=" + room.SeatCount + "；机器人=" + room.BotCount);
+
+                Check("§P0⭐ 锁步**真的开局**了（不只是相位变了）：`HasRoom` 为真、服务端广播了帧",
+                    lockstep.HasRoom(room.RoomId) && lockstep.BroadcastFrames >= 3,
+                    "HasRoom=" + lockstep.HasRoom(room.RoomId) +
+                    "；广播帧=" + lockstep.BroadcastFrames + "；" + lockstep.Describe());
+
+                // ⭐ 客户端手里的名单也必须是 4 人 —— 补席位**只加人、不下发**是个真坑：
+                //    服务端开局用 4 个（`RosterIds`）、客户端还是"只有我一个" ⇒ 两端队伍映射不同 ⇒ 假分歧。
+                //    （这条是 2026-09-28 真 Host 端到端实测抓到的；抓到时本节的 4 条**全绿** —— 见 §36.5）
+                RoomState seenBySolo = solo.LastRoom();
+
+                Check("§P0⭐ 补席位之后**席位表也下发到了客户端**（4 人名单 ⇒ 两端队伍映射同源）",
+                    seenBySolo != null && seenBySolo.Members.Count == 4 && seenBySolo.DungeonId == 1001,
+                    seenBySolo == null
+                        ? "一份席位表都没收到"
+                        : "名单人数=" + seenBySolo.Members.Count + "（期望 4），副本=" + seenBySolo.DungeonId);
+
+                LockstepStart start = FindLockstepStart(solo);
+
+                Check("§P0⭐ 客户端收到 `LockstepStart`，且**实体数 = 4**（真人在内 ⇒ 开局名单就是 `RosterIds`）",
+                    start != null && start.Entities != null && start.Entities.Count == 4,
+                    start == null ? "一条 start 都没收到" : "实体数=" + start.Entities.Count);
+
+                int frames = CountLockstepFrames(solo);
+                int lastFrame = LastLockstepFrame(solo);
+
+                Check("§P0⭐ 客户端**收到锁步帧**且在推进（帧号在涨）",
+                    frames >= 3 && lastFrame >= 2,
+                    "收帧数=" + frames + "；末帧=" + lastFrame);
+            }
+        }
+
+        /// <summary>收过几条 `lockstep_frame`（【三十三】用）。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>条数。</returns>
+        private static int CountLockstepFrames(Client client)
+        {
+            int count = 0;
+
+            for (int i = 0; i < client.Received.Count; i++)
+            {
+                if (client.Received[i].LockstepFrame != null)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>最后一条 `lockstep_frame` 的帧号（一条都没收到返回 -1）。</summary>
+        /// <param name="client">客户端。</param>
+        /// <returns>帧号。</returns>
+        private static int LastLockstepFrame(Client client)
+        {
+            for (int i = client.Received.Count - 1; i >= 0; i--)
+            {
+                if (client.Received[i].LockstepFrame != null)
+                {
+                    return client.Received[i].LockstepFrame.Frame;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
         /// 【S4e3】**端到端**：`NetSession` + **真 `TcpTransport`** 连**真 Host**（不直驱、不假传输）。
         ///
         /// <para>⚠️ 三态：**未启用** / **不可达** / **通过**。前两种都打
@@ -6158,7 +6389,10 @@ namespace NBC.NetProbe
                 session.PlayerId > 0, "playerId=" + session.PlayerId);
 
             // ---- ② 加入房间（房号留空 = 让服务端安排；`--fill-seats=4` 会补足到 4 席位）----
-            session.JoinRoom(string.Empty, 0);
+            // ⚠️ 副本号**必须是合法的 1001**（`Dungeon` 表里有的那行）。
+            //    原来这里写的是 `0` ⇒ 服务端建战斗世界时抛异常 ⇒ **整个 Host 死**，
+            //    这条端到端就「永远撞在崩溃上」（§三十六 P0 的现场证据就是这么来的）。
+            session.JoinRoom(string.Empty, 1001);
 
             // ---- ③ 等锁步开局 + ≥10 帧；总超时 60s（⚠️ 超时先打状态再失败）----
             clock.Restart();
@@ -6852,18 +7086,21 @@ namespace NBC.NetProbe
 
                 Router.Register(ClientMessage.PayloadOneofCase.Ping, HandlePing);
 
-                Registry = new RoomRegistry(roomCapacity);
-                Rooms = new RoomService(Server, Registry);
-                Rooms.RegisterHandlers(Router);
-                Rooms.Note += line => RoomNotes.Add(line);
-
                 // 配置表（S6）：副本阵容与数值都从表里来 —— 探针也读**真表**
+                // ⚠️ P0（§三十六）：读表**必须排在房间表之前** —— `RoomRegistry` 要拿
+                //    「这个副本号在 `Dungeon` 表里吗」这个谓词，接线方式与 Host 一模一样
+                //    （不传谓词 = 不校验 ⇒ 探针就验不到「未知副本会被拒」这条）。
                 string configDir;
                 if (!ServerTables.TryResolveConfigDir(out configDir) ||
                     !ServerTables.TryLoad(configDir, out Tables, out string tablesError))
                 {
                     throw new InvalidOperationException("探针读不到配置表：" + (configDir ?? "(没找到目录)"));
                 }
+
+                Registry = new RoomRegistry(roomCapacity, id => Tables.FindDungeon(id) != null);
+                Rooms = new RoomService(Server, Registry);
+                Rooms.RegisterHandlers(Router);
+                Rooms.Note += line => RoomNotes.Add(line);
 
                 Battles = new RoomBattleService(Server, Registry, Tables);
                 Battles.Note += line => RoomNotes.Add(line);
