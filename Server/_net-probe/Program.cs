@@ -261,6 +261,11 @@ namespace NBC.NetProbe
             Console.WriteLine("【三十二】M4-S4 S4-e：机器人席位（`--fill-seats` 的底座）+ **开局名单 == 下发名单**");
             RoomBots_FillSeats();
 
+            Console.WriteLine();
+            Console.WriteLine("【S4e3】端到端：`NetSession` + **真 `TcpTransport`** 连**真 Host**（默认不启用）");
+            EndToEnd_LockstepOverRealSocket(
+                Array.IndexOf(args, "--e2e") >= 0, ReadIntArg(args, "--e2e-port", 9000));
+
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
             return s_failed == 0 ? 0 : 1;
@@ -6097,6 +6102,205 @@ namespace NBC.NetProbe
                 Check("§S4e2⭐⭐：而且两端推出的**队伍映射逐项相同**（同一个 `SortedTeamMap` + 同一份名单）",
                     teamsSame, "两端队伍映射不一致 ⇒ 客户端会报假分歧");
             }
+        }
+
+        /// <summary>
+        /// 【S4e3】**端到端**：`NetSession` + **真 `TcpTransport`** 连**真 Host**（不直驱、不假传输）。
+        ///
+        /// <para>⚠️ 三态：**未启用** / **不可达** / **通过**。前两种都打
+        /// <c>[SKIP] 端到端：未启用/不可达 ⇒ 本节未验</c>，且**一条都不计入「通过」数**
+        /// （不许静默跳过，更不许算绿）。</para>
+        /// <para>⚠️ 断言**全部**用协议消息 / 对象状态，**不抓日志中文**（W26）。</para>
+        /// <para>⚠️ Host 由**外部**起：`NBC.Server.Host.exe --port=9000 --dev-accounts --fill-seats=4`。</para>
+        /// </summary>
+        /// <param name="enabled">是否带 `--e2e`。</param>
+        /// <param name="port">端口（`--e2e-port`，默认 9000）。</param>
+        private static void EndToEnd_LockstepOverRealSocket(bool enabled, int port)
+        {
+            const string skipLine = "[SKIP] 端到端：未启用/不可达 ⇒ 本节未验";
+
+            if (!enabled)
+            {
+                Console.WriteLine(skipLine);
+                Console.WriteLine("       （启用方式：先起 Host `NBC.Server.Host.exe --port=" + port +
+                                  " --dev-accounts --fill-seats=4`，再跑本探针加 `--e2e`）");
+                Console.WriteLine("端到端：**0 验 / 1 未验**（未计入通过数）");
+                return;
+            }
+
+            var transport = new TcpTransport();
+            var session = new NetSession(
+                transport, "e2e探针", "net-probe/e2e", account: "dev1", password: "dev-pw1");
+
+            var clock = new System.Diagnostics.Stopwatch();
+            clock.Start();
+
+            session.Connect("127.0.0.1", port);
+
+            // ---- ① 等 Online（握手 + 登录）最多 10s ----
+            while (clock.ElapsedMilliseconds < 10000 && !session.IsOnline)
+            {
+                session.Pump(16);
+                System.Threading.Thread.Sleep(5);
+            }
+
+            if (!session.IsOnline)
+            {
+                // ⚠️ 连不上 = **未验**，不是失败（Host 没起不该把探针判红）
+                Console.WriteLine(skipLine + "（10 秒内没连上 127.0.0.1:" + port +
+                                  "；最后状态 " + session.State + "）");
+                Console.WriteLine("端到端：**0 验 / 1 未验**（未计入通过数）");
+                session.Disconnect("e2e 探测结束（未连上）");
+                return;
+            }
+
+            Check("[E2E] 连上真 Host 且**用调试账号 `dev1` 登录成功**（playerId > 0，W15）",
+                session.PlayerId > 0, "playerId=" + session.PlayerId);
+
+            // ---- ② 加入房间（房号留空 = 让服务端安排；`--fill-seats=4` 会补足到 4 席位）----
+            session.JoinRoom(string.Empty, 0);
+
+            // ---- ③ 等锁步开局 + ≥10 帧；总超时 60s（⚠️ 超时先打状态再失败）----
+            clock.Restart();
+            LockstepClient? client = null;
+
+            while (clock.ElapsedMilliseconds < 60000)
+            {
+                session.Pump(16);
+                System.Threading.Thread.Sleep(5);
+
+                client = session.Lockstep;
+
+                if (client != null && client.Started && client.StepsExecuted >= 10)
+                {
+                    break;
+                }
+            }
+
+            client = session.Lockstep;
+
+            // ⚠️ **诊断信息先打**（别再挂住不出声）
+            Console.WriteLine("[E2E] 观察到的状态：" +
+                              "房间成员=" + (session.CurrentRoom == null ? -1 : session.CurrentRoom.Members.Count) +
+                              "；运行器=" + (client == null ? "未创建" : "已创建") +
+                              "；已开局=" + (client != null && client.Started) +
+                              "；收帧数=" + (client == null ? 0 : client.StepsExecuted) +
+                              "；最后帧号=" + (client == null ? -1 : client.LastSteppedFrame) +
+                              "；分歧=" + (client == null ? -1 : client.DesyncCount) +
+                              "；会话状态=" + session.State);
+
+            if (client == null || !client.Started)
+            {
+                Check("[E2E] 收到 `LockstepStart` 并且**开局成功**（`initial_hash` == 客户端自算 —— `ApplyStart` 的核心就是比它）",
+                    client != null && client.Started,
+                    "运行器=" + (client == null ? "未创建" : client.Describe()));
+                Console.WriteLine("端到端：**1 验 / 0 未验**（**未通过**）");
+                session.Disconnect("e2e 探测结束（未开局）");
+                return;
+            }
+
+            Check("[E2E] ⭐ `LockstepStart` 已收到且**开局成功**（⇒ `initial_hash` == 客户端按同一份实体自算）",
+                client.Started, client.Describe());
+
+            // 世界实体：4 个、id 升序、**与 `room_state` 的成员集合相同**（= 服务端开局名单）
+            SimEntity[] world = client.World == null ? new SimEntity[0] : client.World.SnapshotSorted();
+
+            bool ascending = true;
+
+            for (int i = 1; i < world.Length; i++)
+            {
+                if (world[i].Id <= world[i - 1].Id)
+                {
+                    ascending = false;
+                }
+            }
+
+            Check("[E2E] ⭐ 世界有 **4 个实体**且 id **严格升序**",
+                world.Length == 4 && ascending, "实体数=" + world.Length + "；升序=" + ascending);
+
+            // ⭐ 客户端从 `room_state` 推的名单 == 世界里的实体集合（服务端开局用的那份）
+            var fromRoom = new List<long>();
+            var fromWorld = new List<long>();
+
+            if (session.CurrentRoom != null)
+            {
+                for (int i = 0; i < session.CurrentRoom.Members.Count; i++)
+                {
+                    fromRoom.Add(session.CurrentRoom.Members[i].PlayerId);
+                }
+            }
+
+            for (int i = 0; i < world.Length; i++)
+            {
+                fromWorld.Add(world[i].Id);
+            }
+
+            fromRoom.Sort();
+            fromWorld.Sort();
+
+            bool sameRoster = fromRoom.Count == fromWorld.Count && fromRoom.Count == 4;
+
+            if (sameRoster)
+            {
+                for (int i = 0; i < fromRoom.Count; i++)
+                {
+                    if (fromRoom[i] != fromWorld[i])
+                    {
+                        sameRoster = false;
+                    }
+                }
+            }
+
+            Check("[E2E] ⭐ **客户端从 `room_state` 推的名单 == 开局世界里的实体集合**（= 服务端 `RosterIds` 那份）",
+                sameRoster,
+                "room_state=" + string.Join(",", fromRoom.ConvertAll(x => x.ToString()).ToArray()) +
+                " 世界=" + string.Join(",", fromWorld.ConvertAll(x => x.ToString()).ToArray()));
+
+            // ⭐ 帧数 / 单调 / 分歧 / 未开局忽略
+            Check("[E2E] ⭐ **≥10 条 `LockstepFrame`** 且推进次数在涨",
+                client.StepsExecuted >= 10, "收帧数=" + client.StepsExecuted);
+
+            Check("[E2E] ⭐ 帧号**严格单调递增**（没有任何一帧被拒 ⇒ 没有重复/倒退）",
+                client.RejectedFrames == 0 && client.LastSteppedFrame >= client.StepsExecuted - 1,
+                "末帧=" + client.LastSteppedFrame + "；推进=" + client.StepsExecuted +
+                "；被拒=" + client.RejectedFrames);
+
+            Check("[E2E] ⭐ **`DesyncCount == 0`**（客户端自算的哈希与服务端广播的逐帧一致）",
+                client.DesyncCount == 0, "分歧=" + client.DesyncCount + "；" + client.Describe());
+
+            Check("[E2E] ⭐ **`IgnoredBeforeStart == 0`**（没有「开局前就收到帧」⇒ 开局时序正确）",
+                client.IgnoredBeforeStart == 0, "未开局忽略=" + client.IgnoredBeforeStart);
+
+            // ⭐ 通过时把**观察值**打出来（给负责人手动判据对照）
+            var team = new SortedTeamMap(fromRoom);
+            int a = 0;
+            int b = 0;
+
+            for (int i = 0; i < fromRoom.Count; i++)
+            {
+                if (team.TeamOf((int)fromRoom[i]) == 0)
+                {
+                    a++;
+                }
+                else if (team.TeamOf((int)fromRoom[i]) == 1)
+                {
+                    b++;
+                }
+            }
+
+            Console.WriteLine("=== 端到端观察值 ===");
+            Console.WriteLine("  收帧数=" + client.StepsExecuted +
+                              "；帧号区间=[" + (client.StepsExecuted > 0 ? client.LastSteppedFrame - client.StepsExecuted + 1 : -1) +
+                              ".." + client.LastSteppedFrame + "]");
+            Console.WriteLine("  分歧计数=" + client.DesyncCount +
+                              "；未开局忽略=" + client.IgnoredBeforeStart +
+                              "；重复/倒退被拒=" + client.RejectedFrames);
+            Console.WriteLine("  房间成员=" + fromRoom.Count + "（A 队 " + a + " / B 队 " + b + "）" +
+                              "；世界实体=" + world.Length);
+            Console.WriteLine("  一句话：" + client.Describe());
+            Console.WriteLine("端到端：**8 验 / 0 未验**");
+
+            session.Disconnect("e2e 探测结束（通过）");
         }
 
         private static QuestTables LoadQuestTables()
