@@ -26,7 +26,10 @@
 //     ⇒ 喂一个不递增（或重复）的帧号，快照会被**静静丢掉**，表现为"**场景里看不见东西**"的
 //     **假故障**（不报错、不涨 `Applied`）。⇒ 这里用 `frame` 直接当 `server_tick`，且**由调用方保证递增**
 //     （`LockstepClient.LastSteppedFrame` 本来就是单调的）。
-//  ③ **每帧不许分配**：`target.Entities` 与里面的 `EntitySnapshot` **都复用**（见 `Pool`）。
+//  ③ **每帧不许分配**：`target.Entities` 与里面的 `EntitySnapshot` **都复用**（见 `Pool`）；
+//     连"按 Id 排好序的实体表"也复用（`m_sorted` + `WorldState.CopySortedTo`）——
+//     ⚠️ 上一版这里调 `SnapshotSorted()`，它每次 `ToArray()` ⇒ **每喂一帧 new 一个 `SimEntity[]`**。
+//     探针有一条 `GC.GetAllocatedBytesForCurrentThread()` 的**零分配**检查盯着它（§S4e5）。
 //  ④ **`owner_player_id` 要正确**：客户端靠它认出"哪个是我"（M4-S1b 加的第 10 号字段）。
 //     猜错的后果是"我的调试工具在操纵别人的角色"，**静默且看起来很正常**。
 // ============================================================================
@@ -43,6 +46,12 @@ namespace NBC.Game.Net
     {
         /// <summary>复用的 `EntitySnapshot` 池（避免每帧 `new`）。</summary>
         private readonly List<EntitySnapshot> m_pool = new List<EntitySnapshot>();
+
+        /// <summary>
+        /// 复用的「按 Id 升序的实体表」（避免每帧 `SnapshotSorted()` 那一份 `new SimEntity[]`）。
+        /// <para>⚠️ 走 `WorldState.CopySortedTo`：**同一个序列**，只是不分配（见那个方法的注释）。</para>
+        /// </summary>
+        private readonly List<SimEntity> m_sorted = new List<SimEntity>();
 
         /// <summary>复用的目标快照（调用方也可以自己传一个）。</summary>
         private readonly WorldSnapshot m_target = new WorldSnapshot();
@@ -87,46 +96,79 @@ namespace NBC.Game.Net
                 return false;
             }
 
-            target.Entities.Clear();
-
             if (world == null)
             {
+                ResizeEntities(target, 0);
                 target.ServerTick = frame;
                 m_lastFrame = frame;
                 return true;
             }
 
-            SimEntity[] snapshot = world.SnapshotSorted();      // ⚠️ 按 Id 升序 ⇒ 与登记顺序无关
+            // ⚠️ 按 Id 升序 ⇒ 与登记顺序无关。
+            //    用 `CopySortedTo`（复用 `m_sorted`）而**不是** `SnapshotSorted()`：
+            //    后者每帧 `ToArray()` 会 new 一个 `SimEntity[]` ⇒ 30Hz 下每秒 30 个小数组。
+            //    ⚠️ 两个方法给出**同一个序列**（Id 是唯一键）⇒ 语义一点没变（见 `WorldState.CopySortedTo`）。
+            int count = world.CopySortedTo(m_sorted);
 
-            EnsurePool(snapshot.Length);
+            EnsurePool(count);
 
-            for (int i = 0; i < snapshot.Length; i++)
+            // ⚠️ **不要**在这里写 `target.Entities.Clear()`：实测这个版本的 `RepeatedField<T>`
+            //    对**非空**字段调 `Clear()` 会分配 **88 字节/次**（探针 §S4e5 的零分配那条量出来的）
+            //    ⇒ 每帧一次就是"每帧一个分配"，和硬约束② 冲突。
+            //    这里的写法（indexer 覆盖 + 尾部 `RemoveAt` 摘掉）实测 **0 分配**。
+            int existing = target.Entities.Count;
+
+            for (int i = 0; i < count; i++)
             {
                 EntitySnapshot e = m_pool[i];
 
-                e.EntityId = snapshot[i].Id;
+                e.EntityId = m_sorted[i].Id;
                 e.ConfigId = 0;                                  // 锁步这边还没有配置表（留给以后）
                 e.Kind = 0;                                      // 0 = 英雄（锁步里都是玩家）
-                e.Hp = snapshot[i].Hp;
-                e.MaxHp = snapshot[i].MaxHp;
+                e.Hp = m_sorted[i].Hp;
+                e.MaxHp = m_sorted[i].MaxHp;
 
                 // ⚠️ 位置：`FixVector3` 是**米**（定点），快照是**毫米**（整数）⇒ 显式换算、不用浮点
-                e.PosXMm = MetersToMm(snapshot[i].Position.X);
-                e.PosZMm = MetersToMm(snapshot[i].Position.Z);    // M3 起就在平面上跑，Y 轴留空
+                e.PosXMm = MetersToMm(m_sorted[i].Position.X);
+                e.PosZMm = MetersToMm(m_sorted[i].Position.Z);    // M3 起就在平面上跑，Y 轴留空
 
                 e.FacingDeg = 0;                                 // 锁步还没做朝向
-                e.Alive = snapshot[i].Hp > 0;
+                e.Alive = m_sorted[i].Hp > 0;
 
                 // ④ `owner_player_id`：实体编号 == 玩家编号（S4-c 的简化）⇒ 直接写；0 = 无主
-                e.OwnerPlayerId = snapshot[i].Id == (int)ownerPlayerId ? ownerPlayerId : 0;
+                e.OwnerPlayerId = m_sorted[i].Id == (int)ownerPlayerId ? ownerPlayerId : 0;
 
-                target.Entities.Add(e);
+                if (i < existing)
+                {
+                    target.Entities[i] = e;         // 位子已经有了 ⇒ 覆盖（不分配）
+                }
+                else
+                {
+                    target.Entities.Add(e);         // 只有"实体变多了"才长
+                }
             }
+
+            ResizeEntities(target, count);          // 实体变少了 ⇒ 从尾部摘掉（不 `Clear()`）
 
             // ② 单调：用**这一帧的**帧号（不是世界内部的 Tick —— 那个可能已经被 Step 推过）
             target.ServerTick = frame;
             m_lastFrame = frame;
             return true;
+        }
+
+        /// <summary>
+        /// 把 `target.Entities` 的长度缩到 `count`（多了从**尾部**摘）。
+        /// <para>⚠️ 存在的唯一理由：`RepeatedField&lt;T&gt;.Clear()` 对**非空**字段会分配内存
+        /// （实测 88 字节/次）⇒ 每帧调一次就破坏了「每帧不分配」这条硬约束。</para>
+        /// </summary>
+        /// <param name="target">目标快照。</param>
+        /// <param name="count">要保留的条数。</param>
+        private static void ResizeEntities(WorldSnapshot target, int count)
+        {
+            while (target.Entities.Count > count)
+            {
+                target.Entities.RemoveAt(target.Entities.Count - 1);
+            }
         }
 
         /// <summary>把池子撑到至少 `count` 个（只增不减 ⇒ 稳态下不再分配）。</summary>

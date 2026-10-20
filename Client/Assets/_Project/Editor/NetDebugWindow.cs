@@ -24,6 +24,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text;             // M4-S4 S4-e 收尾：`DescribeUnits`（把表现层那份世界里的编号串成一行）
 using NBC.Framework;           // M4-S1：`EventCenter`（全局事件中心）
 using NBC.Framework.Net.Adapter;
 using NBC.Game.Achievement;    // M4-S2：`AchievementRuntime` / `AchievementTracking` / `AchievementEvents`
@@ -33,6 +34,7 @@ using NBC.Game.GameFlow;       // M4-S1c：`BattleSession`（条件 → 任务 �
 using NBC.Game.Net;
 using NBC.Game.Quest;          // M4-S1：`ConditionEventBridge`（事件中心 → 条件系统，M2 就有的那座桥）
 using NBC.Game.UI;             // M4-S1c：`QuestPanelModel` / `QuestRow`（真面板的视图模型，窗口复用同一份）
+using NBC.Game.View;           // M4-S4 S4-e 收尾：`SnapshotSceneBinder`（最小视图接管，3D 真的能看见）
 using NBC.Protocol;           // M4-S3 收口：`ProgressSync` / `ConditionProgressEntry`（服务端权威进度）
 using NBC.Shared.Battle;       // M4-S1b：`BattleRules`（射程/冷却——**两端同一个常量**，别在窗口里再写一份）
 using NBC.Shared.Condition;    // M4-S1：`ConditionTracker` / `ConditionDef` / `EConditionEvent`
@@ -123,9 +125,20 @@ namespace NBC.EditorTools
         private NetSession m_session;
 
         /// <summary>
-        /// 「帧同步（锁步）」模式的勾选态（**当前只影响本窗口显示**，见 `DrawLockstepSection` 的说明）。
+        /// 「帧同步（锁步）」开关（S4-e 收尾起**它是真的**）：决定**客户端喂给表现层的那份数据**
+        /// 是「服务端快照」还是「锁步世界经适配器转出来的那份」（见 `PresentationFeed`）。
+        /// <para>⚠️ 它**不改变服务端**：那边两条链并存（状态同步链一行未改 + 锁步链照常广播）。</para>
         /// </summary>
         private bool m_lockstepMode;
+
+        /// <summary>
+        /// 表现层数据源（S4-e 收尾）：按开关把「服务端快照」或「锁步世界」喂进**同一个** `SnapshotView`。
+        /// <para>⚠️ 它就是"真分流"的执行点：选源那条规则在 `ViewSourceDecision.ChooseSource`（纯函数、探针直驱）。</para>
+        /// </summary>
+        private PresentationFeed m_feed;
+
+        /// <summary>场景里的那条最小视图接管（只有你点过那个按钮、且**在播放模式**时才有）。</summary>
+        private SnapshotSceneBinder m_binder;
 
         /// <summary>M4-S1：把服务端事件接进事件中心的桥（**联机战斗能推进任务**就靠它）。</summary>
         private ServerEventBridge m_eventBridge;
@@ -518,6 +531,7 @@ namespace NBC.EditorTools
             }
 
             m_session.Pump(deltaMs);
+            FeedPresentationLayer();                // ⭐ 真分流：按开关把「快照 / 锁步」喂给表现层
             EnsureDemoConditionRegistered();        // 第一张快照到了就按阵容登记演示条件
             SendContinuousInput();
             TickAutoChase();
@@ -561,9 +575,12 @@ namespace NBC.EditorTools
                 }
             }
 
-            int distance = Chebyshev(mine, target);
+            // ⚠️ 射程判定用**圆**（平方比较），与服务端 `BattleRules.WithinBasicAttackRange` 同一份规则。
+            //    别再退回切比雪夫（正方形）：那会在对角方向多算 1.41 倍 ⇒ 客户端以为能打、服务端说够不着。
+            bool inRange = BattleRules.WithinBasicAttackRange(
+                mine.PosXMm, mine.PosZMm, target.PosXMm, target.PosZMm);
 
-            if (distance > BattleRules.BasicAttackRangeMm)
+            if (!inRange)
             {
                 int moveX = target.PosXMm == mine.PosXMm ? 0 : (target.PosXMm > mine.PosXMm ? 1000 : -1000);
                 int moveY = target.PosZMm == mine.PosZMm ? 0 : (target.PosZMm > mine.PosZMm ? 1000 : -1000);
@@ -609,29 +626,187 @@ namespace NBC.EditorTools
             m_session.SendInput(m_inputX, m_inputY, 0u, 0u, m_targetEntityId);
         }
 
-        /// <summary>画界面。</summary>
         /// <summary>
-        /// 同步模式开关 + 帧同步（锁步）状态面板（M4-S4 S4-e）。
-        /// <para>⚠️ 这个开关**当前只影响本窗口的显示**：两条链在服务端/客户端**都已并存**，
-        /// 但"一局里真正选哪条"**还没接到开局流程上**（见 `Docs\27` §35.0）。**不做假开关** —— 如实写在界面上。</para>
+        /// 同步模式开关 + 帧同步（锁步）状态面板 + ⭐ **表现层数据源**（M4-S4 S4-e 收尾）。
+        ///
+        /// <para>⭐ **这个开关现在是真的**：它决定**客户端喂给表现层的那份数据**是「服务端快照」
+        /// 还是「锁步世界经适配器转出来的那份」（执行点是 `FeedPresentationLayer` → `PresentationFeed.Refresh`）。</para>
+        /// <para>⚠️ 但它**不改变服务端**：那边**两条链并存**（状态同步链一行未改 + 锁步链照常广播），
+        /// 开关只换客户端**读哪一份**、不停任何一条链。</para>
+        /// <para>⚠️ 上一轮那块黄色警告写的是「该开关当前只影响本窗口的显示」—— **那句话本轮已经不成立了**，
+        /// 所以换成了下面这段真话（**不做假开关，也不留过期说明**）。</para>
         /// </summary>
         private void DrawLockstepSection()
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("【同步模式】", EditorStyles.boldLabel);
 
+            bool previous = m_lockstepMode;
+
             m_lockstepMode = EditorGUILayout.ToggleLeft(
                 "帧同步（锁步）：服务端按帧广播输入、客户端自己 Step 并对账　／　关闭 = 状态同步（快照）",
                 m_lockstepMode);
 
+            if (m_lockstepMode != previous)
+            {
+                SetLockstepMode(m_lockstepMode, "勾选框");
+            }
+
             EditorGUILayout.HelpBox(
-                "该开关当前只影响本窗口的显示：两条链都已并存，但「一局里选哪条」还没接到开局流程（见 Docs/27 §35.0）。",
-                MessageType.Warning);
+                "⭐ 这个开关真的分流：它决定客户端喂给表现层的那份数据 —— " +
+                "关 = 服务端快照；开 = 锁步世界经适配器（`LockstepSnapshotAdapter`）转出来的那份。\n" +
+                "⚠️ 服务端两条链并存（状态同步链一行未改 + 锁步链照常广播）：开关只换客户端读哪一份，" +
+                "不停任何一条链。\n" +
+                "⚠️ 开着但**世界不可用**（没开局 / 世界是 null / **世界 0 实体**）时一律回退用快照，并计入下面的计数；\n" +
+                "⚠️ **已开局但帧不再前进**（一局结束 / 服务端停播）也算故障 ⇒ 连续 " +
+                PresentationFeed.StallRefreshThreshold + " 次刷新帧号没变就**自动回退到快照**（「⚠️ 锁步停滞（已回退）」）；\n" +
+                "⚠️ 回锁步要**滞回**：连续 " + PresentationFeed.StallRecoverThreshold +
+                " 次**真前进**才切回锁步（期间仍回退 —— 否则 30 次回退 / 1 帧恢复会稳定地闪）。",
+                MessageType.Info);
+
+            DrawPresentationSource();
 
             NetSession session = m_session;
 
-            EditorGUILayout.LabelField("当前模式（显示用）", m_lockstepMode ? "帧同步（锁步）" : "状态同步（快照）");
+            DrawLockstepPanel(session);
+        }
 
+        /// <summary>
+        /// ⭐ **表现层数据源**那一块：现在喂的是谁、喂了多少次、回退了几次、切了几次、世界长什么样，
+        /// 外加「把这份数据接到场景」那个按钮（最小视图接管）。
+        /// </summary>
+        private void DrawPresentationSource()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("⭐ 表现层数据源（开关决定它）", EditorStyles.boldLabel);
+
+            PresentationFeed feed = m_feed;
+
+            if (feed == null || m_session == null)
+            {
+                EditorGUILayout.LabelField("⭐ 当前喂给表现层的来源", "（还没连接 —— 先点「连接」）");
+                return;
+            }
+
+            EditorGUILayout.LabelField("⭐ 当前喂给表现层的来源", ViewSourceDecision.Describe(feed.Source));
+
+            EditorGUILayout.LabelField(
+                "开关要求 / 实际生效",
+                (feed.UseLockstep ? "锁步" : "快照") + " / " + ViewSourceDecision.Describe(feed.Source)
+                + (feed.UseLockstep && feed.Chosen != EViewSource.Lockstep
+                    ? "　⚠️ 回退中（" + ViewSourceDecision.Describe(feed.FallbackReason) + "）"
+                    : string.Empty));
+
+            EditorGUILayout.LabelField(
+                "表现层帧号（本地单调）",
+                feed.PresentationTick + "（源帧 " + feed.LastSourceFrame + "）");
+
+            EditorGUILayout.LabelField(
+                "采纳次数",
+                "快照 " + feed.FramesFromSnapshot + " 次 / 锁步 " + feed.FramesFromLockstep + " 次");
+
+            // ⚠️ 两个**不同口径**的数，分开显示（上一版混成一个 ⇒ 一分钟上万 ⇒ 判据失效）。
+            //    **事件数**：跃迁进回退才 +1（一段连续回退 = 1 次）—— 判据看这个。
+            //    **帧数**：回退期间每帧 +1（≈编辑器帧率）—— 只用来量"回退持续了多久"。
+            EditorGUILayout.LabelField(
+                "⚠️ 回退事件数（跃迁进回退才 +1）",
+                feed.FallbackEvents + (feed.FallbackEvents > 0
+                    ? "（一段连续回退只算 1 次；进房到开局之间非 0 是**正常**的）"
+                    : "（还没回退过）"));
+
+            EditorGUILayout.LabelField(
+                "⚠️ 回退帧数（回退中每帧 +1）",
+                feed.FallbackFrames + "（≈编辑器帧率 ⇒ **它不表示「回退了几次」**，判据看上面那个事件数）");
+
+            // ⭐ 停滞（**沉默冻结**）那条：`Started` 但帧不再前进 ⇒ 已自动回退到快照。
+            //    上一版这里没有任何一行字 —— 一局结束/服务端停播之后画面**永远停在上一帧**，而计数一动不动。
+            //    ⚠️ 本轮加**滞回**：回锁步要连续 `StallRecoverThreshold` 次真前进（否则 30/1/30 抖动会闪）。
+            EditorGUILayout.LabelField(
+                "⚠️ 锁步停滞（已回退）",
+                feed.Stalled
+                    ? "是（连续 " + feed.StallRefreshes + " 次刷新帧号没前进 ⇒ **已经回退到快照**；" +
+                      "回锁步进度 " + feed.StallRecoverProgress + "/" + PresentationFeed.StallRecoverThreshold +
+                      " 次真前进）"
+                    : "否（连续 " + feed.StallRefreshes + "/" + PresentationFeed.StallRefreshThreshold +
+                      " 次没前进就会判停；判停后要 " + PresentationFeed.StallRecoverThreshold +
+                      " 次真前进才回锁步）");
+
+            EditorGUILayout.LabelField(
+                "切换次数",
+                "实际换源 " + feed.SourceSwitches + " 次 / 拨开关 " + feed.ModeSwitches + " 次");
+
+            SnapshotView shown = feed.View;
+
+            EditorGUILayout.LabelField(
+                "表现层里的世界",
+                shown.AliveCount + "/" + shown.EntityCount + " 个活着　（表现帧 " + shown.ServerTick + "）");
+
+            // ⭐ 这一行是「分流切对了没有」最直观的判据：
+            //    关（快照）时**不该**有机器人 9001…；开（锁步）时**应该**有 1、9001、9002、9003
+            EditorGUILayout.LabelField("表现层里的单位", DescribeUnits(shown));
+
+            EditorGUILayout.LabelField(
+                "丢弃旧帧（非 0 = 帧号在倒退）",
+                shown.StaleIgnored + (shown.StaleIgnored > 0
+                    ? "　❌ 帧号在倒退 ⇒ 数据会被静静丢掉（画面停住/空白）"
+                    : "　✅"));
+
+            // ---- 最小视图接管（3D）：**只在播放模式**里建，不动任何场景/Prefab 资产 ----
+            EditorGUILayout.LabelField(
+                "场景里的视图接管（3D）",
+                m_binder == null ? "未建（点下面的按钮）" : m_binder.Describe());
+
+            if (GUILayout.Button("把这份数据接到场景（建一个运行时视图接管）", GUILayout.Height(22f)))
+            {
+                m_binder = SnapshotSceneBinder.Ensure(feed.View, m_session.PlayerId);
+
+                AddLog(m_binder == null
+                    ? "[表现层] 没建成视图接管：只在播放模式下能建（编辑器里请先点 Play）"
+                    : "[表现层] 已在场景里建好视图接管：" + m_binder.Describe() +
+                      "（用 Unity 自带几何体；没动任何场景/Prefab 资产）");
+            }
+
+            if (!Application.isPlaying)
+            {
+                EditorGUILayout.HelpBox(
+                    "⚠️ 视图接管只能在播放模式里建（运行时 `AddComponent`）。" +
+                    "本轮不许改场景资产，所以默认场里没有它 —— 点 Play 之后回到这个窗口点上面那个按钮。",
+                    MessageType.Warning);
+            }
+        }
+
+        /// <summary>
+        /// 把表现层那份世界里的单位编号串成一行（例：`1、9001、9002、9003`）。
+        /// <para>⭐ 这是「分流切对了没有」最直观的判据：关（快照）时不该有机器人，开（锁步）时该有。</para>
+        /// </summary>
+        /// <param name="view">表现层那份数据。</param>
+        /// <returns>编号表；没有单位时给一句人话。</returns>
+        private static string DescribeUnits(SnapshotView view)
+        {
+            if (view == null || view.EntityCount == 0)
+            {
+                return "（一个都没有）";
+            }
+
+            var builder = new StringBuilder();
+
+            for (int i = 0; i < view.Entities.Count; i++)
+            {
+                if (i > 0)
+                {
+                    builder.Append('、');
+                }
+
+                builder.Append(view.Entities[i].EntityId);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>帧同步（锁步）那份只读状态面板（与上一轮同源，只是从 `DrawLockstepSection` 拆出来）。</summary>
+        /// <param name="session">当前会话（可为 null）。</param>
+        private void DrawLockstepPanel(NetSession session)
+        {
             if (session == null || session.Lockstep == null)
             {
                 EditorGUILayout.LabelField("锁步运行器", "未创建（还没收到任何锁步消息）");
@@ -640,14 +815,76 @@ namespace NBC.EditorTools
 
             LockstepClient client = session.Lockstep;
 
+            // ⚠️ 局号与"每局清零"的那些数（§35.9）：换一局运行器就换一个 ⇒ 下面的计数是**本局**的，
+            //    所以标签里必须写"本局"，否则会被当成本会话的累计值（那会让"这局干不干净"看不出来）。
+            EditorGUILayout.LabelField("本会话第几局（每收到一次开局 +1）", session.MatchSerial.ToString());
             EditorGUILayout.LabelField("锁步已开局", client.Started ? "是" : "否");
             EditorGUILayout.LabelField("帧号推进", client.StepsExecuted + " 帧（末帧 " + client.LastSteppedFrame + "）");
-            EditorGUILayout.LabelField("⭐ 分歧计数（应为 0）", client.DesyncCount.ToString());
-            EditorGUILayout.LabelField("未开局忽略", client.IgnoredBeforeStart.ToString());
-            EditorGUILayout.LabelField("重复/倒退被拒", client.RejectedFrames.ToString());
-            EditorGUILayout.LabelField("胜负判定不一致", session.MatchMismatchCount.ToString());
-            EditorGUILayout.LabelField("结果", session.MatchOutcome == null ? "未宣布" : session.MatchOutcome.Value.ToString());
+            EditorGUILayout.LabelField("⭐ 分歧计数（本局；每局清零）", client.DesyncCount.ToString());
+            EditorGUILayout.LabelField("未开局忽略（本局）", client.IgnoredBeforeStart.ToString());
+            EditorGUILayout.LabelField("重复/倒退被拒（本局）", client.RejectedFrames.ToString());
+            EditorGUILayout.LabelField("胜负判定不一致（本局）", session.MatchMismatchCount.ToString());
+            EditorGUILayout.LabelField("结果（本局）", session.MatchOutcome == null ? "未宣布" : session.MatchOutcome.Value.ToString());
             EditorGUILayout.LabelField("一句话", client.Describe());
+        }
+
+        /// <summary>
+        /// 拨开关：**同一个动作**做两件事 —— 改 `PresentationFeed` 的选源 + **记一行日志**（可回溯）。
+        /// <para>⚠️ 日志里必须写清"服务端两条链都还在跑"，否则下一个看到它的人会以为真的"换了一条链"。</para>
+        /// </summary>
+        /// <param name="on">true = 帧同步。</param>
+        /// <param name="from">谁拨的（勾选框 / 代码）。</param>
+        private void SetLockstepMode(bool on, string from)
+        {
+            m_lockstepMode = on;
+
+            PresentationFeed feed = EnsureFeed();
+            feed.UseLockstep = on;
+
+            AddLog("[表现层] 数据源切换（" + from + "）⇒ " + (on ? "锁步" : "快照") +
+                   "：服务端两条链都还在跑，只有客户端改读哪一份。");
+        }
+
+        /// <summary>
+        /// 取（必要时建）表现层数据源，并让它的开关跟窗口上的勾选态保持一致。
+        /// <para>⚠️ 幂等：`UseLockstep` 的值没变就不会涨计数（每帧都会调到这里）。</para>
+        /// </summary>
+        /// <returns>数据源。</returns>
+        private PresentationFeed EnsureFeed()
+        {
+            if (m_feed == null)
+            {
+                m_feed = new PresentationFeed();
+            }
+
+            m_feed.UseLockstep = m_lockstepMode;
+            return m_feed;
+        }
+
+        /// <summary>
+        /// ⭐ **真分流唯一的执行点**：每帧把「当前该用的那份」喂给表现层。
+        /// <para>它**只读**两条链的状态（`NetSession.World` / `LockstepClient`）——
+        /// 不写回世界、不调 `Step`、不改会话。</para>
+        /// </summary>
+        private void FeedPresentationLayer()
+        {
+            if (m_session == null)
+            {
+                return;
+            }
+
+            PresentationFeed feed = EnsureFeed();
+            LockstepClient client = m_session.Lockstep;
+
+            feed.Refresh(
+                m_session.PlayerId,
+                m_session.World,
+                client == null ? null : client.World,
+                client == null ? -1 : client.LastSteppedFrame,
+                client != null && client.Started,
+                // ⚠️ **局号**（本轮加的"换局"显式信号）：不传的话只能靠世界对象/帧号倒退猜，
+                //    而"上一局末帧 0、新一局从 0 起"那一格是猜不出来的（§35.9 必修 1 / 小坑 5）。
+                m_session.MatchSerial);
         }
 
         private void OnGUI()
@@ -1027,8 +1264,19 @@ namespace NBC.EditorTools
                 return;
             }
 
-            int distance = Chebyshev(mine, target);
-            bool inRange = distance <= BattleRules.BasicAttackRangeMm;
+            // 判定用圆（平方比较）；显示用真实距离（四舍五入）—— 两者别再混用同一个数。
+            bool inRange = BattleRules.WithinBasicAttackRange(
+                mine.PosXMm, mine.PosZMm, target.PosXMm, target.PosZMm);
+
+            int distance = BattleRules.DistanceMmRounded(
+                mine.PosXMm, mine.PosZMm, target.PosXMm, target.PosZMm);
+
+            // ⚠️ 出界时四舍五入可能把 2000.5 显示成 2000 ⇒ 会看到「2000mm ❌ 太远」这种自相矛盾的提示。
+            //    既然判出界，就至少显示「射程 + 1」（与服务端日志同一处理）。
+            if (!inRange && distance <= BattleRules.BasicAttackRangeMm)
+            {
+                distance = BattleRules.BasicAttackRangeMm + 1;
+            }
 
             EditorGUILayout.LabelField("距离", distance + " mm"
                 + (inRange ? "　✅ 在射程内（" + BattleRules.BasicAttackRangeMm + "mm）" : "　❌ 太远，打不到"));
@@ -1658,6 +1906,14 @@ namespace NBC.EditorTools
             m_session.Dispose();
             m_session = null;
             m_transport = null;
+
+            // ⚠️ 断开就把表现层那份清掉：不清的话下一局的第 0 帧可能比上一局的末帧小（画面停住）
+            if (m_feed != null)
+            {
+                m_feed.Clear();
+            }
+
+            m_binder = null;        // 场景里那个组件还活着（播放模式），但窗口不再显示它的状态
         }
 
         /// <summary>加一行日志（超出上限就丢最旧的）。</summary>

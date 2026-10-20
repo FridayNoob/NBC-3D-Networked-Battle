@@ -117,13 +117,16 @@ namespace NBC.Framework
                             "最常见的原因是子类自己写了 private void Awake()，把基类的 Awake 隐藏了。" +
                             "请把子类的初始化逻辑改写到 protected override void OnAwake() 里。");
                     }
-
+                    if(s_instance == null) 
+                    {
+                        Debug.LogError("[SingletonMono] 场景中没有 " + typeof(T).Name + "，返回 null。");
+                    }
                     return s_instance;
                 }
             }
         }
 
-        /// <summary>获取单例实例。兼容唐老师框架的调用习惯。</summary>
+        /// <summary>获取单例实例。</summary>
         /// <returns>单例实例；场景中不存在时返回 null。</returns>
         public static T GetInstance()
         {

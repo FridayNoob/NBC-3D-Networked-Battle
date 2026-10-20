@@ -169,8 +169,18 @@ namespace NBC.Game.Net
         /// <summary>
         /// 锁步运行器（M4-S4 S4-c）。**懒建**：只有真的收到锁步消息才建，
         /// 这样"不玩锁步"的会话不多一份对象（也没必要）。
+        /// <para>⚠️ **一局一个对象**（§35.9）：每收到 `lockstep_start` 就**重建**（不 reset 旧的）。
+        /// 于是 `DesyncCount` / `MatchMismatchCount` / `Outcome` / `RejectedFrames` / `StepsExecuted`
+        /// 这些数天然是**本局**的（新局从 0 开始），旧局的车轮不会跟着走。</para>
         /// </summary>
         private LockstepClient? m_lockstep;
+
+        /// <summary>
+        /// 本会话打到第几局（每收到一条 `lockstep_start` +1；还没打过 = 0）。
+        /// <para>⚠️ 这是"换了一局"的**显式信号**：`PresentationFeed` 靠它换适配器，
+        /// 不再靠"帧号有没有倒退"去猜（那个猜法会漏掉"上一局末帧 0 / 新一局从 0 起"这一格）。</para>
+        /// </summary>
+        private int m_matchSerial;
 
         /// <summary>收到第一张快照时记一句就够（每帧记会把日志刷爆）。</summary>
         private bool m_loggedFirstSnapshot;
@@ -400,6 +410,7 @@ namespace NBC.Game.Net
         /// 锁步**分歧次数**（M4-S4 S4-c）：委托给运行器。
         /// <para>⚠️ 这是帧同步的**报警器**：> 0 就说明"我算出来的世界与服务端不一样"，
         /// 而不是"网络卡了一下"。0 = 还没收到过锁步消息，或一直一致。</para>
+        /// <para>⚠️ **本局**的数（§35.9）：新一局会换一个新的运行器 ⇒ 从 0 开始。</para>
         /// </summary>
         public int DesyncCount
         {
@@ -410,6 +421,17 @@ namespace NBC.Game.Net
         public LockstepClient Lockstep
         {
             get { return m_lockstep; }
+        }
+
+        /// <summary>
+        /// 本会话打到第几局（每收到一条 `lockstep_start` +1；还没打过 = 0）。
+        /// <para>⚠️ **跨局累计**（这一点与 `DesyncCount` / `MatchMismatchCount` 相反，别混）：
+        /// 它的用途只有一个 —— 让表现层看得出"**换了一局**"（见 `PresentationFeed.Refresh` 的
+        /// `lockstepMatchSerial` 参数）。</para>
+        /// </summary>
+        public int MatchSerial
+        {
+            get { return m_matchSerial; }
         }
 
         /// <summary>
@@ -607,6 +629,11 @@ namespace NBC.Game.Net
             m_lastDrop = null;
             m_lastDamage = null;
             m_lastDeath = null;
+
+            // ⚠️ 重连 = 新会话：上一局的运行器与局号**一起清掉**（否则会拿着上一局的世界
+            //    继续喂表现层 —— 那正是"世界不换"那类静默故障；见 §35.9 必修 1）
+            m_lockstep = null;
+            m_matchSerial = 0;
             m_failureReason = null;
             m_rttMs = -1;
             m_lastPingSentMs = -1;
@@ -1206,15 +1233,22 @@ namespace NBC.Game.Net
                 return;
             }
 
-            EnsureLockstep();
+            // ⚠️ **每一条 `lockstep_start` 就是一局的开头**（服务端一局只发一次 + TCP 保序）
+            //    ⇒ 这里**重建**运行器，而不是 "`null` 才建"。上一版用后者：
+            //    同一连接打第二局 ⇒ `ApplyStart` 撞"重复开局"被拒（`LockstepClient` 的守卫）
+            //    ⇒ `m_started` 永远 true、世界不换、帧号不复位 ⇒ 新一局 `0..n` 全被
+            //    "帧号不递增"挡掉 ⇒ **永远停滞、永远回退到快照**（§35.9 必修 1）。
+            m_matchSerial++;
+            m_lockstep = NewLockstepClient();
 
             // ⚠️ 转换在 `LockstepWire`（`Game\Net\`：`NBC.Protocol` + `NBC.Shared` 两边都引得到，
             //    且**探针也编得到** ⇒ 能被逐字段验证。别搬进 `Shared\Sim\` —— 见 W22）
             List<SimEntity> entities = LockstepWire.ToPlainEntities(start);
 
-            bool ok = m_lockstep != null && m_lockstep.ApplyStart(start.Frame, start.InitialHash, entities);
+            bool ok = m_lockstep.ApplyStart(start.Frame, start.InitialHash, entities);
 
-            Log("收到**锁步开局**：帧 " + start.Frame + "、" + entities.Count + " 个实体 ⇒ " +
+            Log("收到**锁步开局**（本会话第 " + m_matchSerial + " 局）：帧 " + start.Frame + "、" +
+                entities.Count + " 个实体 ⇒ " +
                 (ok ? "已开局" : "**开局失败**（initial_hash 对不上 —— 见分歧事件）"));
         }
 
@@ -1291,42 +1325,31 @@ namespace NBC.Game.Net
                 "；" + m_lockstep.Describe());
         }
 
-        /// <summary>与服务端**胜负判定不一致**的次数（委托给运行器）。</summary>
+        /// <summary>
+        /// 与服务端**胜负判定不一致**的次数（委托给运行器）。
+        /// <para>⚠️ **本局**的数（§35.9）：新一局换新运行器 ⇒ 从 0 开始；跨局要累计请在会话外记。</para>
+        /// </summary>
         public int MatchMismatchCount
         {
             get { return m_lockstep == null ? 0 : m_lockstep.MatchMismatchCount; }
         }
 
-        /// <summary>落定的结果（还没落定 = null）。</summary>
+        /// <summary>落定的结果（还没落定 = null；**本局**的数 —— 新一局重新开始）。</summary>
         public EMatchOutcome? MatchOutcome
         {
             get { return m_lockstep == null ? null : m_lockstep.Outcome; }
         }
 
         /// <summary>服务端宣布的结果与我复算的不一致（照 `DesyncDetected` 的形状）。</summary>
-        public event Action<LockstepMatchMismatch> MatchMismatchDetected
-        {
-            add
-            {
-                EnsureLockstep();
-
-                if (m_lockstep != null)
-                {
-                    m_lockstep.MatchMismatchDetected += value;
-                }
-            }
-
-            remove
-            {
-                if (m_lockstep != null)
-                {
-                    m_lockstep.MatchMismatchDetected -= value;
-                }
-            }
-        }
+        /// <remarks>
+        /// ⚠️ 这里**故意改成字段式事件**（§35.9）：上一版是"订阅时把句柄挂到当前那个运行器上"，
+        /// 而运行器现在**每局换一个** ⇒ 上一版会让订阅在第二局**悄悄失效**（没人报得出来）。
+        /// 现在订阅挂在**会话**上，运行器那边每次新建时把事件转发过来（见 `NewLockstepClient`）。
+        /// </remarks>
+        public event Action<LockstepMatchMismatch> MatchMismatchDetected;
 
         /// <summary>
-        /// 懒建运行器并接上分歧上报。
+        /// 懒建运行器并接上两种上报。
         /// <para>⚠️ 分歧**必须是事件**（不只是日志）：帧同步跑偏要能立刻被人看见。</para>
         /// </summary>
         private void EnsureLockstep()
@@ -1336,12 +1359,30 @@ namespace NBC.Game.Net
                 return;
             }
 
-            m_lockstep = new LockstepClient();
-            m_lockstep.DesyncDetected += d =>
+            m_lockstep = NewLockstepClient();
+        }
+
+        /// <summary>
+        /// 造一个**新**运行器（每局一个，见 `HandleLockstepStart`），并把它的两种上报
+        /// 接到本会话自己的事件上。
+        /// <para>⚠️ 转发必须**每次都重新接**：旧运行器随上一局一起丢掉，
+        /// 而订阅者订阅的是 `NetSession` 的事件（不是某个运行器实例）—— 否则第二局开始后
+        /// 分歧/判定不一致就**再也不会有人知道**（静默）。</para>
+        /// </summary>
+        /// <returns>新运行器（非 null）。</returns>
+        private LockstepClient NewLockstepClient()
+        {
+            var client = new LockstepClient();
+
+            client.DesyncDetected += d =>
             {
                 Log("⚠️ **锁步分歧**：" + d);
-                DesyncDetected?.Invoke(d);
+                DesyncDetected?.Invoke(d);          // 本会话的事件（字段式）⇒ 跨局一直有效
             };
+
+            client.MatchMismatchDetected += m => MatchMismatchDetected?.Invoke(m);
+
+            return client;
         }
 
         /// <summary>一条**任务状态**：存下来、记数、发事件、写日志。</summary>

@@ -69,7 +69,10 @@ namespace NBC.Tests.EditMode
         [Test]
         public void SharedSources_ContainNoBclMathCalls()
         {
-            Regex pattern = new Regex(@"(?<!Fix)Math\.[A-Za-z_]+\s*\(");
+            // ⚠️ 判据修正（2026-10-18）：原来只排除 `FixMath`（`(?<!Fix)`），漏了**我们自己的其它 *Math 类型**
+            //    （`DamageMath.Resolve(...)`）⇒ 对 `WorldStep.cs` 误报。BCL 的 `Math.Abs(` 前一个字符
+            //    **不可能是字母/下划线**（那是标识符的一部分），所以用"前一个字符不是标识符字符"才是正确判据。
+            Regex pattern = new Regex(@"(?<![A-Za-z_])Math\.[A-Za-z_]+\s*\(");
             List<string> offenders = new List<string>();
 
             foreach (string file in SourceFiles())
@@ -208,14 +211,17 @@ namespace NBC.Tests.EditMode
         [Test]
         public void Guards_ActuallyDetectViolations()
         {
-            Regex bclMath = new Regex(@"(?<!Fix)Math\.[A-Za-z_]+\s*\(");
+            Regex bclMath = new Regex(@"(?<![A-Za-z_])Math\.[A-Za-z_]+\s*\(");
 
             // 应当被判为违规的样本
             Assert.IsTrue(bclMath.IsMatch("double v = Math.Sin(angle);"), "BCL 数学调用应当被检出");
             Assert.IsTrue(bclMath.IsMatch("return Math.Sqrt(x);"), "BCL 数学调用应当被检出");
+            Assert.IsTrue(bclMath.IsMatch("if (Math.Abs(a) > 0)"), "BCL 数学调用应当被检出");
 
-            // 不应当误报的样本
+            // 不应当误报的样本（**我们自己的 *Math 类型**，不是 BCL）
             Assert.IsFalse(bclMath.IsMatch("return FixMath.Sin(angle);"), "FixMath 不该被误报");
+            Assert.IsFalse(bclMath.IsMatch("DamageMath.Resolve(hp, dmg);"), "DamageMath 不该被误报");
+            Assert.IsFalse(bclMath.IsMatch("var v = SomeMath.Foo(1);"), "任何 *Math 类型都不该被误报");
             Assert.IsFalse(bclMath.IsMatch("throw new Exception(\"[FixMath.\" + name);"),
                 "字符串里的 \"[FixMath.\" 不该被误报（第一版就是在这里误报的）");
 

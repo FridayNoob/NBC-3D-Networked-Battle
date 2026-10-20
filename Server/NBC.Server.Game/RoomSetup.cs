@@ -75,9 +75,16 @@ public static class RoomSetup
 
             // ⚠️ 编号用**保留段** `Room.BotIdBase` 起，且只在本房内唯一
             //    （队伍映射与锁步世界都是**按房**算的 ⇒ 跨房重号无害）
-            for (int slot = room.SeatCount + room.BotCount; slot < targetSeats; slot++)
+            //
+            // ⚠️ 2026-09-28 修：原来写的是 `for (int slot = room.SeatCount + room.BotCount; ...)`，
+            //    于是 1 真人时要补 3 个机器人 ⇒ slot 从 **1** 开始 ⇒ 编号 **9002..9004**。
+            //    那是**槽位（世界第几个位置）**当成了**机器人序号**用 —— 差一位，第一个机器人永远不是 9001。
+            //    现在 `slot` 明确是「本房内第几个机器人（**0 起**）」⇒ 第一个机器人就是 `BotIdBase`（9001）。
+            //    📌 判据：`--fill-seats=4` + 1 真人 ⇒ 世界实体编号 = `1,9001,9002,9003`。
+            for (int slot = room.BotCount; slot < targetSeats - room.SeatCount; slot++)
             {
-                room.AddBot(Room.BotIdBase + slot, "Bot" + slot);
+                // 名字给人看（第 1 个机器人叫 Bot1），编号用段起点 + 序号（9001 起）
+                room.AddBot(Room.BotIdBase + slot, "Bot" + (slot + 1));
                 addedHere++;
             }
 

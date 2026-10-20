@@ -30,6 +30,7 @@ using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
 using NBC.Shared;
 using NBC.Shared.Sim;           // M4-S4 S4-b：`WorldState` / `WorldStep` / `WorldStateHash`（确定性内核）               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
+using NBC.Shared.Battle;        // 2026-10-20：圆形射程判据（`BattleRules.WithinBasicAttackRange`）
 using NBC.Shared.Net;
 
 namespace NBC.NetProbe
@@ -129,6 +130,8 @@ namespace NBC.NetProbe
             Input_PlayerMismatchIsRejected();
             Attack_LandsInRangeAndRespectsCooldown();
             Attack_OutOfRangeIsRefusedSilently();
+            BasicAttackRange_IsCircular();
+            BasicAttackRange_ServerUsesCircle();
             Heroes_FollowSeats();
 
             Console.WriteLine();
@@ -264,6 +267,18 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【三十三】P0（§三十六）：**未知副本号打不挂服务端** + 合法副本照常开打 + 补席位 ⇒ 锁步开局");
             RoomGuard_UnknownDungeonNeverKillsTheHost();
+
+            Console.WriteLine();
+            Console.WriteLine("【三十四】M4-S4 S4-e 收尾：**真分流**（喂给表现层的那份数据由开关决定）+ 3D 接线的那一层");
+            PresentationSource_Checks();
+
+            Console.WriteLine();
+            Console.WriteLine("【三十五】验收修正：**沉默冻结**（停滞回退）/ 回退口径 / 世界可用 / 只读 / 零分配 / 换局");
+            PresentationSource_StallAndZeroAlloc_Checks();
+
+            Console.WriteLine();
+            Console.WriteLine("【三十六】第二轮验收：**第二局真的能打** / 停滞滞回 / 零分配（实体数变化）/ `CopySortedTo` 同序");
+            SecondMatchAndHysteresis_Checks();
 
             Console.WriteLine();
             Console.WriteLine("【S4e3】端到端：`NetSession` + **真 `TcpTransport`** 连**真 Host**（默认不启用）");
@@ -1586,7 +1601,8 @@ namespace NBC.NetProbe
                 int wolfId = FirstAliveWolfId(battle);
                 int hpBefore = battle.Find(wolfId)!.Hp;
 
-                // 出生点在 (-1000, 0)，狼在 (≈2000, 1000)：切比雪夫距离 3000 > 射程 2000
+                // 出生点在 (-1000, 0)，狼在 (≈2000, 1000)：**圆判据**下欧氏距离 ≈2236 > 射程 2000
+                // （旧切比雪夫判据是 3000，两者结论一致；对角方向才会分歧，见 BasicAttackRange_IsCircular）
                 a.SendInput(moveX: 0, moveY: 0, actionBits: 1u, targetEntityId: wolfId);
                 h.TickBattles(2);
 
@@ -1597,6 +1613,107 @@ namespace NBC.NetProbe
                 Check("输入上行：射程外被拒**只记日志、不回错误**（回错误会变成每帧刷屏）",
                     a.LastError() == null && h.Battles.AttacksRefused >= 1,
                     $"客户端收到错误={a.LastError() != null}，服务端拒绝计数={h.Battles.AttacksRefused}");
+            }
+        }
+
+        /// <summary>
+        /// 射程是**圆**（2026-10-20 改）：判据是距离平方，不是切比雪夫。
+        /// <para>⚠️ 这条是**改动本身的判据**：把 `WithinBasicAttackRange` 退回切比雪夫（`max(|dx|,|dz|)`）
+        /// ⇒ 下面「对角 1500/1500 应在射程外」那条**必须红**（切比雪夫 1500 ≤ 2000 会判"能打"）。</para>
+        /// </summary>
+        private static void BasicAttackRange_IsCircular()
+        {
+            int range = BattleRules.BasicAttackRangeMm;
+
+            // ① 轴向上刚好等于射程 ⇒ 在射程内（圆的边界上）
+            Check("尺子（圆）⭐ 轴向 " + range + "mm ⇒ 在射程内（边界上）",
+                BattleRules.WithinBasicAttackRange(0, 0, range, 0),
+                "WithinBasicAttackRange(0,0," + range + ",0)");
+
+            // ② 轴向上多 1mm ⇒ 射程外
+            Check("尺子（圆）⭐ 轴向 " + (range + 1) + "mm ⇒ 射程外",
+                !BattleRules.WithinBasicAttackRange(0, 0, range + 1, 0),
+                "WithinBasicAttackRange(0,0," + (range + 1) + ",0)");
+
+            // ③ ⭐⭐ 对角：切比雪夫 1500 ≤ 2000（旧判据会放行），但欧氏 2121 > 2000 ⇒ 必须在射程外
+            Check("尺子（圆）⭐⭐ **对角 1500/1500 ⇒ 射程外**（切比雪夫会误判成「能打」）",
+                !BattleRules.WithinBasicAttackRange(0, 0, 1500, 1500),
+                "切比雪夫=1500（旧判据≤2000），欧氏≈2121（新判据>2000）");
+
+            // ④ 对角刚好在圆里：1414/1414 ⇒ 欧氏 1999.6 ⇒ 在射程内
+            Check("尺子（圆）⭐ 对角 1414/1414 ⇒ 在射程内（约 1999.6mm）",
+                BattleRules.WithinBasicAttackRange(0, 0, 1414, 1414),
+                "WithinBasicAttackRange(0,0,1414,1414)");
+
+            // ⑤ 对称性：谁甲谁乙不影响
+            Check("尺子（圆）：甲乙互换 ⇒ 结果相同",
+                BattleRules.WithinBasicAttackRange(0, 0, 1500, 1500)
+                    == BattleRules.WithinBasicAttackRange(1500, 1500, 0, 0),
+                "对称性");
+
+            // ⑥ 显示用距离：四舍五入的整数欧氏（1500/1500 ⇒ 2121）
+            Check("尺子：显示距离 = 整数欧氏（1500/1500 ⇒ 2121，不引浮点）",
+                BattleRules.DistanceMmRounded(0, 0, 1500, 1500) == 2121,
+                "实际=" + BattleRules.DistanceMmRounded(0, 0, 1500, 1500));
+
+            // ⑦ 显示距离的边界：0 ⇒ 0；（射程,0）⇒ 射程；（射程,1）⇒ 四舍五入仍是射程（出界时靠调用方 +1 显示）
+            Check("尺子：显示距离的边界（0 ⇒ 0；(2000,0) ⇒ 2000；(2000,1) ⇒ 2000 四舍五入）",
+                BattleRules.DistanceMmRounded(0, 0, 0, 0) == 0
+                    && BattleRules.DistanceMmRounded(0, 0, range, 0) == range
+                    && BattleRules.DistanceMmRounded(0, 0, range, 1) == range,
+                $"0⇒{BattleRules.DistanceMmRounded(0, 0, 0, 0)}，" +
+                $"2000⇒{BattleRules.DistanceMmRounded(0, 0, range, 0)}，" +
+                $"2000/1⇒{BattleRules.DistanceMmRounded(0, 0, range, 1)}");
+        }
+
+        /// <summary>
+        /// **服务端整合判据**（2026-10-20 补）：上一版这 7 条全都直接调 `BattleRules`，
+        /// **没有一条穿过 `DungeonBattle`** ⇒ 只改共享层、忘了改服务端，探针照样全绿。
+        /// <para>这一节直接造实体、走 `InAttackRange` 与 `TryBasicAttack`（真业务路径）。</para>
+        /// </summary>
+        private static void BasicAttackRange_ServerUsesCircle()
+        {
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+                h.TickBattles(1);
+
+                DungeonBattle battle = h.BattleOf(a)!;
+                BattleEntity hero = h.HeroOf(a)!;
+                int range = DungeonBattle.BasicAttackRangeMm;
+
+                // 造 4 只狼，位置都相对英雄，覆盖：对角 1500/1500、对角 1414/1414、轴向射程、轴向射程+1
+                BattleEntity diag1500 = battle.AddEntity(6001, 1, 300, hero.PosXmm + 1500, hero.PosZmm + 1500);
+                BattleEntity diag1414 = battle.AddEntity(6001, 1, 300, hero.PosXmm + 1414, hero.PosZmm + 1414);
+                BattleEntity axisRange = battle.AddEntity(6001, 1, 300, hero.PosXmm + range, hero.PosZmm);
+                BattleEntity axisOver = battle.AddEntity(6001, 1, 300, hero.PosXmm + range + 1, hero.PosZmm);
+
+                Check("服务端⭐ **对角 1500/1500 ⇒ 不在射程内**（真业务路径 `InAttackRange`）",
+                    !battle.InAttackRange(hero, diag1500),
+                    "InAttackRange(hero, 对角1500/1500)=" + battle.InAttackRange(hero, diag1500));
+
+                Check("服务端⭐ 对角 1414/1414 ⇒ 在射程内（约 1999.6mm）",
+                    battle.InAttackRange(hero, diag1414),
+                    "InAttackRange(hero, 对角1414/1414)=" + battle.InAttackRange(hero, diag1414));
+
+                Check("服务端⭐ 轴向刚好射程 ⇒ 在射程内（边界 `<=`）",
+                    battle.InAttackRange(hero, axisRange),
+                    "InAttackRange(hero, 轴向" + range + ")=" + battle.InAttackRange(hero, axisRange));
+
+                Check("服务端⭐ 轴向射程+1 ⇒ 在射程外",
+                    !battle.InAttackRange(hero, axisOver),
+                    "InAttackRange(hero, 轴向" + (range + 1) + ")=" + battle.InAttackRange(hero, axisOver));
+
+                // ⭐⭐ 这条才是"服务端真的用了圆"的硬证据：走 `TryBasicAttack`（含日志与拒绝原因）
+                bool attacked = battle.TryBasicAttack(hero, diag1500.Id, out string reason);
+                Check("服务端⭐⭐ **`TryBasicAttack` 对角目标 ⇒ 拒绝**且原因点明射程外",
+                    !attacked && reason.Contains("射程外"),
+                    "attacked=" + attacked + "，原因=" + reason);
+
+                // AI 度量钉死：仇恨/回家用的是切比雪夫，别哪天被"顺手统一成欧氏"
+                Check("服务端⭐ **AI 度量仍是切比雪夫**：`DistanceMm` 对角 1500/1500 ⇒ 1500",
+                    DungeonBattle.DistanceMm(hero, diag1500) == 1500,
+                    "DistanceMm=" + DungeonBattle.DistanceMm(hero, diag1500));
             }
         }
 
@@ -6270,6 +6387,32 @@ namespace NBC.NetProbe
                     "满=" + room.IsFull + "；相位=" + room.Phase +
                     "；真人=" + room.SeatCount + "；机器人=" + room.BotCount);
 
+                // ⭐ 2026-09-28 修的那条小问题：机器人编号**从保留段的第一个开始**
+                //    （原来 `slot` 用的是「槽位」⇒ 1 真人时从 1 起 ⇒ 9002..9004，永远用不到 9001）
+                var botIds = new List<long>(room.BotCount);
+
+                for (int i = 0; i < room.Bots.Count; i++)
+                {
+                    botIds.Add(room.Bots[i].PlayerId);
+                }
+
+                botIds.Sort();
+
+                bool botIdsContiguous = botIds.Count == 3;
+
+                for (int i = 0; botIdsContiguous && i < botIds.Count; i++)
+                {
+                    if (botIds[i] != Room.BotIdBase + i)
+                    {
+                        botIdsContiguous = false;
+                    }
+                }
+
+                Check("§S4e4⭐ 机器人编号**从保留段第一个开始连续**（9001,9002,9003 —— 原来偏一位成了 9002..9004）",
+                    botIdsContiguous,
+                    "机器人=" + string.Join(",", botIds.ConvertAll(x => x.ToString()).ToArray()) +
+                    "（期望 " + Room.BotIdBase + ".." + (Room.BotIdBase + 2) + "）");
+
                 Check("§P0⭐ 锁步**真的开局**了（不只是相位变了）：`HasRoom` 为真、服务端广播了帧",
                     lockstep.HasRoom(room.RoomId) && lockstep.BroadcastFrames >= 3,
                     "HasRoom=" + lockstep.HasRoom(room.RoomId) +
@@ -6299,6 +6442,1096 @@ namespace NBC.NetProbe
                     frames >= 3 && lastFrame >= 2,
                     "收帧数=" + frames + "；末帧=" + lastFrame);
             }
+        }
+
+        /// <summary>
+        /// 【三十四】S4-e 收尾：**真分流** —— 「客户端喂给表现层的那份数据」由开关决定。
+        ///
+        /// <para>被验的是两个**纯 C#**的小件（都在 `Game\Net\`，探针通配编得到 ⇒ 能直驱、能变异）：</para>
+        /// <list type="bullet">
+        /// <item>`ViewSourceDecision.ChooseSource(bool lockstepMode, bool lockstepStarted, bool worldUsable)` —— 选源那条规则
+        /// （第三个参数是 §S4e5 补的：**世界可用 = 非 null 且 实体数 > 0 且 已开局**）</item>
+        /// <item>`PresentationFeed` —— 把选中的源喂进**同一个** `SnapshotView`（3D 那一层读的就是它）</item>
+        /// </list>
+        ///
+        /// <para>⭐ 三件事，每件都对应一类**静默**错误：</para>
+        /// <list type="number">
+        /// <item>**世界不可用时回退**：锁步模式下但还没开局 / 世界是 0 实体 ⇒ **不许**用那份数据盖掉快照
+        /// （盖掉的表现是「场景里东西全没了」，不报错、计数也不涨）</item>
+        /// <item>**帧号单调**：两套帧号坐标系不同 ⇒ 切源时表现层**自己发帧号**，
+        /// `SnapshotView.StaleIgnored` 必须一直是 0（否则数据被**静静丢掉** ⇒ 画面停住）</item>
+        /// <item>**只读 + 复用**：`LockstepClient.World` 一个字段都不写、`EntitySnapshot` 跨帧是同一批对象</item>
+        /// </list>
+        ///
+        /// <para>⚠️ 这一节**不碰 Unity**（视图接管那个 MonoBehaviour 归 `_api-probe` 管编译，靠 §35.0 人工看）。</para>
+        /// <para>⚠️ 停滞回退 / 回退口径 / 0 实体 / 只读 / 零分配 / 换局 那六条在**下一节【三十五】**（§S4e5）。</para>
+        /// </summary>
+        private static void PresentationSource_Checks()
+        {
+            // ================================================================
+            //  ① 纯决策：四种组合逐一钉住（阳性对照就是「开但未开局」）
+            // ================================================================
+            Check("§S4e4：关 ⇒ 快照（开局与未开局**都是**快照 —— 关着的时候锁步世界再新也不用它）",
+                ViewSourceDecision.ChooseSource(false, false, true) == EViewSource.Snapshot &&
+                ViewSourceDecision.ChooseSource(false, true, true) == EViewSource.Snapshot,
+                "未开局=" + ViewSourceDecision.ChooseSource(false, false, true) +
+                " 已开局=" + ViewSourceDecision.ChooseSource(false, true, true));
+
+            Check("§S4e4⭐ **阳性对照：开但未开局 ⇒ 回退到快照**（去掉这条就会拿空世界盖掉快照）",
+                ViewSourceDecision.ChooseSource(true, false, true) == EViewSource.Snapshot,
+                "开+未开局 ⇒ " + ViewSourceDecision.ChooseSource(true, false, true));
+
+            Check("§S4e4：开且已开局 ⇒ 用锁步世界",
+                ViewSourceDecision.ChooseSource(true, true, true) == EViewSource.Lockstep,
+                "开+已开局 ⇒ " + ViewSourceDecision.ChooseSource(true, true, true));
+
+            // ⭐ §S4e5：第三个判据 —— **世界可用**（非 null 且 实体数 > 0 且 已开局）。
+            //    上一版只判 `!= null`，于是「0 实体的世界」会被当成可用 ⇒ 空快照盖掉画面。
+            Check("§S4e5⭐ **世界可用 = 非 null 且 实体数 > 0 且 已开局**（0 实体 ≠ 可用；开+已开局也得回退）",
+                !ViewSourceDecision.IsWorldUsable(null, true) &&
+                !ViewSourceDecision.IsWorldUsable(new WorldState(), true) &&
+                !ViewSourceDecision.IsWorldUsable(MakeOneEntityWorld(), false) &&
+                ViewSourceDecision.IsWorldUsable(MakeOneEntityWorld(), true) &&
+                ViewSourceDecision.ChooseSource(true, true, false) == EViewSource.Snapshot,
+                "null=" + ViewSourceDecision.IsWorldUsable(null, true) +
+                " 0实体=" + ViewSourceDecision.IsWorldUsable(new WorldState(), true) +
+                " 未开局=" + ViewSourceDecision.IsWorldUsable(MakeOneEntityWorld(), false));
+
+            // ================================================================
+            //  ② 喂给表现层：快照那条
+            // ================================================================
+            SnapshotView serverView = MakeServerSnapshotView(5, 7, 50, 1);
+
+            var lockstepWorld = new WorldState();
+            lockstepWorld.Add(1, new FixVector3(1, 0, 2), 100);       // 我
+            lockstepWorld.Add(9001, new FixVector3(-1, 0, 3), 0);     // 已死
+            lockstepWorld.SetTick(0);
+
+            var feed = new PresentationFeed();
+
+            bool fedSnapshot = feed.Refresh(1, serverView, lockstepWorld, -1, false);
+            EntitySnapshot snapMe = feed.View.Find(7);
+
+            Check("§S4e4⭐ 关 ⇒ 表现层拿到**服务端快照**（单位 7、HP 50、`owner_player_id` 原样照抄）",
+                fedSnapshot && feed.Source == EViewSource.Snapshot && feed.FramesFromSnapshot == 1 &&
+                feed.View.EntityCount == 1 && snapMe != null && snapMe.Hp == 50 &&
+                snapMe.OwnerPlayerId == 1 && feed.FallbackEvents == 0,
+                "源=" + feed.Source + "；" + feed.Describe());
+
+            // ---- ③ 同一张快照再喂一遍 ⇒ 不重复采纳 ----
+            long appliedBefore = feed.View.Applied;
+            bool fedAgain = feed.Refresh(1, serverView, lockstepWorld, -1, false);
+
+            Check("§S4e4：源帧号没变 ⇒ **不重喂**（`Applied` 不涨；否则它就是个假指标）",
+                !fedAgain && feed.View.Applied == appliedBefore,
+                "返回=" + fedAgain + "；Applied=" + feed.View.Applied);
+
+            // ================================================================
+            //  ④ ⭐⭐ 本节的 **star**：开锁步但**还没开局** ⇒ 回退，而且**绝不盖掉**已有的快照
+            // ================================================================
+            feed.UseLockstep = true;
+
+            long tickBeforeFallback = feed.View.ServerTick;
+            bool fedFallback = feed.Refresh(1, serverView, lockstepWorld, 0, false);
+
+            Check("§S4e4⭐⭐ **开但未开局 ⇒ 回退**：世界**没被盖掉**（单位 7 还在、HP 仍是 50）、回退计数 +1",
+                !fedFallback && feed.Source == EViewSource.Snapshot && feed.FallbackEvents == 1 &&
+                feed.View.EntityCount == 1 && feed.View.Find(7) != null && feed.View.Find(7).Hp == 50 &&
+                feed.View.ServerTick == tickBeforeFallback && feed.View.StaleIgnored == 0,
+                "源=" + feed.Source + "；实体=" + feed.View.EntityCount +
+                "；表现帧=" + feed.View.ServerTick + "（回退前 " + tickBeforeFallback + "）；" + feed.Describe());
+
+            // ================================================================
+            //  ⑤ 开局了 ⇒ 换成锁步世界（位置 / 血量 / `owner_player_id` 全来自锁步）
+            // ================================================================
+            bool fedLockstep = feed.Refresh(1, serverView, lockstepWorld, 0, true);
+            EntitySnapshot lockstepMe = feed.View.Find(1);
+            EntitySnapshot lockstepDead = feed.View.Find(9001);
+
+            Check("§S4e4⭐ 开且已开局 ⇒ 表现层拿到**锁步世界**（单位 1 在、位置 1000/2000 毫米、owner=1、9001 已死）",
+                fedLockstep && feed.Source == EViewSource.Lockstep && feed.FramesFromLockstep == 1 &&
+                feed.View.EntityCount == 2 && lockstepMe != null && lockstepMe.PosXMm == 1000 &&
+                lockstepMe.PosZMm == 2000 && lockstepMe.OwnerPlayerId == 1 && lockstepMe.Alive &&
+                lockstepDead != null && !lockstepDead.Alive,
+                "源=" + feed.Source + "；" + feed.Describe());
+
+            // ================================================================
+            //  ⑥ ⭐⭐ 切源来回（快照 → 锁步 → 快照 → 锁步）⇒ 帧号**不倒退**
+            //     ⚠️ 两套帧号（服务端 tick / 锁步帧）没有可比性：直接用源帧号当 `ServerTick`
+            //        就会在这一步被 `SnapshotView` 静静丢掉 ⇒ 画面停住
+            // ================================================================
+            SnapshotView serverView2 = MakeServerSnapshotView(6, 7, 40, 1);
+
+            long appliedBeforeSwitch = feed.View.Applied;
+
+            feed.UseLockstep = false;
+            bool back = feed.Refresh(1, serverView2, lockstepWorld, 0, true);      // 关 = 用快照（帧 6）
+
+            feed.UseLockstep = true;
+            bool again1 = feed.Refresh(1, serverView2, lockstepWorld, 1, true);    // 锁步帧 1
+            bool again2 = feed.Refresh(1, serverView2, lockstepWorld, 2, true);    // 锁步帧 2
+
+            Check("§S4e4⭐⭐ **切源不倒退**：`StaleIgnored == 0`、`Applied` 恰好 +3（表现层自己发帧号）",
+                back && again1 && again2 && feed.View.StaleIgnored == 0 &&
+                feed.View.Applied == appliedBeforeSwitch + 3 &&
+                feed.SourceSwitches >= 2,
+                "Applied " + appliedBeforeSwitch + "→" + feed.View.Applied +
+                "；Stale=" + feed.View.StaleIgnored + "；" + feed.Describe());
+
+            // ================================================================
+            //  ⑦ ⭐ 不每帧分配：同一个单位跨帧是**同一个 `EntitySnapshot` 对象**（池子复用）
+            // ================================================================
+            EntitySnapshot pooledBefore = feed.View.Find(1);
+
+            feed.Refresh(1, serverView2, lockstepWorld, 3, true);
+            feed.Refresh(1, serverView2, lockstepWorld, 4, true);
+
+            EntitySnapshot pooledAfter = feed.View.Find(1);
+
+            Check("§S4e4⭐ **不每帧分配**：同一单位跨帧是**同一个对象**（`EntitySnapshot` 池子复用）",
+                ReferenceEquals(pooledBefore, pooledAfter) && pooledAfter != null,
+                "同一个=" + ReferenceEquals(pooledBefore, pooledAfter));
+
+            // ================================================================
+            //  ⑧ ⭐ 换一局（**新世界对象** + 帧号回到 0）⇒ 仍然能喂进去
+            //     ⚠️ 适配器的单调闸记着上一局的末帧；不换适配器 ⇒ 新一局第 0 帧被挡 ⇒ **表现层永远不更新**
+            // ================================================================
+            var secondMatch = new WorldState();
+            secondMatch.Add(1, new FixVector3(0, 0, 0), 100);
+            secondMatch.Add(9001, new FixVector3(0, 0, 0), 100);
+            secondMatch.SetTick(0);
+
+            bool secondFed = feed.Refresh(1, serverView2, secondMatch, 0, true);
+            EntitySnapshot secondBot = feed.View.Find(9001);
+
+            Check("§S4e4⭐ **换一局**（新世界 + 帧号回到 0）⇒ 仍然喂得进去（适配器跟着换）",
+                secondFed && feed.Source == EViewSource.Lockstep && feed.View.EntityCount == 2 &&
+                secondBot != null && secondBot.Alive && feed.View.StaleIgnored == 0,
+                "喂进去了=" + secondFed + "；" + feed.Describe());
+
+            Check("§S4e4：整节跑完 `StaleIgnored` 仍是 **0**（一次都没被当成过期丢掉）",
+                feed.View.StaleIgnored == 0,
+                "Stale=" + feed.View.StaleIgnored);
+        }
+
+        /// <summary>
+        /// 【三十五】验收修正：五个问题各一条**可直驱**的检查（全部走 `PresentationFeed.Refresh`，不碰 Unity）。
+        ///
+        /// <para>为什么要有这一节：上一轮的【三十四】把"真分流"验得很细，但有五个洞是**读代码才看得出来**的
+        /// ——它们都表现为「不报错、计数也不涨」，只有把它们做成**能当场变红**的检查才算修好：</para>
+        /// <list type="number">
+        /// <item>⭐⭐ **沉默冻结**：`Started` 之后帧不再前进（一局结束 / 服务端停播）⇒ 上一版**永远停在上一帧**
+        /// （回退 0、`StaleIgnored` 0、`Applied` 不动）。现在必须**自动回退到快照**并计数。</item>
+        /// <item>**回退口径**：上一版每帧 `++` ⇒ 一分钟上万 ⇒「回退 1 次」和「回退 1 帧」分不清。
+        /// 现在**事件数**（跃迁才 +1）与**帧数**（每帧 +1）分开，两个都要钉住。</item>
+        /// <item>**0 实体不算可用**：`world != null` 但 0 实体 ⇒ 不许拿它盖掉快照（上一版只判 `null`）。</item>
+        /// <item>**只读**：`WorldStateHash.Compute(world)` 喂前喂后必须一样（上一版只靠人读代码）。</item>
+        /// <item>**零分配**：`GC.GetAllocatedBytesForCurrentThread()` 的差值是 **0**（上一版每帧一个 `SimEntity[]`）。</item>
+        /// </list>
+        /// <para>外加**换局**两种形态：换了对象、以及**同一个对象但帧号回到 0**（后者上一版会把新一局第 0 帧挡掉）。</para>
+        /// </summary>
+        private static void PresentationSource_StallAndZeroAlloc_Checks()
+        {
+            // ================================================================
+            //  ① 回退口径：**事件数** vs **帧数**（上一版混成一个数 ⇒ 判据失效）
+            // ================================================================
+            var eventFeed = new PresentationFeed();
+            eventFeed.UseLockstep = true;
+
+            for (int i = 0; i < 10; i++)
+            {
+                eventFeed.Refresh(1, null, null, -1, false);     // 未开局、也没有快照 ⇒ 一次都没喂
+            }
+
+            Check("§S4e5⭐ **回退口径**：未开局连调 10 次 `Refresh` ⇒ 回退**事件**数 == 1、回退**帧**数 == 10",
+                eventFeed.FallbackEvents == 1 && eventFeed.FallbackFrames == 10 &&
+                eventFeed.FallbackReason == EFallbackReason.NotStarted &&
+                eventFeed.Source == EViewSource.Snapshot,
+                "事件=" + eventFeed.FallbackEvents + " 帧=" + eventFeed.FallbackFrames +
+                " 原因=" + ViewSourceDecision.Describe(eventFeed.FallbackReason) + "；" + eventFeed.Describe());
+
+            eventFeed.Refresh(1, null, null, -1, false);
+
+            Check("§S4e5：同一段回退里再调 1 次 ⇒ **事件数仍是 1**（跃迁才 +1）、帧数 11（这一条把两个口径钉开）",
+                eventFeed.FallbackEvents == 1 && eventFeed.FallbackFrames == 11,
+                "事件=" + eventFeed.FallbackEvents + " 帧=" + eventFeed.FallbackFrames);
+
+            // ================================================================
+            //  ② ⭐⭐ 停滞回退：`Started` 之后**不再喂新帧**（一局结束 / 服务端停播的现场）
+            //     ⚠️ 判据是**刷新计数**（`StallRefreshThreshold`），不是墙上时钟 ⇒ 这里能直接驱动
+            // ================================================================
+            var stallFeed = new PresentationFeed();
+            stallFeed.UseLockstep = true;
+
+            var stallWorld = new WorldState();
+            stallWorld.Add(1, new FixVector3(3, 0, 4), 100);
+            stallWorld.Add(9001, new FixVector3(-2, 0, 1), 0);
+            stallWorld.SetTick(5);
+
+            bool stallFirstFed = stallFeed.Refresh(
+                1, MakeServerSnapshotView(100, 7, 50, 1), stallWorld, 5, true);
+
+            bool stallFirstWasLockstep = stallFeed.Source == EViewSource.Lockstep &&
+                                         stallFeed.View.Find(1) != null;
+
+            long appliedAtStall = stallFeed.View.Applied;
+
+            // 之后帧号**一直是 5**，而服务端快照链照常在推（它没停 —— 停的只有锁步那条）
+            int stallRefreshes = PresentationFeed.StallRefreshThreshold + 2;
+
+            for (int i = 0; i < stallRefreshes; i++)
+            {
+                stallFeed.Refresh(1, MakeServerSnapshotView(101 + i, 7, 50, 1), stallWorld, 5, true);
+            }
+
+            Check("§S4e5⭐⭐ **停滞回退**：`Started` 但帧连续 N 次 `Refresh` 没前进 ⇒ 自动回退到快照（不再沉默冻结）",
+                stallFirstFed && stallFirstWasLockstep &&
+                stallFeed.Stalled && stallFeed.FallbackReason == EFallbackReason.Stalled &&
+                stallFeed.Source == EViewSource.Snapshot && stallFeed.Chosen == EViewSource.Snapshot &&
+                stallFeed.View.Find(7) != null && stallFeed.View.Find(1) == null &&
+                stallFeed.View.Applied > appliedAtStall && stallFeed.View.StaleIgnored == 0,
+                "停滞=" + stallFeed.Stalled +
+                "；原因=" + ViewSourceDecision.Describe(stallFeed.FallbackReason) +
+                "；源=" + stallFeed.Source + "；Applied " + appliedAtStall + "→" + stallFeed.View.Applied +
+                "；" + stallFeed.Describe());
+
+            Check("§S4e5⭐⭐ 停滞这一段**只算 1 个回退事件**（帧数 = 从判停那一帧起每帧 +1 = N+2−N+1）",
+                stallFeed.FallbackEvents == 1 &&
+                stallFeed.FallbackFrames == stallRefreshes - PresentationFeed.StallRefreshThreshold + 1,
+                "事件=" + stallFeed.FallbackEvents + " 帧=" + stallFeed.FallbackFrames +
+                "（期望帧 " + (stallRefreshes - PresentationFeed.StallRefreshThreshold + 1) + "）");
+
+            // ⭐ §S4e6（必修 2）：回锁步要**滞回** —— 前进 **1** 帧不够（否则 30/1/30 抖动会稳定地闪）。
+            bool stallFirstAdvance = stallFeed.Refresh(
+                1, MakeServerSnapshotView(200, 7, 50, 1), stallWorld, 6, true);
+
+            Check("§S4e6⭐⭐ **滞回**：判停后只前进 1 帧（5 → 6）⇒ **仍在回退**（`Stalled` 仍是 true、数据源还是快照）",
+                stallFirstAdvance && stallFeed.Stalled &&
+                stallFeed.Source == EViewSource.Snapshot &&
+                stallFeed.FallbackReason == EFallbackReason.Stalled &&
+                stallFeed.StallRecoverProgress == 1 &&
+                stallFeed.View.Find(1) == null && stallFeed.View.Find(7) != null,
+                "前进 1 帧后：停滞=" + stallFeed.Stalled +
+                "；恢复进度=" + stallFeed.StallRecoverProgress + "/" + PresentationFeed.StallRecoverThreshold +
+                "；源=" + stallFeed.Source + "；" + stallFeed.Describe());
+
+            bool stallAdvance2 = stallFeed.Refresh(
+                1, MakeServerSnapshotView(201, 7, 50, 1), stallWorld, 7, true);
+            bool stallAdvance3 = stallFeed.Refresh(
+                1, MakeServerSnapshotView(202, 7, 50, 1), stallWorld, 8, true);
+            bool stallAdvance4 = stallFeed.Refresh(
+                1, MakeServerSnapshotView(203, 7, 50, 1), stallWorld, 9, true);
+
+            Check("§S4e6⭐ 滞回：连续 " + PresentationFeed.StallRecoverThreshold +
+                  " 次真前进（6→7→8→9）⇒ 才回到锁步、`Stalled` 复位（不用人点、也不用重开一局）",
+                stallAdvance2 && stallAdvance3 && stallAdvance4 &&
+                !stallFeed.Stalled && stallFeed.Source == EViewSource.Lockstep &&
+                stallFeed.FallbackReason == EFallbackReason.None &&
+                stallFeed.View.Find(1) != null && stallFeed.View.Find(7) == null,
+                "回锁步=" + stallAdvance4 + "；停滞=" + stallFeed.Stalled +
+                "；" + stallFeed.Describe());
+
+            // ================================================================
+            //  ③ ⭐ 空世界不盖：`world` 非 null 但 **0 实体** ⇒ 不许拿它盖掉快照
+            //     （上一版只判 `!= null` ⇒ 空快照会把 `View` 清空，而且不报错）
+            // ================================================================
+            var emptyFeed = new PresentationFeed();
+            SnapshotView emptyServer = MakeServerSnapshotView(20, 7, 50, 1);
+
+            bool emptyFirstFed = emptyFeed.Refresh(1, emptyServer, null, -1, false);
+            long emptyTick = emptyFeed.View.ServerTick;
+
+            emptyFeed.UseLockstep = true;
+
+            var emptyWorld = new WorldState();          // 非 null，但**一个实体都没有**
+            bool emptyFed = emptyFeed.Refresh(1, emptyServer, emptyWorld, 0, true);
+
+            Check("§S4e5⭐ **0 实体的世界不算可用**：不喂空快照、单位 7 的 HP 50 **仍在**、回退原因 = 世界不可用",
+                emptyFirstFed && !emptyFed &&
+                emptyFeed.FallbackReason == EFallbackReason.WorldUnusable &&
+                emptyFeed.FallbackEvents == 1 &&
+                emptyFeed.Source == EViewSource.Snapshot && emptyFeed.Chosen == EViewSource.Snapshot &&
+                emptyFeed.View.EntityCount == 1 && emptyFeed.View.Find(7) != null &&
+                emptyFeed.View.Find(7).Hp == 50 && emptyFeed.View.ServerTick == emptyTick &&
+                emptyFeed.View.StaleIgnored == 0,
+                "喂进去了=" + emptyFed +
+                "；原因=" + ViewSourceDecision.Describe(emptyFeed.FallbackReason) +
+                "；实体=" + emptyFeed.View.EntityCount + "；" + emptyFeed.Describe());
+
+            // ================================================================
+            //  ④ 只读：喂之前 / 喂之后 `WorldStateHash.Compute(world)` **必须相同**
+            //     （上一版这条只靠人读代码 —— 现在钉进探针，反手就能红）
+            // ================================================================
+            var readOnlyWorld = new WorldState();
+            readOnlyWorld.Add(1, new FixVector3(1, 0, 2), 100);
+            readOnlyWorld.Add(9002, new FixVector3(-3, 0, 0), 60);
+            readOnlyWorld.SetTick(7);
+
+            ulong hashBefore = WorldStateHash.Compute(readOnlyWorld);
+
+            var readOnlyFeed = new PresentationFeed();
+            readOnlyFeed.UseLockstep = true;
+            SnapshotView readOnlyServer = MakeServerSnapshotView(300, 7, 50, 1);
+
+            for (int i = 0; i < 20; i++)
+            {
+                readOnlyFeed.Refresh(1, readOnlyServer, readOnlyWorld, 7 + i, true);   // 真喂 20 帧
+            }
+
+            readOnlyFeed.Refresh(1, readOnlyServer, null, -1, true);                    // 「世界不可用」那条回退也走一遍
+            readOnlyFeed.Refresh(1, readOnlyServer, readOnlyWorld, 26, false);          // 「没开局」那条也走一遍
+
+            ulong hashAfter = WorldStateHash.Compute(readOnlyWorld);
+
+            Check("§S4e5⭐ **只读**：20 帧锁步 + 两条回退走完之后，`WorldStateHash` / `Tick` / 实体数**一位都没变**",
+                hashBefore == hashAfter && readOnlyWorld.Tick == 7 && readOnlyWorld.Count == 2 &&
+                readOnlyFeed.FramesFromLockstep == 20,
+                "前=" + hashBefore + " 后=" + hashAfter + " tick=" + readOnlyWorld.Tick +
+                " 实体=" + readOnlyWorld.Count);
+
+            // ================================================================
+            //  ⑤ 零分配：warm-up 之后 1000 次 `Refresh`（锁步已开局）⇒ **0 字节**
+            //     （上一版每帧 `world.SnapshotSorted()` ⇒ 每帧 new 一个 `SimEntity[]`）
+            // ================================================================
+            var allocFeed = new PresentationFeed();
+            allocFeed.UseLockstep = true;
+
+            var allocWorld = new WorldState();
+            allocWorld.Add(1, new FixVector3(2, 0, 3), 100);
+            allocWorld.Add(2, new FixVector3(5, 0, 1), 80);
+            allocWorld.Add(3, new FixVector3(0, 0, 0), 60);
+
+            SnapshotView allocServer = MakeServerSnapshotView(1, 7, 50, 1);
+
+            // warm-up：池子/List 容量/排序路径涨到位，顺便让 JIT 从 tier0 升上去（否则测的是"编译分配"）
+            for (int i = 0; i < 600; i++)
+            {
+                allocFeed.Refresh(1, allocServer, allocWorld, i, true);
+            }
+
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+            for (int i = 600; i < 1600; i++)
+            {
+                allocFeed.Refresh(1, allocServer, allocWorld, i, true);
+            }
+
+            long allocatedDelta = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+            Check("§S4e5⭐⭐ **稳态零分配**：warm-up 后 1000 次 `Refresh`（锁步已开局）⇒ 分配 **0 字节**",
+                allocatedDelta == 0 && allocFeed.FramesFromLockstep == 1600,
+                "1000 次分配=" + allocatedDelta + " 字节；采纳锁步=" + allocFeed.FramesFromLockstep);
+
+            // ⭐ 快照那条也量一遍：它踩的是**同一个陷阱**（`RepeatedField<T>.Clear()` 对非空字段实测分配
+            //    88 字节/次）—— 只量锁步那条的话，快照那条照样会偷偷每帧分配。
+            var snapFeed = new PresentationFeed();
+
+            var snapSnapshot = new WorldSnapshot();
+            snapSnapshot.Entities.Add(new EntitySnapshot
+            {
+                EntityId = 7,
+                Kind = 0,
+                Hp = 50,
+                MaxHp = 50,
+                Alive = true,
+                OwnerPlayerId = 1,
+                PosXMm = 1000,
+                PosZMm = 2000,
+            });
+
+            var snapView = new SnapshotView();
+
+            for (int i = 0; i < 600; i++)           // warm-up
+            {
+                snapSnapshot.ServerTick = i + 1;
+                snapView.Apply(snapSnapshot);
+                snapFeed.Refresh(1, snapView, null, -1, false);
+            }
+
+            long snapAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+            for (int i = 600; i < 1600; i++)
+            {
+                snapSnapshot.ServerTick = 1000 + i;
+                snapView.Apply(snapSnapshot);
+                snapFeed.Refresh(1, snapView, null, -1, false);
+            }
+
+            long snapAllocatedDelta = GC.GetAllocatedBytesForCurrentThread() - snapAllocatedBefore;
+
+            Check("§S4e5⭐⭐ **快照那条也零分配**：warm-up 后 1000 次 `Refresh`（关 / 快照源）⇒ 分配 **0 字节**",
+                snapAllocatedDelta == 0 && snapFeed.FramesFromSnapshot == 1600,
+                "1000 次分配=" + snapAllocatedDelta + " 字节；采纳快照=" + snapFeed.FramesFromSnapshot);
+
+
+            // ================================================================
+            //  ⑥ 换局：新 `WorldState` + 帧号回 0 ⇒ 仍能喂进去
+            //     **并且**：同一个对象、帧号回到 0 也要能喂（上一版会把它当成"倒退"挡掉）
+            // ================================================================
+            var matchFeed = new PresentationFeed();
+            matchFeed.UseLockstep = true;
+
+            var matchA = new WorldState();
+            matchA.Add(1, new FixVector3(0, 0, 0), 100);
+            matchA.Add(9001, new FixVector3(1, 0, 1), 100);
+            matchA.SetTick(0);
+
+            SnapshotView matchServer = MakeServerSnapshotView(400, 7, 50, 1);
+
+            matchFeed.Refresh(1, matchServer, matchA, 0, true);
+            matchFeed.Refresh(1, matchServer, matchA, 1, true);
+
+            var matchB = new WorldState();
+            matchB.Add(1, new FixVector3(0, 0, 0), 100);
+            matchB.Add(9002, new FixVector3(2, 0, 2), 100);
+            matchB.SetTick(0);
+
+            bool matchBFed = matchFeed.Refresh(1, matchServer, matchB, 0, true);     // 换对象 + 帧号回 0 = 新一局
+
+            Check("§S4e5⭐ **换一局（换了对象 + 帧号回 0）** ⇒ 仍然喂得进去（适配器跟着换）",
+                matchBFed && matchFeed.FramesFromLockstep == 3 && matchFeed.View.Find(9002) != null &&
+                matchFeed.View.Find(9001) == null && matchFeed.View.StaleIgnored == 0,
+                "喂进去了=" + matchBFed + "；" + matchFeed.Describe());
+
+            bool sameObjectAdvanced = matchFeed.Refresh(1, matchServer, matchB, 2, true);
+            bool sameObjectReset = matchFeed.Refresh(1, matchServer, matchB, 0, true);   // 同一对象、帧号回 0
+
+            Check("§S4e5⭐ **同一个对象、帧号回到 0** ⇒ 也喂得进去（`frame < 上次` 同样算换了一局）",
+                sameObjectAdvanced && sameObjectReset && matchFeed.FramesFromLockstep == 5 &&
+                matchFeed.View.EntityCount == 2 && matchFeed.View.StaleIgnored == 0,
+                "中间帧=" + sameObjectAdvanced + " 回 0=" + sameObjectReset + "；" + matchFeed.Describe());
+        }
+
+        // ====================================================================
+        //  【三十六】第二轮独立验收：第二局 / 滞回 / 零分配（实体数变化） / 排序同序
+        // ====================================================================
+
+        /// <summary>
+        /// 【三十六】第二轮独立验收的 4 条（对应 `Docs\27` §35.9）。
+        ///
+        /// <para>四条都对应一类**静默**故障 —— 上一版**不会报红**，只有做成能直驱的检查才算修好：</para>
+        /// <list type="number">
+        /// <item>⭐⭐ **同一连接的第二局根本走不到**：`LockstepClient.ApplyStart` 拒绝第二次开局
+        /// + `NetSession.EnsureLockstep` 只在 null 时新建 ⇒ 开局被拒、世界不换、帧号不复位
+        /// ⇒ 新一局 `0..n` 全被"帧号不递增"挡掉 ⇒ **永远停滞、永远回退到快照**。
+        /// 本节用**真 `NetSession` + 假传输**（喂真协议消息）把两局都跑完。</item>
+        /// <item>⭐⭐ **停滞抖动**：退出回退只要 1 帧前进 ⇒「30 次回退 → 1 帧恢复 → 30 次回退」稳定成循环
+        /// ⇒ `FallbackEvents` 每周期 +1（≈1800/分钟）、`View` 在两个世界间来回翻 ⇒ **画面闪烁**。
+        /// 本节用 100 轮那个形状直驱，断言**回退事件只 +1**、且判停后 `View` **一次都没翻回锁步**。</item>
+        /// <item>⭐ **零分配只验了"长大"**：warm-up 里实体数 3→2→4 交替（覆盖 `RemoveAt` 与"缩后重涨"），
+        /// 稳态 1000 次 `Refresh` 的 `GC.GetAllocatedBytesForCurrentThread()` 差值必须**严格 0**。</item>
+        /// <item>⭐ **`CopySortedTo` 与 `SnapshotSorted()` 同序**没有断言：用**乱序登记**（9001,1,9002,0）
+        /// 造样本，逐元素比 Id / HP / 位置 / MaxHp / 冷却。</item>
+        /// </list>
+        /// </summary>
+        private static void SecondMatchAndHysteresis_Checks()
+        {
+            Section_SecondMatchOverRealSession();
+            Section_SameFrameNewMatch();
+            Section_FlutterHysteresis();
+            Section_ZeroAllocWithEntityCountChanges();
+            Section_CopySortedToSameOrder();
+        }
+
+        /// <summary>
+        /// ⭐ 小坑 5：**上一局末帧恰好是 0、新一局也从 0 起**那一格。
+        /// <para>上一版只用 `frame < m_lastLockstepFrame` 判换局 ⇒ 这一格被当"重复帧"丢掉（新一局第 0 帧丢 1 帧，
+        /// 而且只丢 1 帧 —— 最难看见的那种）。现在换局由**局号**（`NetSession.MatchSerial`）说明
+        /// ⇒ 同一个世界对象、同一个帧号也能喂进去。</para>
+        /// </summary>
+        private static void Section_SameFrameNewMatch()
+        {
+            var feed = new PresentationFeed();
+            feed.UseLockstep = true;
+
+            var world = new WorldState();
+            world.Add(1, new FixVector3(0, 0, 0), 100);
+
+            bool first = feed.Refresh(1, null, world, 0, true, 1);      // 第一局：只喂到第 0 帧
+            bool second = feed.Refresh(1, null, world, 0, true, 2);     // 第二局：同一个对象、也从 0 起
+
+            Check("§S4e6⭐ **上一局末帧 0 / 新一局也从 0 起 + 局号变了 ⇒ 喂得进去**（上一版把这 1 帧当重复丢掉）",
+                first && second && feed.FramesFromLockstep == 2 && feed.View.StaleIgnored == 0 &&
+                feed.View.Find(1) != null,
+                "第一帧=" + first + "；第二局第 0 帧=" + second +
+                "；采纳锁步=" + feed.FramesFromLockstep + "；" + feed.Describe());
+
+            // ⚠️ 反向：**同一局**里同一帧再喂一遍 ⇒ 仍然不重喂（不是"只要帧号相等就重来"）
+            bool duplicate = feed.Refresh(1, null, world, 0, true, 2);
+
+            Check("§S4e6⭐ 同局里同一帧再喂一遍 ⇒ 仍然**不重喂**（`frame <= 上次` 那条守卫还在）",
+                !duplicate && feed.FramesFromLockstep == 2,
+                "重复帧喂进去了=" + duplicate + "；采纳锁步=" + feed.FramesFromLockstep);
+        }
+
+        /// <summary>
+        /// ⭐⭐ 必修 1：**真 `NetSession` 路径上的第二局**（假传输 → 真协议消息 → 真 `LockstepClient`）。
+        /// <para>断言四件事：① 第二局开局被接受（新运行器、新世界）；② **每局计数清零**；
+        /// ③ 第二局 `0..n` 帧**真的推进**（0 帧被拒）；④ 第二局自己的分歧/判定不一致只算第二局，
+        /// 而且**事件转发跨局还是活的**（上一版把订阅挂到运行器上 ⇒ 第二局会静默失效）。</para>
+        /// </summary>
+        private static void Section_SecondMatchOverRealSession()
+        {
+            var fake = new FakeNetTransport();
+            var session = new NetSession(fake, "第二局探针", "net-probe/second-match");
+
+            session.Connect("127.0.0.1", 7799);
+            session.Pump(0);
+            fake.Push(MakeHandshakeAck(21));
+            session.Pump(0);
+
+            Check("§S4e6 阳性对照：会话已 Online（否则下面的业务消息全被忽略）",
+                session.IsOnline, "状态=" + session.State);
+
+            int desyncEvents = 0;
+            int mismatchEvents = 0;
+
+            session.DesyncDetected += d => desyncEvents++;
+            session.MatchMismatchDetected += m => mismatchEvents++;
+
+            // ---- 第一局：4 人名单、开局、喂 4 帧、造 1 条分歧 + 1 条判定不一致 ----
+            var rosterA = new List<long> { 100, 101, 102, 103 };
+            fake.Push(new ServerMessage { RoomState = MakeRoomState("probe-match", rosterA) });
+            session.Pump(0);
+
+            var entitiesA = new List<SimEntity>
+            {
+                MakeEntity(100, 0, 100),
+                MakeEntity(101, 4, 100),
+                MakeEntity(102, -4, 100),
+                MakeEntity(103, 8, 100),
+            };
+
+            WorldState serverWorldA = BuildServerWorld(entitiesA);
+            fake.Push(new ServerMessage { LockstepStart = MakeLockstepStart(entitiesA, serverWorldA, 0) });
+            session.Pump(0);
+
+            LockstepClient clientA = session.Lockstep;
+
+            Check("§S4e6 阳性对照：第一局开局成功（`Started`、局号 1、世界 4 人）",
+                clientA != null && clientA.Started && session.MatchSerial == 1 &&
+                clientA.World != null && clientA.World.Count == 4,
+                clientA == null ? "没有运行器" : clientA.Describe());
+
+            var inputsA = new List<SimInput>
+            {
+                new SimInput { EntityId = 100, MoveDirection = new FixVector3(1, 0, 0), AttackTargetId = 0 },
+                new SimInput { EntityId = 101, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                new SimInput { EntityId = 102, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                new SimInput { EntityId = 103, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+            };
+
+            const int framesA = 4;
+
+            for (int f = 0; f < framesA; f++)
+            {
+                fake.Push(new ServerMessage { LockstepFrame = MakeLockstepFrame(serverWorldA, f, inputsA) });
+                session.Pump(0);
+            }
+
+            // 分歧：一条**新的**帧（帧号 framesA），但把 `server_hash` 改一位
+            LockstepFrame tamperedA = MakeLockstepFrame(serverWorldA, framesA, inputsA);
+            tamperedA.ServerHash ^= 1UL;
+            fake.Push(new ServerMessage { LockstepFrame = tamperedA });
+            session.Pump(0);
+
+            // 判定不一致：客户端复算 = **未结束**（0 击杀、tick 远小于 1800），服务端却宣布 A 队胜
+            var resultA = new MatchResult();
+            resultA.Frame = framesA + 1;
+            resultA.Outcome = MatchRules.ToNumber(EMatchOutcome.TeamA);
+            resultA.KillsA = 0;
+            resultA.KillsB = 0;
+            fake.Push(new ServerMessage { MatchResult = resultA });
+            session.Pump(0);
+
+            Check("§S4e6 阳性对照：第一局留下了 1 条分歧 + 1 条判定不一致（第二局必须把它们清零）",
+                session.DesyncCount == 1 && session.MatchMismatchCount == 1 &&
+                desyncEvents == 1 && mismatchEvents == 1,
+                "分歧=" + session.DesyncCount + "；不一致=" + session.MatchMismatchCount +
+                "；事件 分歧/不一致=" + desyncEvents + "/" + mismatchEvents +
+                "；" + (session.Lockstep == null ? "没有运行器" : session.Lockstep.Describe()));
+
+            // ---- 第二局：**同一连接**、新名单（3 人）、新世界 ----
+            var rosterB = new List<long> { 200, 201, 202 };
+            fake.Push(new ServerMessage { RoomState = MakeRoomState("probe-match", rosterB) });
+            session.Pump(0);
+
+            var entitiesB = new List<SimEntity>
+            {
+                MakeEntity(200, 1, 100),
+                MakeEntity(201, 2, 100),
+                MakeEntity(202, 3, 100),
+            };
+
+            WorldState serverWorldB = BuildServerWorld(entitiesB);
+            fake.Push(new ServerMessage { LockstepStart = MakeLockstepStart(entitiesB, serverWorldB, 0) });
+            session.Pump(0);
+
+            LockstepClient clientB = session.Lockstep;
+
+            Check("§S4e6⭐⭐ **第二局开局被接受**（上一版 `ApplyStart` 直接拒绝）：新运行器、`Started`、局号 2、世界 3 人",
+                clientB != null && clientB.Started && !ReferenceEquals(clientA, clientB) &&
+                session.MatchSerial == 2 && clientB.World != null && clientB.World.Count == 3 &&
+                !ReferenceEquals(clientA.World, clientB.World),
+                "开局=" + (clientB != null && clientB.Started) + "；局号=" + session.MatchSerial +
+                "；" + (clientB == null ? "没有运行器" : clientB.Describe()));
+
+            Check("§S4e6⭐⭐ **每局计数清零**（本局语义）：第二局开局后 `DesyncCount` / `MatchMismatchCount` / `Outcome` 全归 0",
+                session.DesyncCount == 0 && session.MatchMismatchCount == 0 && session.MatchOutcome == null &&
+                clientB.RejectedFrames == 0 && clientB.StepsExecuted == 0 && clientB.LastSteppedFrame == -1,
+                "分歧=" + session.DesyncCount + "；不一致=" + session.MatchMismatchCount +
+                "；拒=" + clientB.RejectedFrames + "；推进=" + clientB.StepsExecuted +
+                "；末帧=" + clientB.LastSteppedFrame);
+
+            var inputsB = new List<SimInput>
+            {
+                // ⚠️ 只用**平面两轴**（X/Y）：wire 只有 `MoveXRaw` / `MoveYRaw`，`LockstepWire.ToPlainInput`
+                //    把 Z 硬写成 0（本片是平面移动）。这里塞一个 Z 方向的输入 ⇒ 客户端收到的是 (0,1,0)
+                //    ⇒ 两端 Step 的输入不同 ⇒ 每帧都报假分歧（我自己踩过，见 §35.9）。
+                new SimInput { EntityId = 200, MoveDirection = new FixVector3(0, 1, 0), AttackTargetId = 0 },
+                new SimInput { EntityId = 201, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+                new SimInput { EntityId = 202, MoveDirection = FixVector3.Zero, AttackTargetId = 0 },
+            };
+
+            const int framesB = 6;
+            LockstepFrame lastFrameB = null;
+
+            for (int f = 0; f < framesB; f++)
+            {
+                lastFrameB = MakeLockstepFrame(serverWorldB, f, inputsB);
+                fake.Push(new ServerMessage { LockstepFrame = lastFrameB });
+                session.Pump(0);
+            }
+
+            Check("§S4e6⭐⭐ **第二局真的能推进**：从第 0 帧起喂 " + framesB + " 帧 ⇒ 推进 " + framesB +
+                  " 帧、末帧 " + (framesB - 1) + "、**0 帧被拒**（上一版全被「帧号不递增」挡掉）",
+                clientB.StepsExecuted == framesB && clientB.LastSteppedFrame == framesB - 1 &&
+                clientB.RejectedFrames == 0 && session.DesyncCount == 0,
+                "推进=" + clientB.StepsExecuted + "；末帧=" + clientB.LastSteppedFrame +
+                "；拒=" + clientB.RejectedFrames + "；" + clientB.Describe());
+
+            Check("§S4e6⭐ 第二局的哈希也对得上（客户端 `World` 终态 == 服务端那份 ⇒ 不是「推进了但算错」）",
+                clientB.World != null &&
+                WorldStateHash.Compute(clientB.World) == WorldStateHash.Compute(serverWorldB),
+                clientB.World == null
+                    ? "没有世界"
+                    : (WorldStateHash.Compute(clientB.World) + " vs " + WorldStateHash.Compute(serverWorldB)));
+
+            // ⭐ "不重复喂"的守卫：同一帧再喂一遍 ⇒ 只 +1 拒、不 Step
+            fake.Push(new ServerMessage { LockstepFrame = lastFrameB });
+            session.Pump(0);
+
+            Check("§S4e6⭐ **不重复喂**：第二局最后一帧再喂一遍 ⇒ `StepsExecuted` / `LastSteppedFrame` 不动、只 +1 拒",
+                clientB.StepsExecuted == framesB && clientB.LastSteppedFrame == framesB - 1 &&
+                clientB.RejectedFrames == 1,
+                "推进=" + clientB.StepsExecuted + "；末帧=" + clientB.LastSteppedFrame +
+                "；拒=" + clientB.RejectedFrames);
+
+            // ---- 第二局自己的账：分歧 1（不是 2）、判定不一致 1（不是 2），事件跨局仍然转发 ----
+            LockstepFrame tamperedB = MakeLockstepFrame(serverWorldB, framesB, inputsB);
+            tamperedB.ServerHash ^= 1UL;
+            fake.Push(new ServerMessage { LockstepFrame = tamperedB });
+            session.Pump(0);
+
+            var resultB = new MatchResult();
+            resultB.Frame = framesB + 1;
+            resultB.Outcome = MatchRules.ToNumber(EMatchOutcome.TeamB);
+            resultB.KillsA = 0;
+            resultB.KillsB = 0;
+            fake.Push(new ServerMessage { MatchResult = resultB });
+            session.Pump(0);
+
+            Check("§S4e6⭐⭐ 第二局自己的分歧/判定不一致各 1（**不是 2**）⇒ 上一局的账没跟着走；" +
+                  "而且**事件转发跨局还是活的**（分歧 2 次、不一致 2 次）",
+                session.DesyncCount == 1 && session.MatchMismatchCount == 1 &&
+                desyncEvents == 2 && mismatchEvents == 2,
+                "分歧=" + session.DesyncCount + "；不一致=" + session.MatchMismatchCount +
+                "；事件 分歧/不一致=" + desyncEvents + "/" + mismatchEvents +
+                "；" + (session.Lockstep == null ? "没有运行器" : session.Lockstep.Describe()));
+
+            session.Dispose();
+        }
+
+        /// <summary>
+        /// ⭐⭐ 必修 2：**停滞滞回**。抖动形状 = 100 轮「`StallRefreshThreshold` 次 frame=5 + 1 次 frame=6」。
+        /// <para>无滞回时：每轮「判停 → 1 帧前进就恢复 → 再判停」⇒ `FallbackEvents` ≈ 100、
+        /// `View` 在两个世界间来回翻（闪烁）。有滞回时：**只 +1**，且判停后 `View` **一次都没翻回锁步**。</para>
+        /// </summary>
+        private static void Section_FlutterHysteresis()
+        {
+            var feed = new PresentationFeed();
+            feed.UseLockstep = true;
+
+            var world = new WorldState();
+            world.Add(1, new FixVector3(5, 0, 5), 100);
+            world.SetTick(5);
+
+            int snapshotTick = 1;
+
+            // 第一帧：锁步喂一次（阳性对照：它真的用了锁步世界）
+            feed.Refresh(1, MakeServerSnapshotView(snapshotTick++, 7, 50, 1), world, 5, true, 1);
+
+            long switchesAtStall = -1;
+            long lockstepFramesAtStall = -1;
+
+            const int rounds = 100;
+            int refreshes = 0;
+
+            for (int round = 0; round < rounds; round++)
+            {
+                for (int i = 0; i < PresentationFeed.StallRefreshThreshold; i++)
+                {
+                    feed.Refresh(1, MakeServerSnapshotView(snapshotTick++, 7, 50, 1), world, 5, true, 1);
+                    refreshes++;
+
+                    if (feed.Stalled && switchesAtStall < 0)
+                    {
+                        // 判停那一刻的现场（后面的 100 轮绝不许离开这里）
+                        switchesAtStall = feed.SourceSwitches;
+                        lockstepFramesAtStall = feed.FramesFromLockstep;
+                    }
+                }
+
+                feed.Refresh(1, MakeServerSnapshotView(snapshotTick++, 7, 50, 1), world, 6, true, 1);
+                refreshes++;
+            }
+
+            Check("§S4e6⭐⭐ **抖动下 `FallbackEvents` 只 +1**（" + rounds +
+                  " 轮「" + PresentationFeed.StallRefreshThreshold + "×frame=5 + 1×frame=6」⇒ 无滞回时约 " + rounds + " 次）",
+                feed.FallbackEvents == 1 && feed.Stalled &&
+                feed.Source == EViewSource.Snapshot && feed.FallbackReason == EFallbackReason.Stalled,
+                "事件=" + feed.FallbackEvents + "；停滞=" + feed.Stalled +
+                "；源=" + feed.Source + "；" + feed.Describe());
+
+            Check("§S4e6⭐⭐ **`View` 判停后一次都没翻回锁步世界**（换源次数与采纳锁步数在判停后都不再变）",
+                switchesAtStall > 0 && lockstepFramesAtStall > 0 &&
+                feed.SourceSwitches == switchesAtStall &&
+                feed.FramesFromLockstep == lockstepFramesAtStall &&
+                feed.FallbackFrames == refreshes - PresentationFeed.StallRefreshThreshold + 1,
+                "换源 " + switchesAtStall + "→" + feed.SourceSwitches +
+                "；锁步采纳 " + lockstepFramesAtStall + "→" + feed.FramesFromLockstep +
+                "；回退帧=" + feed.FallbackFrames + "（期望 " +
+                (refreshes - PresentationFeed.StallRefreshThreshold + 1) + "）；" + feed.Describe());
+        }
+
+        /// <summary>
+        /// ⭐ 必修 3.1：**零分配覆盖"实体数变化"**（3→2→4 交替 ⇒ 走到 `RemoveAt` 与"缩后重涨"）。
+        /// <para>warm-up 那 600 帧就让实体数一直变（池子 / `RepeatedField` 容量 / `List` 容量涨到位），
+        /// 再量 1000 帧：`GC.GetAllocatedBytesForCurrentThread()` 差值必须**严格 0**。</para>
+        /// </summary>
+        private static void Section_ZeroAllocWithEntityCountChanges()
+        {
+            var feed = new PresentationFeed();
+            feed.UseLockstep = true;
+
+            var world = new WorldState();
+            SetWorldEntityCount(world, 3);
+
+            SnapshotView server = MakeServerSnapshotView(1, 7, 50, 1);
+
+            const int warmup = 600;
+
+            // warm-up：实体数 3 → 2 → 4 交替（**缩后重涨**也在里面）
+            for (int i = 0; i < warmup; i++)
+            {
+                SetWorldEntityCount(world, CountByIndex(i));
+                feed.Refresh(1, server, world, i, true, 1);
+            }
+
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+            int seenTwo = -1;
+            int seenFour = -1;
+
+            for (int i = warmup; i < warmup + 1000; i++)
+            {
+                int count = CountByIndex(i);
+                SetWorldEntityCount(world, count);
+                feed.Refresh(1, server, world, i, true, 1);
+
+                if (count == 2)
+                {
+                    seenTwo = feed.View.EntityCount;
+                }
+                else if (count == 4)
+                {
+                    seenFour = feed.View.EntityCount;
+                }
+            }
+
+            long allocatedDelta = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+            Check("§S4e6⭐⭐ **零分配覆盖实体数变化**：warm-up 后 1000 次 `Refresh`（3→2→4 交替、含 `RemoveAt`）⇒ 分配 **" +
+                  allocatedDelta + " 字节**（期望 0）",
+                allocatedDelta == 0 && feed.FramesFromLockstep == warmup + 1000 &&
+                seenTwo == 2 && seenFour == 4,
+                "分配=" + allocatedDelta + " 字节；采纳锁步=" + feed.FramesFromLockstep +
+                "；2 人时表现层=" + seenTwo + "、4 人时=" + seenFour);
+        }
+
+        /// <summary>
+        /// ⭐ 必修 3.2：`WorldState.CopySortedTo` 与 `SnapshotSorted()` **逐元素同序**。
+        /// <para>样本用**乱序登记**（9001, 1, 9002, 0）⇒ 只要有"按登记顺序返回"那一类错误就红。
+        /// 比 Id / HP / MaxHp / Position 三轴 raw / AttackReadyTick（不是只比 Id）。</para>
+        /// </summary>
+        private static void Section_CopySortedToSameOrder()
+        {
+            var world = new WorldState();
+
+            // ⚠️ **乱序登记**（这正是要造的形状：9001 先进、0 最后进）
+            world.Add(9001, new FixVector3(9, 0, 1), 30);
+            world.Add(1, new FixVector3(1, 0, 2), 100);
+            world.Add(9002, new FixVector3(-3, 0, -1), 0);
+            world.Add(0, new FixVector3(0, 0, 7), 5);
+            world.SetTick(3);
+
+            // 让 MaxHp / 冷却与 Hp 不同（免得"只比 Hp"也能过）
+            for (int i = 0; i < world.Count; i++)
+            {
+                SimEntity e = world.GetAt(i);
+                e.MaxHp = e.Hp + 11;
+                e.AttackReadyTick = e.Id % 7;
+                world.SetAt(i, e);
+            }
+
+            SimEntity[] snapshot = world.SnapshotSorted();
+
+            var copied = new List<SimEntity>();
+            copied.Add(new SimEntity { Id = -12345 });          // 哨兵：证明 `CopySortedTo` 会**清空重填**
+            int copiedCount = world.CopySortedTo(copied);
+
+            bool same = copiedCount == snapshot.Length && copiedCount == 4 &&
+                        copied[0].Id != -12345;
+
+            if (same)
+            {
+                for (int i = 0; i < snapshot.Length; i++)
+                {
+                    if (copied[i].Id != snapshot[i].Id ||
+                        copied[i].Hp != snapshot[i].Hp ||
+                        copied[i].MaxHp != snapshot[i].MaxHp ||
+                        copied[i].AttackReadyTick != snapshot[i].AttackReadyTick ||
+                        copied[i].Position.X.RawValue != snapshot[i].Position.X.RawValue ||
+                        copied[i].Position.Y.RawValue != snapshot[i].Position.Y.RawValue ||
+                        copied[i].Position.Z.RawValue != snapshot[i].Position.Z.RawValue)
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+            }
+
+            bool ascending = snapshot.Length == 4 &&
+                             snapshot[0].Id == 0 && snapshot[1].Id == 1 &&
+                             snapshot[2].Id == 9001 && snapshot[3].Id == 9002;
+
+            Check("§S4e6⭐ `CopySortedTo` 与 `SnapshotSorted()` **逐元素同序**（Id/HP/MaxHp/位置三轴/冷却；乱序登记 9001,1,9002,0）",
+                same && ascending,
+                "同序=" + same + "；升序=" + ascending + "；条数=" + copiedCount +
+                "；Id 序列=" + DescribeEntityIds(copied));
+        }
+
+        /// <summary>warm-up / 测量两边共用的实体数节拍（3 → 2 → 4）。</summary>
+        /// <param name="index">帧序号。</param>
+        /// <returns>这一帧的实体数。</returns>
+        private static int CountByIndex(int index)
+        {
+            int phase = index % 3;
+            return phase == 0 ? 3 : (phase == 1 ? 2 : 4);
+        }
+
+        /// <summary>
+        /// 把世界的实体数调成 `count`（**同一个世界对象**，只增删实体）。
+        /// <para>⚠️ 必须用同一个对象：换世界对象会顺带换适配器 ⇒ 测到的就不是 `RemoveAt` 那条路径了。</para>
+        /// </summary>
+        /// <param name="world">世界。</param>
+        /// <param name="count">要几个实体（1..4 号）。</param>
+        private static void SetWorldEntityCount(WorldState world, int count)
+        {
+            for (int id = 4; id >= 1; id--)
+            {
+                if (id > count)
+                {
+                    world.Remove(id);
+                }
+            }
+
+            for (int id = 1; id <= count; id++)
+            {
+                if (world.IndexOf(id) < 0)
+                {
+                    world.Add(id, new FixVector3(id, 0, id * 2), 100 - id);
+                }
+            }
+        }
+
+        /// <summary>把实体编号串成一行（失败时看得见实际序列）。</summary>
+        /// <param name="entities">实体表。</param>
+        /// <returns>例：`0,1,9001,9002`。</returns>
+        private static string DescribeEntityIds(IReadOnlyList<SimEntity> entities)
+        {
+            var builder = new StringBuilder();
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                if (i > 0)
+                {
+                    builder.Append(',');
+                }
+
+                builder.Append(entities[i].Id);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>按实体表建一个服务端世界（`Server\Sim` 那一侧，用来算每帧 `server_hash`）。</summary>
+        /// <param name="entities">实体表（含 MaxHp / 冷却）。</param>
+        /// <returns>世界（tick 0）。</returns>
+        private static WorldState BuildServerWorld(IReadOnlyList<SimEntity> entities)
+        {
+            var world = new WorldState();
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                world.Add(entities[i].Id, entities[i].Position, entities[i].Hp);
+
+                int index = world.IndexOf(entities[i].Id);
+                SimEntity fixedUp = world.GetAt(index);
+                fixedUp.MaxHp = entities[i].MaxHp;
+                fixedUp.AttackReadyTick = entities[i].AttackReadyTick;
+                world.SetAt(index, fixedUp);
+            }
+
+            world.SetTick(0);
+            return world;
+        }
+
+        /// <summary>造一条 `lockstep_start`（哈希取服务端世界的，和真实广播同一种算法）。</summary>
+        /// <param name="entities">开局实体表。</param>
+        /// <param name="serverWorld">服务端世界（只用来算 `initial_hash`）。</param>
+        /// <param name="frame">开局帧号。</param>
+        /// <returns>消息。</returns>
+        private static LockstepStart MakeLockstepStart(
+            IReadOnlyList<SimEntity> entities, WorldState serverWorld, int frame)
+        {
+            var start = new LockstepStart();
+            start.Frame = frame;
+            start.InitialHash = WorldStateHash.Compute(serverWorld);
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                var e = new LockstepStartEntity();
+                e.EntityId = entities[i].Id;
+                e.PosXRaw = entities[i].Position.X.RawValue;
+                e.PosYRaw = entities[i].Position.Y.RawValue;
+                e.PosZRaw = entities[i].Position.Z.RawValue;
+                e.Hp = entities[i].Hp;
+                e.MaxHp = entities[i].MaxHp;
+                e.AttackReadyTick = entities[i].AttackReadyTick;
+                start.Entities.Add(e);
+            }
+
+            return start;
+        }
+
+        /// <summary>
+        /// 造一条 `lockstep_frame`：**先把服务端世界推一帧**，再按同一批输入写 wire 字段。
+        /// <para>⚠️ 客户端的 `ApplyFrame` 只吃 `player_id` / 移动 raw / `target`（不吃 `buttons`），
+        /// 所以这里逐字段照那三个写 ⇒ 两端 `Step` 的输入**完全相同**。</para>
+        /// </summary>
+        /// <param name="serverWorld">服务端世界（会被推进一帧）。</param>
+        /// <param name="frame">帧号。</param>
+        /// <param name="inputs">这一帧的输入。</param>
+        /// <returns>消息。</returns>
+        private static LockstepFrame MakeLockstepFrame(
+            WorldState serverWorld, int frame, IReadOnlyList<SimInput> inputs)
+        {
+            WorldStep.Step(serverWorld, inputs, 1);
+
+            var message = new LockstepFrame();
+            message.Frame = frame;
+            message.ServerHash = WorldStateHash.Compute(serverWorld);
+
+            for (int i = 0; i < inputs.Count; i++)
+            {
+                var wire = new LockstepFrameInput();
+                wire.PlayerId = inputs[i].EntityId;
+                wire.MoveXRaw = inputs[i].MoveDirection.X.RawValue;
+                wire.MoveYRaw = inputs[i].MoveDirection.Y.RawValue;
+                wire.Buttons = 0;
+                wire.TargetEntityId = inputs[i].AttackTargetId;
+                wire.Missing = false;
+                message.Inputs.Add(wire);
+            }
+
+            return message;
+        }
+
+        /// <summary>造一份席位表（队伍映射由它推出来 —— 判胜负要用）。</summary>
+        /// <param name="roomId">房号。</param>
+        /// <param name="playerIds">成员编号。</param>
+        /// <returns>消息。</returns>
+        private static RoomState MakeRoomState(string roomId, IReadOnlyList<long> playerIds)
+        {
+            var state = new RoomState();
+            state.RoomId = roomId;
+            state.DungeonId = 1001;
+            state.Capacity = 4;
+
+            for (int i = 0; i < playerIds.Count; i++)
+            {
+                var member = new RoomMember();
+                member.PlayerId = playerIds[i];
+                member.PlayerName = "p" + playerIds[i];
+                member.IsHost = i == 0;
+                member.Ready = true;
+                state.Members.Add(member);
+            }
+
+            return state;
+        }
+
+        /// <summary>造一个「可用」的锁步世界（1 个实体、tick 0）—— 【三十五】的纯决策检查用。</summary>
+        /// <returns>世界。</returns>
+        private static WorldState MakeOneEntityWorld()
+        {
+            var world = new WorldState();
+            world.Add(1, new FixVector3(0, 0, 0), 100);
+            world.SetTick(0);
+            return world;
+        }
+
+
+        /// <summary>
+        /// 造一份「服务端快照的本地副本」（`SnapshotView` 只能靠 `Apply` 填 ⇒ 这里喂一张真的）。
+        /// <para>⚠️ `WorldSnapshot.ServerTick` 是 **`int`**（协议里那个字段），而 `SnapshotView.ServerTick` 是 `long`。</para>
+        /// </summary>
+        /// <param name="tick">服务端 tick。</param>
+        /// <param name="entityId">单位编号。</param>
+        /// <param name="hp">血量（`&lt;= 0` ⇒ 死）。</param>
+        /// <param name="ownerPlayerId">`owner_player_id`。</param>
+        /// <returns>副本。</returns>
+        private static SnapshotView MakeServerSnapshotView(int tick, int entityId, int hp, long ownerPlayerId)
+        {
+            var view = new SnapshotView();
+            var snapshot = new WorldSnapshot();
+
+            snapshot.ServerTick = tick;
+            snapshot.Entities.Add(new EntitySnapshot
+            {
+                EntityId = entityId,
+                Kind = 0,
+                Hp = hp,
+                MaxHp = hp,
+                Alive = hp > 0,
+                OwnerPlayerId = ownerPlayerId,
+                PosXMm = 1000,
+                PosZMm = 2000,
+            });
+
+            view.Apply(snapshot);
+            return view;
         }
 
         /// <summary>收过几条 `lockstep_frame`（【三十三】用）。</summary>
@@ -6530,7 +7763,8 @@ namespace NBC.NetProbe
                               "；未开局忽略=" + client.IgnoredBeforeStart +
                               "；重复/倒退被拒=" + client.RejectedFrames);
             Console.WriteLine("  房间成员=" + fromRoom.Count + "（A 队 " + a + " / B 队 " + b + "）" +
-                              "；世界实体=" + world.Length);
+                              "；世界实体=" + world.Length + "（id " +
+                              string.Join(",", fromWorld.ConvertAll(x => x.ToString()).ToArray()) + "）");
             Console.WriteLine("  一句话：" + client.Describe());
             Console.WriteLine("端到端：**8 验 / 0 未验**");
 
@@ -7275,7 +8509,10 @@ namespace NBC.NetProbe
                         return false;
                     }
 
-                    if (DungeonBattle.DistanceMm(hero, target) <= DungeonBattle.BasicAttackRangeMm)
+                    // ⚠️ 用**服务端同一个判定**（`InAttackRange` = 圆形射程），不要自己拿切比雪夫判：
+                    //    2026-10-20 射程改成圆之后，工具若还用旧判据，会"走到圆外就停下"⇒
+                    //    攻击被判越界，表现为"走近了却打不中" —— 那种红会让人怀疑业务代码。
+                    if (battle.InAttackRange(hero, target))
                     {
                         return true;
                     }

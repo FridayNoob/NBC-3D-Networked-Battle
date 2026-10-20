@@ -326,7 +326,7 @@ public sealed class DungeonBattle
     public const int PlayAreaHalfExtentMm = 5000;
 
     /// <summary>
-    /// 普攻射程（毫米，切比雪夫距离）。
+    /// 普攻射程（毫米，**圆形**：距离平方 ≤ 射程平方，见 `BattleRules.WithinBasicAttackRange`）。
     /// <para>⚠️ **真值在共享层**（`NBC.Shared.Battle.BattleRules.BasicAttackRangeMm`）：
     /// 客户端也要用它（调试窗的"自动追击"要知道走到哪儿停下、以后的射程提示同理），
     /// 两边各写一份就会**静默漂移** —— 服务端改了射程、客户端还在老位置按键，
@@ -648,9 +648,18 @@ public sealed class DungeonBattle
             return false;
         }
 
-        if (DistanceMm(attacker, target) > BasicAttackRangeMm)
+        if (!BattleRules.WithinBasicAttackRange(attacker.PosXmm, attacker.PosZmm, target.PosXmm, target.PosZmm))
         {
-            reason = $"目标 {targetId} 在射程外（{DistanceMm(attacker, target)}mm > {BasicAttackRangeMm}mm）";
+            int actualMm = BattleRules.DistanceMmRounded(attacker.PosXmm, attacker.PosZmm, target.PosXmm, target.PosZmm);
+
+            // ⚠️ 四舍五入会把「2000.5mm」显示成 2000 ⇒ 日志会出现**自相矛盾**的「2000mm > 2000mm」。
+            //    既然已经判出界，就至少写「射程 + 1」（真实语义是"大于射程"）。
+            if (actualMm <= BasicAttackRangeMm)
+            {
+                actualMm = BasicAttackRangeMm + 1;
+            }
+
+            reason = $"目标 {targetId} 在射程外（{actualMm}mm > {BasicAttackRangeMm}mm）";
             return false;
         }
 
@@ -688,12 +697,12 @@ public sealed class DungeonBattle
         return best;
     }
 
-    /// <summary>够不够得着（切比雪夫距离 ≤ 普攻射程）。</summary>
+    /// <summary>够不够得着（**圆形射程**：距离平方 ≤ 射程平方，见 `BattleRules.WithinBasicAttackRange`）。</summary>
     /// <param name="a">甲。</param>
     /// <param name="b">乙。</param>
     /// <returns>够得着返回 true。</returns>
     public bool InAttackRange(BattleEntity a, BattleEntity b)
-        => DistanceMm(a, b) <= BasicAttackRangeMm;
+        => BattleRules.WithinBasicAttackRange(a.PosXmm, a.PosZmm, b.PosXmm, b.PosZmm);
 
     /// <summary>
     /// 朝目标走一格（**整数轴**：把方向变成 ±1000 的量化轴，交给 `ApplyMove` 统一处理斜向不超速）。
@@ -729,14 +738,22 @@ public sealed class DungeonBattle
         return true;
     }
 
-    /// <summary>把两个单位在平面上的整数距离（毫米，向下取整的近似：先比平方再开方太费，M3 用切比雪夫距离）。</summary>
+    /// <summary>
+    /// 把两个单位在平面上的**切比雪夫距离**（毫米，`max(|dx|,|dz|)`）。
+    /// <para>⚠️ **不是射程判据**（射程是圆，见 `BattleRules.WithinBasicAttackRange`）。
+    /// 这里保留切比雪夫是给 **AI 与排序**用的：BOSS 的仇恨圈/回家圈、选最近的怪 ——
+    /// 这些是与"8 方向等速移动"同一套度量，改它会动 AI 手感（2026-10-20 只改了射程）。</para>
+    /// </summary>
     /// <param name="a">甲。</param>
     /// <param name="b">乙。</param>
     /// <returns>距离（毫米）。</returns>
     public static int DistanceMm(BattleEntity a, BattleEntity b)
         => DistanceMmToPoint(a, b.PosXmm, b.PosZmm);
 
-    /// <summary>单位到一个坐标的切比雪夫距离（毫米）；BOSS 的"回家"与"仇恨范围"判定都用它。</summary>
+    /// <summary>
+    /// 单位到一个坐标的**切比雪夫距离**（毫米）；BOSS 的"回家"与"仇恨范围"判定都用它。
+    /// <para>⚠️ 同 <see cref="DistanceMm"/>：这是 AI 度量，不是射程判据。</para>
+    /// </summary>
     /// <param name="a">单位。</param>
     /// <param name="x">目标 X（毫米）。</param>
     /// <param name="z">目标 Z（毫米）。</param>
