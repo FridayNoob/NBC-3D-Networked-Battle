@@ -281,6 +281,10 @@ namespace NBC.NetProbe
             SecondMatchAndHysteresis_Checks();
 
             Console.WriteLine();
+            Console.WriteLine("【三十七】M4-S4 S4-f：**锁步上行**（帧号怎么打 / 定点 raw / 被挡就不上路；假传输驱真会话）");
+            LockstepUplink_Checks();
+
+            Console.WriteLine();
             Console.WriteLine("【S4e3】端到端：`NetSession` + **真 `TcpTransport`** 连**真 Host**（默认不启用）");
             EndToEnd_LockstepOverRealSocket(
                 Array.IndexOf(args, "--e2e") >= 0, ReadIntArg(args, "--e2e-port", 9000));
@@ -7552,6 +7556,384 @@ namespace NBC.NetProbe
             return count;
         }
 
+        /// <summary>
+        /// 【三十七】S4-f：**锁步上行**（`NetSession.SendLockstepInput`）—— 喂的是「第几帧」的输入。
+        ///
+        /// <para>被验的**全是协议字段**（不抓日志，W26）：帧号怎么打、`seq` 怎么涨、
+        /// 轴怎么换成定点 raw、被挡时**一条都不上路**。</para>
+        ///
+        /// <para>⚠️ 为什么这件事值得单开一节：上行缺了，服务端**不报错、不断线**，
+        /// 只是每帧都按「缺人填默认」处理 —— 现象是「PVP 世界里谁都不动」，
+        /// 而收帧/对账/胜负那些已有用例**全是绿的**。</para>
+        /// </summary>
+        private static void LockstepUplink_Checks()
+        {
+            var fake = new FakeNetTransport();
+            var session = new NetSession(fake, "上行探针", "net-probe/uplink");
+
+            session.Connect("127.0.0.1", 7777);
+            session.Pump(0);
+            fake.Push(MakeHandshakeAck(1));
+            session.Pump(0);
+
+            Check("§S4f0：阳性对照 —— 会话已 Online（否则下面全被「没在线」挡掉，本节会假装验过）",
+                session.IsOnline, "状态=" + session.State);
+
+            // ---------- ① 开局之前：不许发，也不许抛 ----------
+            bool early = session.SendLockstepInput(1000, 0);
+
+            Check("§S4f1：开局前发上行 ⇒ **false** + **一条都没上路** + 「被挡」计一次（手滑不该崩，也不该悄悄发）",
+                !early && CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput) == 0
+                && session.LockstepInputsSkipped == 1 && !session.CanSendLockstepInput,
+                "返回=" + early + "；被挡=" + session.LockstepInputsSkipped +
+                "；能不能发=" + session.CanSendLockstepInput);
+
+            // ---------- ② 造开局（照 `LockstepService.StartRoom`：用同一份共享逻辑） ----------
+            var rosterIds = new List<long> { 1, 2, 3, 4 };
+
+            var roomState = new RoomState();
+            roomState.RoomId = "probe-uplink";
+            roomState.DungeonId = 1001;
+            roomState.Capacity = 4;
+
+            for (int i = 0; i < rosterIds.Count; i++)
+            {
+                var member = new RoomMember();
+                member.PlayerId = rosterIds[i];
+                member.PlayerName = "p" + i;
+                member.IsHost = i == 0;
+                member.Ready = true;
+                roomState.Members.Add(member);
+            }
+
+            fake.Push(new ServerMessage { RoomState = roomState });
+            session.Pump(0);
+
+            // ⚠️ 分队规则是「**按 player_id 升序 + 交替**」（`SortedTeamMap` ⇒ `i % 2`）：
+            //    名单 {1,2,3,4} ⇒ 1=A、2=B、3=A、**4=B**。
+            //    所以「两人 0 血」必须都落在**同一队**（这里选 B 队的 2 与 4）⇒ killsA = 2 = `KillsToWin`；
+            //    要是点成 3 与 4（一个 A 一个 B），那就是 1 : 1 ⇒ `Decide` 返回 **Undecided**，
+            //    这条用例会变成「收到 outcome=0 也不发」——**看着绿，其实没验到「宣布胜负」**。
+            var entities = new List<SimEntity>
+            {
+                MakeEntity(1, 0, 100),       // A 队（本人）
+                MakeEntity(2, 0, 0),         // B 队（出场即死）⇒ 给 A 队 1 个击杀
+                MakeEntity(3, 5, 100),       // A 队
+                MakeEntity(4, -5, 0),        // B 队（出场即死）⇒ 再 1 个 ⇒ killsA = 2
+            };
+
+            var serverWorld = new WorldState();
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                serverWorld.Add(entities[i].Id, entities[i].Position, entities[i].Hp);
+                int idx = serverWorld.IndexOf(entities[i].Id);
+                SimEntity fix = serverWorld.GetAt(idx);
+                fix.MaxHp = entities[i].MaxHp;
+                fix.AttackReadyTick = entities[i].AttackReadyTick;
+                serverWorld.SetAt(idx, fix);
+            }
+
+            serverWorld.SetTick(0);
+
+            var startMsg = new LockstepStart();
+            startMsg.Frame = 0;
+            startMsg.InitialHash = WorldStateHash.Compute(serverWorld);
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                var e = new LockstepStartEntity();
+                e.EntityId = entities[i].Id;
+                e.PosXRaw = entities[i].Position.X.RawValue;
+                e.PosYRaw = entities[i].Position.Y.RawValue;
+                e.PosZRaw = entities[i].Position.Z.RawValue;
+                e.Hp = entities[i].Hp;
+                e.MaxHp = entities[i].MaxHp;
+                e.AttackReadyTick = entities[i].AttackReadyTick;
+                startMsg.Entities.Add(e);
+            }
+
+            fake.Push(new ServerMessage { LockstepStart = startMsg });
+            session.Pump(0);
+
+            Check("§S4f2：开局后能发，且默认帧号 = 已推进帧(-1) + 1 + 提前量(" +
+                  NetSession.LockstepInputLeadFrames + ") = **1**",
+                session.CanSendLockstepInput && session.NextLockstepFrame == 1,
+                "能不能发=" + session.CanSendLockstepInput + "；下一帧=" + session.NextLockstepFrame);
+
+            // ---------- ③ 第一条：字段逐项对 ----------
+            bool ok1 = session.SendLockstepInput(1000, 0);
+            ClientMessage m1 = LastSentMessage(fake);
+
+            // ⚠️ 先确认载荷类型再取字段：类型一变就是**干净的 [FAIL]**，而不是 NRE 把整节炸掉
+            bool m1IsLockstep = m1 != null && m1.PayloadCase == ClientMessage.PayloadOneofCase.LockstepInput;
+            LockstepInput first = m1IsLockstep ? m1.LockstepInput : null;
+
+            Check("§S4f3⭐ 默认帧号 = **1**、`seq` 从 **1** 起、走的是 `lockstep_input`（**不是** `input`）",
+                ok1 && m1IsLockstep && first.Frame == 1 && first.Seq == 1,
+                DescribeClientMessage(m1));
+
+            Check("§S4f4⭐ 轴按 A7 量化换成**定点 raw**（`1000` ⇒ `Fix64.FromInt(1000).RawValue`，一个 float 都没碰）",
+                first != null && first.MoveXRaw == Fix64.FromInt(1000).RawValue
+                && first.MoveYRaw == Fix64.Zero.RawValue,
+                "move_x_raw=" + (first == null ? "（没发）" : first.MoveXRaw.ToString()) +
+                "（期望 " + Fix64.FromInt(1000).RawValue + "）");
+
+            // ---------- ④ 逐帧推进：一直往 +X（每帧 0.1m），两端各走一遍世界、逐帧比哈希 ----------
+            var sent = new Dictionary<int, LockstepInput>();
+
+            if (first != null)
+            {
+                sent[1] = first;
+            }
+
+            for (int f = 2; f <= 8; f++)
+            {
+                if (!session.SendLockstepInput(1000, 0, 0u, 0, f))
+                {
+                    continue;
+                }
+
+                ClientMessage mf = LastSentMessage(fake);
+
+                if (mf != null && mf.PayloadCase == ClientMessage.PayloadOneofCase.LockstepInput)
+                {
+                    sent[f] = mf.LockstepInput;
+                }
+            }
+
+            for (int f = 1; f <= 8; f++)
+            {
+                LockstepInput mine;
+                bool has = sent.TryGetValue(f, out mine);
+
+                var stepInputs = new List<SimInput>();
+
+                if (has)
+                {
+                    stepInputs.Add(new SimInput
+                    {
+                        EntityId = 1,
+                        MoveDirection = new FixVector3(
+                            Fix64.FromRaw(mine.MoveXRaw), Fix64.FromRaw(mine.MoveYRaw), Fix64.Zero),
+                        AttackTargetId = mine.TargetEntityId,
+                    });
+                }
+
+                WorldStep.Step(serverWorld, stepInputs, 1);
+
+                var frame = new LockstepFrame();
+                frame.Frame = f;
+                frame.ServerHash = WorldStateHash.Compute(serverWorld);
+
+                var entry = new LockstepFrameInput();
+                entry.PlayerId = 1;
+
+                if (has)
+                {
+                    entry.MoveXRaw = mine.MoveXRaw;
+                    entry.MoveYRaw = mine.MoveYRaw;
+                    entry.Buttons = mine.Buttons;
+                    entry.TargetEntityId = mine.TargetEntityId;
+                    entry.Missing = false;
+                }
+                else
+                {
+                    entry.Missing = true;
+                }
+
+                frame.Inputs.Add(entry);
+
+                fake.Push(new ServerMessage { LockstepFrame = frame });
+                session.Pump(0);
+            }
+
+            Check("§S4f5⭐ 上行**接进真运行器**：8 帧逐帧推进后客户端世界与服务端那份**哈希全等**（`DesyncCount == 0`）",
+                session.DesyncCount == 0 && session.Lockstep != null && session.Lockstep.StepsExecuted == 8,
+                "分歧=" + session.DesyncCount + "；推进=" +
+                (session.Lockstep == null ? -1 : session.Lockstep.StepsExecuted));
+
+            long movedRaw = EntityXRaw(session.Lockstep, 1);
+
+            Check("§S4f6⭐ 我的英雄**真的往 +X 走了**（8 帧 × 0.1m ⇒ ≥ 0.4m；动了才证明输入被用上，不是被填成默认）",
+                movedRaw >= WorldStep.MmToMeters(400).RawValue,
+                "位移 raw=" + movedRaw + "（≥ " + WorldStep.MmToMeters(400).RawValue + "）；" +
+                "8 帧理论值 raw≈" + WorldStep.MmToMeters(800).RawValue);
+
+            Check("§S4f7：帧号跟着推进 ⇒ 下一帧 = 8 + 1 + 提前量 = **10**",
+                session.NextLockstepFrame == 10, "下一帧=" + session.NextLockstepFrame);
+
+            // ---------- ⑤ 已经广播过的帧：本地就挡掉 ----------
+            int sentBeforeStale = CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput);
+            int skippedBeforeStale = session.LockstepInputsSkipped;
+            bool stale = session.SendLockstepInput(1000, 0, 0u, 0, 3);
+
+            Check("§S4f8⭐ 已经广播过的帧（3）再发 ⇒ **false** + 「被挡」+1 + **一条都没上路**（不让注定作废的包出门）",
+                !stale && session.LockstepInputsSkipped == skippedBeforeStale + 1
+                && CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput) == sentBeforeStale,
+                "返回=" + stale + "；被挡=" + session.LockstepInputsSkipped +
+                "；上路=" + CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput));
+
+            // ---------- ⑥ 指定帧号 / 夹轴 / 位与目标透传 ----------
+            bool explicitFrame = session.SendLockstepInput(0, 0, 0u, 0, 40);
+            ClientMessage m40 = LastSentMessage(fake);
+            bool m40IsLockstep = m40 != null && m40.PayloadCase == ClientMessage.PayloadOneofCase.LockstepInput;
+
+            Check("§S4f9：**指定帧号**（40）⇒ 原样打 40，**不叠加**提前量（提前量只作用于默认那条）",
+                explicitFrame && m40IsLockstep && m40.LockstepInput.Frame == 40,
+                DescribeClientMessage(m40));
+
+            bool clamped = session.SendLockstepInput(9999, -9999, 1u, 42, 41);
+            ClientMessage mc = LastSentMessage(fake);
+            bool mcIsLockstep = mc != null && mc.PayloadCase == ClientMessage.PayloadOneofCase.LockstepInput;
+
+            Check("§S4f10⭐ 越界轴夹到 **±1000**、`buttons`/`target` 原样透传（位定义与状态同步链同一套）",
+                clamped && mcIsLockstep
+                && mc.LockstepInput.MoveXRaw == Fix64.FromInt(1000).RawValue
+                && mc.LockstepInput.MoveYRaw == Fix64.FromInt(-1000).RawValue
+                && mc.LockstepInput.Buttons == 1 && mc.LockstepInput.TargetEntityId == 42,
+                DescribeClientMessage(mc));
+
+            Check("§S4f11：`LockstepInputsSent` == **真的上路的条数**（计的数与线上的一致，不虚报）",
+                session.LockstepInputsSent == CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput),
+                "计数=" + session.LockstepInputsSent +
+                "；上路=" + CountSentPayload(fake, ClientMessage.PayloadOneofCase.LockstepInput));
+
+            // ---------- ⑦ 宣布胜负之后：不许再发 ----------
+            //  ⚠️ 前提必须先立住：两支 B 队成员出场即死 ⇒ killsA = 2 = `KillsToWin` ⇒ 真结果（TeamA）。
+            //     这一步单独断言，否则「收到一条 outcome=0 的 MatchResult 也不发」会冒充成「宣布胜负后不发」。
+            int killsA;
+            int killsB;
+            MatchRules.CountKills(serverWorld, new SortedTeamMap(rosterIds), out killsA, out killsB);
+
+            EMatchOutcome decided = MatchRules.Decide(killsA, killsB, serverWorld.Tick);
+
+            Check("§S4f12a：阳性对照 —— 这一局**真的分出了胜负**（killsA = 2 = `KillsToWin` ⇒ TeamA），不是平局",
+                decided == EMatchOutcome.TeamA,
+                "killsA=" + killsA + "；killsB=" + killsB + "；判定=" + MatchRules.Describe(decided));
+
+            var result = new MatchResult();
+            result.Frame = serverWorld.Tick;
+            result.Outcome = MatchRules.ToNumber(decided);
+            result.KillsA = killsA;
+            result.KillsB = killsB;
+
+            fake.Push(new ServerMessage { MatchResult = result });
+            session.Pump(0);
+
+            int skippedBeforeEnd = session.LockstepInputsSkipped;
+            bool afterEnd = session.SendLockstepInput(1000, 0);
+
+            Check("§S4f12⭐ 宣布胜负之后**不许再发**（服务端已停止推进；发出去只会堆在待发桶里，一帧都用不上）",
+                session.MatchOutcome == EMatchOutcome.TeamA && !session.CanSendLockstepInput && !afterEnd
+                && session.LockstepInputsSkipped == skippedBeforeEnd + 1,
+                "结果=" + (session.MatchOutcome == null
+                    ? "未落定"
+                    : MatchRules.Describe(session.MatchOutcome.Value)) +
+                "；能不能发=" + session.CanSendLockstepInput + "；返回=" + afterEnd);
+
+            // ---------- ⑧ 两条链不串台 ----------
+            var fake2 = new FakeNetTransport();
+            var other = new NetSession(fake2, "上行探针", "net-probe/uplink");
+
+            other.Connect("127.0.0.1", 7779);
+            other.Pump(0);
+            fake2.Push(MakeHandshakeAck(1));
+            other.Pump(0);
+            other.SendInput(100, 0);
+
+            ClientMessage mInput = LastSentMessage(fake2);
+
+            Check("§S4f13：状态同步的 `SendInput` 照旧发 `input`，**不会**串成 `lockstep_input`（两条链各走各的）",
+                mInput != null && mInput.PayloadCase == ClientMessage.PayloadOneofCase.Input
+                && other.InputsSent == 1 && other.LockstepInputsSent == 0 && other.LockstepInputsSkipped == 0,
+                mInput == null ? "一条都没发出去" : ("载荷=" + mInput.PayloadCase +
+                    "；状态同步已发=" + other.InputsSent + "；锁步已发=" + other.LockstepInputsSent));
+        }
+
+        /// <summary>最后一条从会话发出去的消息（一条都没有返回 null）。</summary>
+        /// <param name="fake">假传输。</param>
+        /// <returns>消息。</returns>
+        private static ClientMessage LastSentMessage(FakeNetTransport fake)
+        {
+            if (fake == null || fake.SentFrames.Count == 0)
+            {
+                return null;
+            }
+
+            return ClientMessage.Parser.ParseFrom(fake.SentFrames[fake.SentFrames.Count - 1]);
+        }
+
+        /// <summary>数一数发出去的某种载荷有几条。</summary>
+        /// <param name="fake">假传输。</param>
+        /// <param name="kind">载荷类型。</param>
+        /// <returns>条数。</returns>
+        private static int CountSentPayload(FakeNetTransport fake, ClientMessage.PayloadOneofCase kind)
+        {
+            if (fake == null)
+            {
+                return 0;
+            }
+
+            int n = 0;
+
+            for (int i = 0; i < fake.SentFrames.Count; i++)
+            {
+                if (ClientMessage.Parser.ParseFrom(fake.SentFrames[i]).PayloadCase == kind)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>把一条客户端消息压成一行（断言失败时看得到**哪个字段不对**，不用猜）。</summary>
+        /// <param name="m">消息。</param>
+        /// <returns>一行说明。</returns>
+        private static string DescribeClientMessage(ClientMessage m)
+        {
+            if (m == null)
+            {
+                return "一条都没发出去";
+            }
+
+            if (m.PayloadCase != ClientMessage.PayloadOneofCase.LockstepInput)
+            {
+                return "载荷=" + m.PayloadCase;
+            }
+
+            return "frame=" + m.LockstepInput.Frame + "；seq=" + m.LockstepInput.Seq +
+                   "；move_x_raw=" + m.LockstepInput.MoveXRaw +
+                   "；move_y_raw=" + m.LockstepInput.MoveYRaw +
+                   "；buttons=" + m.LockstepInput.Buttons +
+                   "；target=" + m.LockstepInput.TargetEntityId;
+        }
+
+        /// <summary>锁步世界里某个实体的 X（raw；找不到返回 0）。</summary>
+        /// <param name="client">锁步运行器。</param>
+        /// <param name="entityId">实体编号。</param>
+        /// <returns>X 的定点原值。</returns>
+        private static long EntityXRaw(LockstepClient client, int entityId)
+        {
+            if (client == null || client.World == null)
+            {
+                return 0;
+            }
+
+            SimEntity[] all = client.World.SnapshotSorted();
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].Id == entityId)
+                {
+                    return all[i].Position.X.RawValue;
+                }
+            }
+
+            return 0;
+        }
+
         /// <summary>最后一条 `lockstep_frame` 的帧号（一条都没收到返回 -1）。</summary>
         /// <param name="client">客户端。</param>
         /// <returns>帧号。</returns>
@@ -7738,6 +8120,58 @@ namespace NBC.NetProbe
             Check("[E2E] ⭐ **`IgnoredBeforeStart == 0`**（没有「开局前就收到帧」⇒ 开局时序正确）",
                 client.IgnoredBeforeStart == 0, "未开局忽略=" + client.IgnoredBeforeStart);
 
+            // ---- ④ ⭐ S4-f：**上行**（这一段才证得了「PVP 世界里有人动」） ----
+            //  ⚠️ 判据只认**两个可由外部观察到的量**：①我在锁步世界里的坐标真的变了；
+            //     ②服务端一条 `ErrorResponse` 都没回。不靠日志、不靠"我发了所以应该收到"。
+            int errorsReceived = 0;
+            session.ErrorReceived += err => errorsReceived++;
+
+            int myId = (int)session.PlayerId;
+            long beforeXRaw = EntityXRaw(client, myId);
+            int lastGivenFrame = client.LastSteppedFrame;
+            int uplinkSent = 0;
+
+            clock.Restart();
+
+            while (clock.ElapsedMilliseconds < 20000 && client.LastSteppedFrame < lastGivenFrame + 15)
+            {
+                session.Pump(16);
+
+                client = session.Lockstep;
+
+                if (client.LastSteppedFrame > lastGivenFrame)
+                {
+                    lastGivenFrame = client.LastSteppedFrame;
+
+                    // 一直往右按（+X）。若这条上行根本没到服务端，它会被填成「不动」⇒ 位移恒为 0（正好是本节要抓的）
+                    if (session.SendLockstepInput(1000, 0))
+                    {
+                        uplinkSent++;
+                    }
+                }
+
+                System.Threading.Thread.Sleep(5);
+            }
+
+            long deltaXRaw = EntityXRaw(client, myId) - beforeXRaw;
+
+            Check("[E2E] ⭐ 我把 `lockstep_input` 发出去了（≥10 条）且**一条都没被本地挡下**",
+                uplinkSent >= 10 && session.LockstepInputsSkipped == 0,
+                "已发=" + uplinkSent + "（会话计数 " + session.LockstepInputsSent +
+                "）；被挡=" + session.LockstepInputsSkipped);
+
+            Check("[E2E] ⭐ 服务端**真的用了我的输入**：我的英雄在锁步世界里往 +X 走了（不是被判「缺人」填了默认的不动）",
+                deltaXRaw >= WorldStep.MmToMeters(300).RawValue,
+                "位移 raw=" + deltaXRaw + "（≥ " + WorldStep.MmToMeters(300).RawValue + "；" +
+                uplinkSent + " 帧 × 每帧 " + WorldStep.MmToMeters(WorldStep.SpeedMmPerTick) + "m）");
+
+            Check("[E2E] ⭐ **`DesyncCount == 0`**（我的输入被服务端原样广播回来，客户端自己 Step 的结果与它的哈希逐帧一致）",
+                client.DesyncCount == 0, "分歧=" + client.DesyncCount + "；" + client.Describe());
+
+            Check("[E2E] ⭐ 服务端**一条 `ErrorResponse` 都没回**（上行没被判成重复/过期/不在锁步房里）",
+                errorsReceived == 0, "错误条数=" + errorsReceived +
+                "；上一次错误=" + (session.LastError == null ? "（无）" : session.LastError.Message));
+
             // ⭐ 通过时把**观察值**打出来（给负责人手动判据对照）
             var team = new SortedTeamMap(fromRoom);
             int a = 0;
@@ -7766,7 +8200,9 @@ namespace NBC.NetProbe
                               "；世界实体=" + world.Length + "（id " +
                               string.Join(",", fromWorld.ConvertAll(x => x.ToString()).ToArray()) + "）");
             Console.WriteLine("  一句话：" + client.Describe());
-            Console.WriteLine("端到端：**8 验 / 0 未验**");
+            Console.WriteLine("  上行：已发 " + uplinkSent + " 条、被挡 " + session.LockstepInputsSkipped +
+                              " 条；我的位移 raw=" + deltaXRaw + "；服务端错误条数=" + errorsReceived);
+            Console.WriteLine("端到端：**12 验 / 0 未验**");
 
             session.Disconnect("e2e 探测结束（通过）");
         }

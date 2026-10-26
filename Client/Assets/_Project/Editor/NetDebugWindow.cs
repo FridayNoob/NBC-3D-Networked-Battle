@@ -121,6 +121,17 @@ namespace NBC.EditorTools
         /// <summary>自动追击：一共按了多少次普攻（界面上看得见"到底有没有按出去"）。</summary>
         private int m_autoAttackCount;
 
+        /// <summary>
+        /// 自动追击**自己**的方向（与滑条 `m_inputX/m_inputY` 分开）。
+        /// <para>⚠️ 存在的唯一理由：滑条那对值是**玩家手动意图**、且被两条链共用
+        /// （状态同步 `SendInput` + 帧同步 `SendLockstepInput`）。追击若去写它，
+        /// 就会把玩家发给帧同步的方向**悄悄改掉**（2026-10-26 真踩过，见 `TickAutoChase` 的注释）。</para>
+        /// </summary>
+        private int m_chaseInputX;
+
+        /// <summary>自动追击自己的方向（前后轴）。</summary>
+        private int m_chaseInputY;
+
         /// <summary>会话（没连时为 null）。</summary>
         private NetSession m_session;
 
@@ -130,6 +141,20 @@ namespace NBC.EditorTools
         /// <para>⚠️ 它**不改变服务端**：那边两条链并存（状态同步链一行未改 + 锁步链照常广播）。</para>
         /// </summary>
         private bool m_lockstepMode;
+
+        /// <summary>
+        /// S4-f 的**上行**（与「帧同步」那个勾选框**无关**：勾选框管「我看哪一份数据」，
+        /// 这条管「我参不参与这一局」）：上一次为哪一帧采集过意图。
+        /// <para>⚠️ 用「帧号」而不是计时器当节拍：锁步里**一帧一包**才是对的，
+        /// 按编辑器帧率（60+）发只会被服务端当重复丢掉（还会把「被拒」计数刷起来）。</para>
+        /// </summary>
+        private int m_lastLockstepInputFrame = -1;
+
+        /// <summary>上一次锁步上行时是哪一局（`MatchSerial`）。换局要把「发到第几帧」清零 —— 见 `PumpLockstepInput`。</summary>
+        private int m_lockstepSeenMatchSerial = -1;
+
+        /// <summary>下一次锁步上行要带的按键位（普攻按钮按一下 ⇒ 置第 0 位，发出去就清掉）。</summary>
+        private uint m_lockstepPendingButtons;
 
         /// <summary>
         /// 表现层数据源（S4-e 收尾）：按开关把「服务端快照」或「锁步世界」喂进**同一个** `SnapshotView`。
@@ -534,6 +559,7 @@ namespace NBC.EditorTools
             FeedPresentationLayer();                // ⭐ 真分流：按开关把「快照 / 锁步」喂给表现层
             EnsureDemoConditionRegistered();        // 第一张快照到了就按阵容登记演示条件
             SendContinuousInput();
+            PumpLockstepInput();                    // ⭐ S4-f：锁步对局里一帧一条上行（否则 PVP 世界里没人动）
             TickAutoChase();
             Repaint();
         }
@@ -544,6 +570,12 @@ namespace NBC.EditorTools
         /// ③ 进了射程就**按一下普攻**再等冷却（和服务端同一个冷却常量）。</para>
         /// <para>⚠️ 距离用**切比雪夫距离** —— 与服务端 `DungeonBattle.DistanceMm` 同一种量法；
         /// 用欧氏距离会在四角误判成"还差一点"，于是你会站在射程边上永远不按攻击。</para>
+        /// <para>⚠️⚠️ **它绝不写滑条那两个值**（`m_inputX` / `m_inputY`）：那是**玩家手动意图**，
+        /// 而且现在被**两条链共用**（状态同步的 `SendInput` 与帧同步的 `SendLockstepInput`）。
+        /// 2026-10-26 真踩过：这个调试开关把滑条一路改写成 0 ⇒ 帧同步上行的方向**永远是 0**，
+        /// 表现为「滑条拉到 1000，`单位-1` 却一动不动」，而服务端与对账**全都正常**
+        /// （0 位移两边一致，`DesyncCount` 还是 0）—— 只有看画面才发现。见 `Docs\27` §37.6 ③。
+        /// 它要用方向就写自己的那对字段（`m_chaseInputX` / `m_chaseInputY`）。</para>
         /// </summary>
         private void TickAutoChase()
         {
@@ -586,15 +618,15 @@ namespace NBC.EditorTools
                 int moveY = target.PosZMm == mine.PosZMm ? 0 : (target.PosZMm > mine.PosZMm ? 1000 : -1000);
 
                 m_autoAttackCooldownTicks = 0;      // 赶路时不用按攻击
-                m_inputX = moveX;                   // 让滑条跟着动，界面上看得见在往哪走
-                m_inputY = moveY;
+                m_chaseInputX = moveX;              // ⚠️ 自己的字段：滑条归玩家，追人归追人
+                m_chaseInputY = moveY;
                 m_session.SendInput(moveX, moveY, 0u, 0u, m_targetEntityId);
                 return;
             }
 
             // 射程内：站住 + 按一下普攻（按下 → 下一帧松开 → 等冷却，模拟"点一下"）
-            m_inputX = 0;
-            m_inputY = 0;
+            m_chaseInputX = 0;
+            m_chaseInputY = 0;
 
             if (m_autoAttackCooldownTicks > 0)
             {
@@ -624,6 +656,87 @@ namespace NBC.EditorTools
             }
 
             m_session.SendInput(m_inputX, m_inputY, 0u, 0u, m_targetEntityId);
+        }
+
+        /// <summary>
+        /// S4-f：锁步对局里的**上行** —— 服务端每推进一帧，就把我此刻的意图发一条 `lockstep_input`。
+        ///
+        /// <para>⚠️ 触发条件是「**本局已开局**」，**不是**「帧同步勾选框被勾上」：
+        /// 那个勾选框管的是「我**看**哪一份数据」（`PresentationFeed` 的选源），
+        /// 而上行管的是「我**参不参与**这一局」。把它挂在勾选框上会有一个很隐蔽的后果 ——
+        /// 切回快照模式后我的这一席就再没人交输入，锁步世界里的我永远被判「缺人」，
+        /// 而因为画面上看的是快照，**没有任何人会注意到**。</para>
+        ///
+        /// <para>⚠️ 为什么按「帧」而不是按「编辑器帧」节拍：锁步里**一帧一包**才是对的。
+        /// 按 60Hz 发会被服务端当「同一帧的重复输入」丢掉并计数（`LockstepScheduler` 文件头 ②），
+        /// 于是界面上看着在发，实际只有第一条生效 —— 那种"看起来在动"的假象最难查。</para>
+        ///
+        /// <para>⚠️ 换局必须清零：新一局的 `LastSteppedFrame` 从 -1 重新开始，
+        /// 若还拿着上一局的「发到第 500 帧」，那要等新局也走到 500 帧才会再发一条 —— 表现为
+        /// 「第二局我的英雄不动」，而且不报错。清零的判据用 `MatchSerial`（服务端换局给的新编号），
+        /// 不用"帧号有没有倒退"去猜。</para>
+        ///
+        /// <para>⚠️ 这条只管**锁步那条链**：`SendInput`（状态同步）照旧由 `SendContinuousInput` 发，
+        /// 两条链并存、互不替代（见 `NetSession` 文件头）。</para>
+        /// </summary>
+        private void PumpLockstepInput()
+        {
+            if (m_session == null)
+            {
+                return;
+            }
+
+            LockstepClient client = m_session.Lockstep;
+
+            // ⚠️ **没有「进行中的对局」就整体清零** —— 这一条专门管**断线重连**：
+            //    每次「连接」都会**新建一个 `NetSession`**（`ConnectSession`），而它的 `Connect()`
+            //    把 `MatchSerial` 清回 0 ⇒ 新会话第一局又是 **1**，与上一局撞号。
+            //    只按局号比较的话，这里会以为「还是同一局」，把上一局的「已发到第 500 帧」留着 ⇒
+            //    新局要等追平 500 帧才恢复上行。表现就是「重连后我的英雄不动」，**而且不报错**。
+            if (client == null || !client.Started)
+            {
+                ResetLockstepUplinkState();
+                return;
+            }
+
+            if (m_lockstepSeenMatchSerial != m_session.MatchSerial)
+            {
+                // 同一会话里的**第二局**（运行器被换掉、`LastSteppedFrame` 从 -1 重开）
+                m_lockstepSeenMatchSerial = m_session.MatchSerial;
+                m_lastLockstepInputFrame = -1;
+                m_lockstepPendingButtons = 0u;
+            }
+
+            if (!m_session.CanSendLockstepInput)
+            {
+                return;
+            }
+
+            if (client.LastSteppedFrame <= m_lastLockstepInputFrame)
+            {
+                return;         // 这一帧已经交过了 ⇒ 不重复发
+            }
+
+            m_lastLockstepInputFrame = client.LastSteppedFrame;
+
+            uint buttons = m_lockstepPendingButtons;
+            m_lockstepPendingButtons = 0u;
+
+            // 计数不在这里另存一份：`NetSession.LockstepInputsSent` / `LockstepInputsSkipped` 就是唯一口径
+            // （界面直接读那两个数，少一处会跟线上对不上的影子计数）
+            //
+            // ⚠️ 一次 Tick **至多一条**：`Pump` 可能一口气吞下好几帧（编辑器卡顿后补帧），
+            //    那中间那几帧**必然缺我这个人的输入**（服务端填默认 + `Missing`）。
+            //    这是锁步的固有代价，不是 bug —— 换个更密的节拍只会变成「同一帧发两次」被服务端丢掉。
+            m_session.SendLockstepInput(m_inputX, m_inputY, buttons, m_targetEntityId);
+        }
+
+        /// <summary>把「上行发到第几帧」那三个游标清零（换会话 / 断线 / 还没开局时都要清）。</summary>
+        private void ResetLockstepUplinkState()
+        {
+            m_lastLockstepInputFrame = -1;
+            m_lockstepSeenMatchSerial = -1;
+            m_lockstepPendingButtons = 0u;
         }
 
         /// <summary>
@@ -826,6 +939,14 @@ namespace NBC.EditorTools
             EditorGUILayout.LabelField("胜负判定不一致（本局）", session.MatchMismatchCount.ToString());
             EditorGUILayout.LabelField("结果（本局）", session.MatchOutcome == null ? "未宣布" : session.MatchOutcome.Value.ToString());
             EditorGUILayout.LabelField("一句话", client.Describe());
+
+            // ⭐ S4-f：**上行**（没有这条，服务端永远把我当「缺人」，画面上就是谁都不动）
+            EditorGUILayout.LabelField("上行（我发给服务端的输入）",
+                "已发 " + session.LockstepInputsSent + " 条／被挡 " + session.LockstepInputsSkipped
+                + " 次；下一条打第 " + session.NextLockstepFrame + " 帧");
+            EditorGUILayout.LabelField("能不能发上行", session.CanSendLockstepInput
+                ? "能（在线 + 已开局 + 本局还没宣布胜负）"
+                : "不能（未在线／未开局／已宣布胜负）");
         }
 
         /// <summary>
@@ -1225,6 +1346,34 @@ namespace NBC.EditorTools
                     }
                 }
 
+                // ⭐ S4-f：上面那一排**全是状态同步那条链**的（一行语义都没改）。
+                //    锁步那条链的上行是另一个按钮 —— 两条链并存，按钮也分开，免得"按了不知道喂了谁"。
+                bool lockstepInput = m_session != null && m_session.CanSendLockstepInput;
+
+                using (new EditorGUI.DisabledScope(!lockstepInput))
+                {
+                    if (GUILayout.Button(
+                            lockstepInput
+                                ? "锁步：把普攻挂到下一条上行（第 0 位；下一帧发第 " + m_session.NextLockstepFrame + " 帧）"
+                                : "锁步：把普攻挂到下一条上行（本局还没开局）",
+                            GUILayout.Height(22f)))
+                    {
+                        m_lockstepPendingButtons |= 1u;
+                    }
+                }
+
+                if (lockstepInput)
+                {
+                    EditorGUILayout.HelpBox(
+                        "本局是**锁步对局**（服务端已开局）：上面两个滑条与「目标」会被**自动**上行成 "
+                        + "`lockstep_input` —— **服务端每推进一帧、我发一条**（一帧一包，节拍是帧号不是时间）。\n"
+                        + "⚠️ 一次编辑器 Tick **至多一条**：要是卡顿后一口气补了好几帧，中间那几帧**必然缺我的输入**"
+                        + "（服务端会填默认并标 `Missing`）—— 这是锁步的固有代价。\n"
+                        + "⚠️ 它和上面那排「发一次输入／持续发送」**不是同一条链**：那排喂状态同步（快照），"
+                        + "这条喂帧同步（锁步）。两条链在服务端**并存**，各走各的。",
+                        MessageType.Info);
+                }
+
                 DrawTargetHint();
             }
 
@@ -1235,10 +1384,23 @@ namespace NBC.EditorTools
 
             EditorGUILayout.LabelField("已发输入", m_session == null ? "0" : m_session.InputsSent.ToString());
 
+            // ⚠️ 这里**不看**「帧同步」那个勾选框：勾选框管的是"我**看**哪一份数据"，
+            //    而上行管的是"我**参不参与**这一局" —— 只要服务端开了局，我这一席就该交输入，
+            //    否则一换回快照模式，我的英雄在锁步世界里就永远被判「缺人」（而且没人会注意到）。
+            if (m_session != null && m_session.Lockstep != null)
+            {
+                EditorGUILayout.LabelField("锁步上行",
+                    "已发 " + m_session.LockstepInputsSent + " 条／被挡 " + m_session.LockstepInputsSkipped
+                    + " 次；下一条打第 " + m_session.NextLockstepFrame + " 帧"
+                    + "（提前量 " + NetSession.LockstepInputLeadFrames + " 帧）");
+            }
+
             if (m_autoChase && canInput)
             {
                 EditorGUILayout.LabelField("自动追击", "已按 " + m_autoAttackCount
-                    + " 次普攻；冷却剩余 " + m_autoAttackCooldownTicks + " 帧");
+                    + " 次普攻；冷却剩余 " + m_autoAttackCooldownTicks + " 帧"
+                    + "；**它自己的方向** X=" + m_chaseInputX + " Y=" + m_chaseInputY
+                    + "（滑条那对值归你，它不碰）");
             }
         }
 
@@ -1906,6 +2068,10 @@ namespace NBC.EditorTools
             m_session.Dispose();
             m_session = null;
             m_transport = null;
+
+            // ⚠️ 换会话就把上行游标清掉：新会话的 `MatchSerial` 又从 0 数起（第一次开局还是 1），
+            //    不清的话它会与上一局的编号撞上 —— 见 `PumpLockstepInput` 里那段说明（重连后不动）。
+            ResetLockstepUplinkState();
 
             // ⚠️ 断开就把表现层那份清掉：不清的话下一局的第 0 帧可能比上一局的末帧小（画面停住）
             if (m_feed != null)

@@ -82,6 +82,25 @@ namespace NBC.Game.Net
         /// <summary>界面里最多留几条掉落记录。</summary>
         public const int MaxRecentDrops = 20;
 
+        /// <summary>
+        /// 锁步上行的**提前量**（帧）：`SendLockstepInput` 默认给「下一帧 + 这么多帧」打帧号。
+        ///
+        /// <para>⚠️ 为什么必须提前：服务端第 N 帧在 `ServerTick &gt;= N + 2` 时**到点就广播**，
+        /// 到点之后**再来的输入一律作废**（`LockstepScheduler` 文件头 ①）。客户端拿到第 N 帧时，
+        /// 服务端已经在等着发 N+1 了 ⇒ 若只按「下一帧」打帧号，只剩一个 tick（30Hz 下约 33ms）
+        /// 的网络预算，稍一抖我这一帧就被判「缺人（Missing）」。</para>
+        ///
+        /// <para>取 1 的理由：预算变成两个 tick（约 66ms），又不会让「我按了键」与「画面动」
+        /// 之间拖出可感知的延迟（该值就是服务端那 2 tick 固定延迟里的一半）。</para>
+        ///
+        /// <para>⚠️ **这个预算是有限的、而且会随 RTT 吃光**：第 N 帧广播之后，第 N+2 帧会在
+        /// **2 个 tick（约 66ms）之后**被服务端凑齐。所以「帧号还没被广播」只在这一段里成立 ——
+        /// 真到了「2 × 单程 + 一次泵间隔 &gt; 66ms」的链路上，我这一帧照样会被判缺人，
+        /// 而**本地计数 `LockstepInputsSkipped` 仍然是 0**（本地的闸只管「帧号已经落后」这一种）。
+        /// 想抗更大的 RTT 就得再加提前量，代价是「按键 → 画面动」的延迟同步变大。</para>
+        /// </summary>
+        public const int LockstepInputLeadFrames = 1;
+
         /// <summary>传输（接缝；测试里塞 `FakeTransport`）。</summary>
         private readonly ITransport m_transport;
 
@@ -187,6 +206,9 @@ namespace NBC.Game.Net
 
         /// <summary>发出去的输入序号（见 `NextInputSeq`）。</summary>
         private int m_inputSeq;
+
+        /// <summary>发出去的**锁步**上行序号（见 `SendLockstepInput`；协议字段 `seq`）。</summary>
+        private int m_lockstepInputSeq;
 
         /// <summary>最近一次测到的往返延迟（毫秒；-1 = 还没测到）。</summary>
         private int m_rttMs = -1;
@@ -433,6 +455,61 @@ namespace NBC.Game.Net
         {
             get { return m_matchSerial; }
         }
+
+        // ====================================================================
+        //  锁步**上行**（M4-S4 S4-f）
+        // ====================================================================
+
+        /// <summary>
+        /// 现在能不能发锁步上行：在线 + 已开局 + **这一局还没落定结果**。
+        /// <para>⚠️ 「落定」的口径要说清：`LockstepClient.Outcome` 是「服务端宣布了**且我复算一致**」，
+        /// 不是单纯「服务端宣布了」。所以**复算不一致**的那一局里它是 <c>null</c>，这道闸**不会**落下来。</para>
+        /// <para>⚠️ 于是这里有一条**调用方的义务**（本方法自己做不到）：必须按「帧号有没有前进」节流，
+        /// 一次推进只发一条（窗口的 `PumpLockstepInput` 就是这么做的）。若每个 tick 都硬调，就会对
+        /// **同一帧**连发好几条 —— 服务端只认第一条，其余按重复丢掉并回 `ErrorResponse`。
+        /// 别指望「『帧号已经广播过』那道闸」能兜底：默认帧号恒为 `已推进帧 + 1 + 提前量`，
+        /// 它**永远大于**已推进帧，所以只要调用方不停手，那道闸永远不会响。</para>
+        /// <para>⚠️ 第四条也不是客套：宣布结果之后服务端**停止推进**（`LockstepService` 文件头），
+        /// 再往未来帧里塞输入只会堆在服务端的待发桶里，一帧都不会被用上。</para>
+        /// </summary>
+        public bool CanSendLockstepInput
+        {
+            get
+            {
+                return m_state == ESessionState.Online
+                    && m_lockstep != null
+                    && m_lockstep.Started
+                    && m_lockstep.Outcome == null;
+            }
+        }
+
+        /// <summary>
+        /// 默认会给「哪一帧」打帧号（= 已推进帧 + 1 + `LockstepInputLeadFrames`）。
+        /// <para>⚠️ 只在**连运行器都没有**时返回 **0**；「有运行器但还没开局成功」（`initial_hash` 对不上）
+        /// 时它会返回 **1**（`LastSteppedFrame` 还是 -1）—— 那种帧发不出去，会被 `CanSendLockstepInput` 挡掉。</para>
+        /// </summary>
+        public int NextLockstepFrame
+        {
+            get
+            {
+                return m_lockstep == null
+                    ? 0
+                    : m_lockstep.LastSteppedFrame + 1 + LockstepInputLeadFrames;
+            }
+        }
+
+        /// <summary>累计**发出去**的锁步上行条数（被挡下的不算，见 `LockstepInputsSkipped`）。</summary>
+        public int LockstepInputsSent { get; private set; }
+
+        /// <summary>
+        /// 累计**被挡下**的锁步上行次数（没在线 / 没开局 / 结果已落定 / 帧号已经广播过）。
+        /// <para>⚠️ 这个数必须看得见：它非 0 就等于「我按了键，但我这一帧的服务端输入是空的」，
+        /// 而那在画面上只表现为「我怎么不动」——不说清就永远查不出来。</para>
+        /// <para>⚠️ 反过来**不成立**：这个数 = 0 不代表每一帧都送到了 —— 见 `LockstepInputLeadFrames`
+        /// 那段（RTT 吃光 2 tick 预算时，服务端照样判缺人，而本地一道闸都不会响）。</para>
+        /// </summary>
+        public int LockstepInputsSkipped { get; private set; }
+
 
         /// <summary>
         /// 取一个任务的**权威状态**（M4-S3 §二十六）。
@@ -798,6 +875,95 @@ namespace NBC.Game.Net
         {
             m_inputSeq++;
             return m_inputSeq;
+        }
+
+        /// <summary>
+        /// 发一条**锁步上行**（M4-S4 S4-f）：我这一帧想怎么动、打谁。
+        ///
+        /// <para>⚠️ 它和 `SendInput`（状态同步那条链）**不是一回事**，两条链并存、各喂各的：
+        /// `SendInput` 发的是「意图」，服务端每 tick 应用一次、回一份快照；
+        /// 本方法发的是「**第几帧**的输入」，服务端只转手广播，**谁都不许改**
+        /// （改了就是两端各算各的，对账当场红）。</para>
+        ///
+        /// <para>⭐ 帧号从哪来：默认「已推进帧 + 1 + `LockstepInputLeadFrames`」—— 见该常量的说明。
+        /// 客户端**不需要**知道服务端时钟，它只需要知道自己收到第几帧了：
+        /// 服务端保证「第 N 帧广播过之后，N 就不可改」，于是「N+1+提前量」这一格一定还没被广播。</para>
+        ///
+        /// <para>⚠️ 轴的单位：传 A7 的量化轴（-1000..1000 = -1..+1，与 `SendInput` 同一个约定），
+        /// 越界**夹到 ±1000**。协议里两个字段是定点 raw（`Fixed64`），但**只有方向有意义**
+        /// （服务端按 `WorldStep` 归一化后乘速度），所以「1000 还是 1.0」不影响结果 —— 这里统一用
+        /// `Fix64.FromInt(轴)` ⇒ 整数换定点，**一个 float 都不碰**（`Check-FloatFree` 那条闸也靠它）。</para>
+        ///
+        /// <para>⚠️ **不发会注定被拒的包**：没在线、没开局、已宣布胜负、或指定帧号已经广播过 ⇒
+        /// 返回 false + `LockstepInputsSkipped` +1。**不抛异常** —— 调用方（窗口）每帧都会问一次，
+        /// 抛异常会把「还没开局」这种事变成崩溃。</para>
+        /// </summary>
+        /// <param name="moveX">左右轴（-1000..1000，越界夹住）。</param>
+        /// <param name="moveY">前后轴（-1000..1000，越界夹住）。</param>
+        /// <param name="buttons">按键位掩码（第 0 位 = 普攻，与状态同步链同一套位定义）。</param>
+        /// <param name="targetEntityId">要打的目标（0 = 不打）。</param>
+        /// <param name="frame">指定帧号（&lt; 0 = 用 `NextLockstepFrame`；指定了就不再叠加提前量）。</param>
+        /// <returns>真的发出去了返回 true；被挡下返回 false（原因见上面的四种）。</returns>
+        public bool SendLockstepInput(int moveX, int moveY, uint buttons = 0,
+                                      int targetEntityId = 0, int frame = -1)
+        {
+            ThrowIfDisposed();
+
+            // ⚠️ 取成局部变量再判空：这样「可空引用类型」开着或关着都不会有告警，
+            //    也不依赖属性里那次判空被编译器看穿。
+            LockstepClient client = m_lockstep;
+
+            if (!CanSendLockstepInput || client == null)
+            {
+                LockstepInputsSkipped++;
+                return false;
+            }
+
+            int stamped = frame < 0 ? client.LastSteppedFrame + 1 + LockstepInputLeadFrames : frame;
+
+            // 已经广播过的帧：服务端只会回一条「作废」（`LockstepScheduler` 文件头 ②）
+            // ⇒ 本地先挡掉。**这不是替服务端判**，是不让一条注定作废的包上路。
+            if (stamped <= client.LastSteppedFrame)
+            {
+                LockstepInputsSkipped++;
+                return false;
+            }
+
+            m_lockstepInputSeq++;
+
+            Send(new ClientMessage
+            {
+                LockstepInput = new LockstepInput
+                {
+                    Frame = stamped,
+                    Seq = m_lockstepInputSeq,
+                    MoveXRaw = Fix64.FromInt(ClampAxis(moveX)).RawValue,
+                    MoveYRaw = Fix64.FromInt(ClampAxis(moveY)).RawValue,
+                    Buttons = (int)buttons,
+                    TargetEntityId = targetEntityId,
+                },
+            });
+
+            LockstepInputsSent++;
+            return true;
+        }
+
+        /// <summary>把 A7 的轴夹进量化范围（-1000..1000）。</summary>
+        /// <param name="axis">原始轴值。</param>
+        /// <returns>夹住之后的轴值。</returns>
+        private static int ClampAxis(int axis)
+        {
+            if (axis > 1000)
+            {
+                return 1000;
+            }
+
+            if (axis < -1000)
+            {
+                return -1000;
+            }
+
+            return axis;
         }
 
         // ====================================================================
