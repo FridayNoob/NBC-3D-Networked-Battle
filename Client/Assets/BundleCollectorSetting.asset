@@ -47,7 +47,15 @@ MonoBehaviour:
       GroupDesc: 
       AssetTags: 
       ActiveRuleName: EnableGroup
-      Collectors: []
+      Collectors:
+      - CollectPath: Assets/_Project/UI
+        CollectorGUID: 6f7b8c16b5f4c684bb63c20dbcaaa030
+        CollectorType: 0
+        AddressRuleName: AddressByFileName
+        PackRuleName: PackDirectory
+        FilterRuleName: CollectAll
+        AssetTags: 
+        UserData: 
     - GroupName: hero
       GroupDesc: 
       AssetTags: 
