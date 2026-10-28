@@ -26,6 +26,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;             // M4-S4 S4-e 收尾：`DescribeUnits`（把表现层那份世界里的编号串成一行）
 using NBC.Framework;           // M4-S1：`EventCenter`（全局事件中心）
+using NBC.Framework.Net;       // R004：`CountingTransport` / `NetRuntimeStats` / `NetSyncMode`（HUD 同源统计）
 using NBC.Framework.Net.Adapter;
 using NBC.Game.Achievement;    // M4-S2：`AchievementRuntime` / `AchievementTracking` / `AchievementEvents`
 using NBC.Game.Battle;         // M4-S1：`ServerEventBridge`（服务端事件 → 事件中心）
@@ -962,6 +963,12 @@ namespace NBC.EditorTools
             PresentationFeed feed = EnsureFeed();
             feed.UseLockstep = on;
 
+            // R004：模式写进同源统计（没连的时候仍是「离线」，不为切换而谎报在线）
+            if (m_session != null)
+            {
+                NetRuntimeStats.SetMode(on ? NetSyncMode.Lockstep : NetSyncMode.StateSync);
+            }
+
             AddLog("[表现层] 数据源切换（" + from + "）⇒ " + (on ? "锁步" : "快照") +
                    "：服务端两条链都还在跑，只有客户端改读哪一份。");
         }
@@ -1006,6 +1013,13 @@ namespace NBC.EditorTools
                 // ⚠️ **局号**（本轮加的"换局"显式信号）：不传的话只能靠世界对象/帧号倒退猜，
                 //    而"上一局末帧 0、新一局从 0 起"那一格是猜不出来的（§35.9 必修 1 / 小坑 5）。
                 m_session.MatchSerial);
+
+            // R004：RTT 与帧号写进同源统计。
+            //  ⚠️ 两种模式的「帧号」语义不同：状态同步 = 快照 tick，帧同步 = 已步进帧 —— 按模式取，别混。
+            NetRuntimeStats.SetRtt(m_session.RttMs);
+            NetRuntimeStats.SetFrame(m_lockstepMode
+                ? (client == null ? -1 : client.LastSteppedFrame)
+                : (int)m_session.World.ServerTick);
         }
 
         private void OnGUI()
@@ -1824,10 +1838,15 @@ namespace NBC.EditorTools
 
             m_transport = new TcpTransport();
 
+            // R004：在真实传输层外面包一层字节统计（装饰器）。HUD 与这个窗口都读同一份数据，
+            //      所以这里只**包**、不自己算带宽（否则两边数字会不一致）。
+            ITransport counting = new CountingTransport(m_transport);
+            NetRuntimeStats.Reset();
+
             // ⚠️ 第 7、8 个参数就是 M4-S3 的账号 / 密码（留空 = 游客，行为与 M3 一字不差）。
             //    密码在这里交给 `NetSession`，它算完摘要就把明文丢掉 —— 见那个字段的说明。
             m_session = new NetSession(
-                m_transport,
+                counting,
                 m_playerName,
                 "unity-editor/" + Application.unityVersion,
                 NetSession.DefaultHeartbeatIntervalMs,
@@ -1845,6 +1864,9 @@ namespace NBC.EditorTools
                 AddLog("握手完成：玩家 " + ack.PlayerId +
                        "，昵称 " + ack.Nickname +
                        "，服务端 " + ack.ServerVersion);
+
+                // R004：握手成功才算「在线」，模式跟着窗口上的锁步开关走
+                NetRuntimeStats.SetMode(m_lockstepMode ? NetSyncMode.Lockstep : NetSyncMode.StateSync);
             m_session.RttUpdated += rtt => AddLog("RTT " + rtt + "ms");
 
             // ------------------------------------------------------------------
@@ -2068,6 +2090,9 @@ namespace NBC.EditorTools
             m_session.Dispose();
             m_session = null;
             m_transport = null;
+
+            // R004：断开就把同源统清零（模式回「离线」，带宽归零，帧号清成未知）
+            NetRuntimeStats.Reset();
 
             // ⚠️ 换会话就把上行游标清掉：新会话的 `MatchSerial` 又从 0 数起（第一次开局还是 1），
             //    不清的话它会与上一局的编号撞上 —— 见 `PumpLockstepInput` 里那段说明（重连后不动）。

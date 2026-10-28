@@ -82,6 +82,13 @@ namespace NBC.Boot
                     }
                 },
                 error => Debug.LogError("[HpBarDemo] 打不开血条面板：" + error.Message));
+
+            // R004：顺带把网络状态面板也打开（右上角）。它自己每 0.25 秒读一次统计，这里不需要喂数据。
+            UIManager.Instance.ShowPanel(
+                "NetHudPanel",
+                UILayer.Bot,
+                null,
+                error => Debug.LogError("[HpBarDemo] 打不开网络面板：" + error.Message));
         }
 
         // 入参：无（引擎每帧调）
