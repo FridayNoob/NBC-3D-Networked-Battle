@@ -260,3 +260,19 @@ __pycache__/
 !*.asmdef
 !*.asmref
 !.gitkeep
+
+# ============================================================================
+#  第三方角色模型与动画（R002 起）
+#  Unity-chan 的许可是「不得单独再分发模型数据」⇒ 公开仓库不能放它们。
+#  放法见 Client/Assets/_Project/Art/Characters/README.md（谁要跑就从那下）。
+# ============================================================================
+Client/Assets/_Project/Art/Characters/*
+!Client/Assets/_Project/Art/Characters/README.md
+
+# ============================================================================
+#  Unity-chan（R002 起的角色模型，192 MB / 1085 个文件）
+#  Unity-Chan License：不得单独再分发模型数据 ⇒ 公开仓库不能放。
+#  补法见 Client/Assets/_Project/Art/Characters/README.md
+# ============================================================================
+Client/Assets/UnityChan/
+Client/Assets/UnityChan.meta
