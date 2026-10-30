@@ -1,84 +1,56 @@
-// ============================================================================
-//  NBC.Framework.UI · UI 层的引用持有者（挂在 Canvas 预制体上）
-//  对应需求：FW-M09
-//  缺陷编号：FW-10（原版用 `canvas.Find("Bot")` 找层）
-//
-//  ---------------------------------------------------------------------------
-//  原版错在哪（`UI/UIManager.cs:43-46`）
-//  ---------------------------------------------------------------------------
-//      bot    = canvas.Find("Bot");
-//      mid    = canvas.Find("Mid");
-//      top    = canvas.Find("Top");
-//      system = canvas.Find("System");
-//
-//  `Transform.Find` 找不到时**返回 null 而不报错**。后果链条：
-//      改名字 → Find 返回 null → `GetLayerFather` 返回 null
-//      → `SetParent(null)` 把面板挂到**场景根节点**
-//      → 面板不在 Canvas 下 → **不渲染**
-//  → 玩家的体感是"**界面一片空白，Console 干干净净**"。
-//
-//  ⚠️ 这属于**静默失败**，比崩溃难查得多 —— 崩溃至少告诉你哪一行。
-//     需求文档原文写的是"改名即崩"，**不准确**（见 Docs/06 §三 FW-10 的措辞修正）。
-//
-//  ---------------------------------------------------------------------------
-//  修法：把"层在哪"从代码搬到资源上，并且**找不到就当场报错、还要说清缺哪个**
-//  ---------------------------------------------------------------------------
-//  · 四个层改成**序列化字段**（在 Inspector 里拖），代码里不再出现 "Bot" 这种字符串
-//  · `DescribeProblem()` 把"哪个字段空了 / 谁和谁重了 / 谁不是我的子节点"
-//    写成**一句人话**，`UIManager` 加载 Canvas 时立刻检查并抛异常
-//
-//  ⚠️ 为什么不是"找一个数组按顺序拖"：**顺序本身就是含义**，
-//     拖反了不会报错 —— 那只是把"静默错位"从代码里搬到了 Inspector 里。
-//     具名字段拖错了，一眼就能看出来。
-// ============================================================================
+// 这个文件里有：
+//   UILayers（类）：持有 Canvas 预制体上四个 UI 层节点的引用，配置有错时给出缺哪个 / 重了哪个 / 拖错哪个的人话说明。
 
 using System;
 using UnityEngine;
 
 namespace NBC.Framework.UI
 {
-    /// <summary>
-    /// 四个 UI 层节点的引用。**挂在 Canvas 预制体的根节点上。**
-    /// </summary>
+    // 主要功能：把 Bot / Mid / Top / System 四个层节点从代码搬到序列化字段，按层取父节点，并在配置有错时报出具体错在哪。
+    // 主要数据成员：m_bot / m_mid / m_top / m_system（四个层的 Transform，Inspector 里拖）、LayerCount（固定 4）。
+    // 主要外部方法：Get（取不到就抛）、TryGet（配置问题返回 false）、DescribeProblem / IsValid（检查）、Bind（测试手工指定）、GetLayerName（报错用名字）。
+    // 谁在用它：UIManager 加载 Canvas 时检查并保存，打开面板时按层取父节点；EditMode 测试用 Bind 搭临时 Canvas。
+    // 注意：原版用 Transform.Find 按名字找层，改名后 Find 返回 null 而不报错，面板被 SetParent(null)
+    //   挂到场景根节点，界面一片空白且 Console 干净 —— 静默失败比崩溃难查；所以层改成序列化字段，
+    //   缺了当场抛异常并说清缺哪个。
+    // 注意：不要改成按顺序拖的数组 —— 顺序本身就是含义，拖反了不会报错，只是把静默错位从代码挪到
+    //   Inspector；具名字段拖错了能一眼看出来。
+    /// <summary>四个 UI 层节点的引用，挂在 Canvas 预制体的根节点上；配置有问题时报出缺哪个 / 重了哪个 / 拖错哪个，不静默返回 null。</summary>
     [DisallowMultipleComponent]
     public sealed class UILayers : MonoBehaviour
     {
-        /// <summary>层数量（<see cref="UILayer"/> 的取值个数）。</summary>
+        /// <summary>层数量，固定 4，必须与 UILayer 的取值个数一致（加层要两处一起改）。</summary>
         public const int LayerCount = 4;
 
-        /// <summary>最底层。</summary>
+        // 最底层节点（背景、主界面 HUD）；为空表示没配。
         [SerializeField]
         private Transform m_bot;
 
-        /// <summary>中间层（普通面板的默认层）。</summary>
+        // 中间层节点（普通面板的默认层）；为空表示没配。
         [SerializeField]
         private Transform m_mid;
 
-        /// <summary>上层。</summary>
+        // 上层节点（盖住普通面板的详情、确认框）；为空表示没配。
         [SerializeField]
         private Transform m_top;
 
-        /// <summary>最顶层（加载遮罩、系统弹窗）。</summary>
+        // 最顶层节点（加载遮罩、系统弹窗）；为空表示没配。
         [SerializeField]
         private Transform m_system;
 
-        /// <summary>
-        /// 层的名字，用于报错和日志。
-        /// <para>
-        /// ⚠️ **未知层直接抛异常，不返回"Unknown(99)"这种兜底字符串。**
-        /// 这条是被测试抓出来的：第一版我在这里写了
-        /// <c>default: return "Unknown(" + (int)layer + ")";</c> ——
-        /// 一个**看起来很正常**的兜底。但同一个测试里我断言三处（`Bind` / `Get` / `GetLayerName`）
-        /// 遇到野值都该抛异常，只有这里不抛，于是红了。
-        /// </para>
-        /// <para>
-        /// 兜底字符串正是本项目最讨厌的那类**静默行为**：它悄悄把一个"不可能的输入"
-        /// 变成一个"看着没问题的字符串"，然后这个假名字会一路流进日志，
-        /// 让人以为层真的叫 "Unknown(99)"。**野值只可能来自写错的代码，那就当场炸。**
-        /// </para>
-        /// </summary>
-        /// <param name="layer">层。</param>
-        /// <returns>名字。</returns>
+        /// <summary>把层枚举翻成日志与报错用的名字（Bot / Mid / Top / System）。</summary>
+        /// <param name="layer">层；必须是 UILayer 的四个合法值之一。</param>
+        /// <returns>该层的名字，与枚举成员同名。</returns>
+        // 功能：把层枚举翻成四个固定名字，供日志与报错拼人话。
+        // 入参：layer 层，只接受四个合法值
+        // 返回：层名（Bot / Mid / Top / System）
+        // 步骤：
+        //   1) 四个合法值各给一个固定名字，与枚举成员同名，日志里才对得上
+        //   2) 其余值当场抛异常，不做兜底字符串
+        // 上游：Get 与 DescribeProblem 的报错拼装，以及测试断言
+        // 下游：无
+        // 注意：不能加 default 返回 Unknown(99) 这种兜底 —— 野值只可能来自写错的下标，兜底会把假名字
+        //   一路带进日志；第一版就是因为只有这里不抛、三处断言里红了。
         public static string GetLayerName(UILayer layer)
         {
             switch (layer)
@@ -97,12 +69,18 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>
-        /// 取某一层的节点。
-        /// <para>⚠️ 配置有问题时**抛异常并说明缺什么**，不返回 null。</para>
-        /// </summary>
+        /// <summary>取某一层的节点；配置有问题时抛异常并说明缺什么，不返回 null。</summary>
         /// <param name="layer">层。</param>
-        /// <returns>该层的节点。</returns>
+        /// <returns>该层的 Transform，保证非空且是本 Canvas 的子节点。</returns>
+        // 功能：取某一层的节点，取不到就带着问题描述抛异常。
+        // 入参：layer 层
+        // 返回：该层节点，保证非空且是当前 Canvas 的子节点
+        // 步骤：
+        //   1) 先用 TryGet 做完整校验，把空字段与拖错节点都挡在这里
+        //   2) 校验不过就抛 InvalidOperationException，并带上 DescribeProblem 的人话
+        // 上游：UIManager 打开面板时按层取父节点
+        // 下游：TryGet、GetLayerName、DescribeProblem
+        // 注意：不能改成配置错就返回 null —— SetParent(null) 会把面板挂到场景根节点，界面空白却不报错。
         public Transform Get(UILayer layer)
         {
             Transform result;
@@ -115,30 +93,21 @@ namespace NBC.Framework.UI
                 "[UILayers] 取不到 «" + GetLayerName(layer) + "» 层。\n" + DescribeProblem());
         }
 
-        /// <summary>
-        /// 试着取某一层的节点。**配置有问题时返回 false**（不抛异常），
-        /// 供调用方自己决定怎么处理。
-        /// <para>
-        /// ⚠️ **注意区分两种"不行"**：
-        /// </para>
-        /// <list type="bullet">
-        /// <item>
-        /// <description>
-        /// **层是合法的、只是没配好**（空格子 / 拖了别人的节点）→ 返回 <c>false</c>。
-        /// 这是**配置问题**，调用方可能想收集全部问题一起报，所以不能在这里就炸。
-        /// </description>
-        /// </item>
-        /// <item>
-        /// <description>
-        /// **传进来的层根本不存在**（比如 <c>(UILayer)99</c>）→ **抛异常**。
-        /// 这是**编程错误**，沉默地返回 false 只会让 bug 藏得更深。
-        /// </description>
-        /// </item>
-        /// </list>
-        /// </summary>
+        /// <summary>试着取某一层的节点；层合法但没配好时返回 false，层本身非法时抛异常。</summary>
         /// <param name="layer">层。</param>
-        /// <param name="layerRoot">取到的节点；失败时是 null。</param>
-        /// <returns>是否取到。</returns>
+        /// <param name="layerRoot">取到的节点；返回 false 时为 null。</param>
+        /// <returns>true 表示节点存在且是本 Canvas 的子节点；false 表示层合法但配置有问题。</returns>
+        // 功能：取层节点但不抛配置异常，把「没配好」与「层非法」分开。
+        // 入参：layer 层；layerRoot 取到的节点
+        // 返回：true 取到且是本 Canvas 的子节点；false 层合法但没配好（空格子或拖了别人的节点）
+        // 步骤：
+        //   1) 先 RawGet 拿字段，空就直接 false，这是配置问题，由调用方决定怎么报
+        //   2) 再查 IsChildOf：拖到别的 Canvas 下面与没填一样会让面板错位，一并挡掉
+        //   3) 两步都过才返回 true
+        // 上游：Get，以及测试断言「配置错不抛异常」
+        // 下游：RawGet
+        // 注意：层本身非法（如 (UILayer)99）由 RawGet 抛 ArgumentOutOfRangeException，不能改成静默 false ——
+        //   那是编程错误，沉默只会让 bug 藏得更深。
         public bool TryGet(UILayer layer, out Transform layerRoot)
         {
             layerRoot = RawGet(layer);
@@ -148,8 +117,6 @@ namespace NBC.Framework.UI
                 return false;
             }
 
-            // 拖到别的 Canvas 下面去了：面板会被挂到那边，界面会错位。
-            // 这和不填一样是配置错误，所以一并挡住。
             if (!layerRoot.IsChildOf(transform))
             {
                 return false;
@@ -158,10 +125,18 @@ namespace NBC.Framework.UI
             return true;
         }
 
-        /// <summary>
-        /// 检查配置，返回**一句人话**说明问题；一切正常时返回 null。
-        /// </summary>
+        /// <summary>检查四个层的配置，返回一句人话说明第一处问题；配置正确时返回 null。</summary>
         /// <returns>问题描述；正常时 null。</returns>
+        // 功能：按「先缺、再重、最后不是子节点」的顺序检查配置，返回第一处问题的人话。
+        // 入参：无
+        // 返回：能直接给人看的问题描述；四层都合法时 null
+        // 步骤：
+        //   1) 先查空字段，漏填最常见也最容易修
+        //   2) 再查重复，同一节点挂两个层会让两层互相遮挡
+        //   3) 最后查子节点归属，拖到别的 Canvas 下会让位置与层级都错
+        // 上游：UIManager 加载 Canvas 时检查并抛异常，IsValid 也走这里
+        // 下游：DescribeMissing、DescribeDuplicated、DescribeNotChild
+        // 注意：顺序不能换 —— 后两步都假定字段非空（DescribeNotChild 直接取 node.IsChildOf），换了会空引用。
         public string DescribeProblem()
         {
             string missing = DescribeMissing();
@@ -179,22 +154,30 @@ namespace NBC.Framework.UI
             return DescribeNotChild();
         }
 
-        /// <summary>配置是否完全正确。</summary>
+        /// <summary>四个层是否都配好且都指向本 Canvas 的子节点。</summary>
+        // 功能：把 DescribeProblem 的结果压成一个 bool，供测试或排查一眼判断。
+        // 入参：无
+        // 返回：true 配置完全正确；false 至少有一处问题
+        // 步骤：
+        //   1) 调 DescribeProblem，null 即有效
+        //   2) 不缓存结果，Inspector 里的配置随时会变
+        // 上游：测试与排查脚本
+        // 下游：DescribeProblem
         public bool IsValid
         {
             get { return DescribeProblem() == null; }
         }
 
-        /// <summary>
-        /// 手动指定某一层的节点。
-        /// <para>
-        /// ⚠️ **正常用法是在 Inspector 里拖**。这个方法给两种场合：
-        /// ① 测试里手工搭出一个 UILayers；
-        /// ② 运行时代码动态搭 Canvas（少见）。
-        /// </para>
-        /// </summary>
+        /// <summary>手动指定某一层的节点；正常用法是在 Inspector 里拖，这里给测试与运行时动态搭 Canvas 用。</summary>
         /// <param name="layer">层。</param>
         /// <param name="layerRoot">节点；传 null 表示清空。</param>
+        // 功能：按层改对应字段，供测试手工搭 UILayers 或运行时代码动态拼 Canvas。
+        // 入参：layer 层；layerRoot 节点，null 表示清空
+        // 返回：无
+        // 步骤：按枚举分派到四个字段，未知层抛异常，与 GetLayerName 的口径一致
+        // 上游：EditMode 测试手工搭 Canvas
+        // 下游：无
+        // 注意：Bind 不做子节点与重复校验，配错要等 DescribeProblem / Get 才发现；正常项目应在 Inspector 里拖。
         public void Bind(UILayer layer, Transform layerRoot)
         {
             switch (layer)
@@ -217,9 +200,13 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>按枚举取值（**不做任何校验**）。</summary>
-        /// <param name="layer">层。</param>
-        /// <returns>对应字段；没填时 null。</returns>
+        // 功能：按枚举直接读对应字段，不做任何校验。
+        // 入参：layer 层
+        // 返回：对应字段的 Transform；没填时 null
+        // 步骤：按枚举分派；未知层抛异常，防止野值一路往下传
+        // 上游：TryGet、DescribeMissing、DescribeDuplicated、DescribeNotChild
+        // 下游：无
+        // 注意：这是内部取值，子节点与重复校验由调用方负责，不要拿它当对外接口。
         private Transform RawGet(UILayer layer)
         {
             switch (layer)
@@ -234,8 +221,13 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>找出"哪个字段是空的"。</summary>
-        /// <returns>问题描述；都填了则 null。</returns>
+        // 功能：找出第一个空字段，拼一句带修复步骤的报错。
+        // 入参：无
+        // 返回：问题描述；四个字段都填了则 null
+        // 步骤：按 0..LayerCount-1 遍历四层，遇到第一个 null 就返回，报错里写清缺哪层、该怎么拖
+        // 上游：DescribeProblem
+        // 下游：RawGet、GetLayerName
+        // 注意：报错要带上「漏填的后果」，否则接手的人只看到一句「这一格是空的」，还得自己猜。
         private string DescribeMissing()
         {
             for (int i = 0; i < LayerCount; i++)
@@ -255,8 +247,13 @@ namespace NBC.Framework.UI
             return null;
         }
 
-        /// <summary>找出"两个层指向同一个节点"。</summary>
-        /// <returns>问题描述；不重复则 null。</returns>
+        // 功能：找出第一对指向同一个节点的层。
+        // 入参：无
+        // 返回：问题描述；四层互不相同则 null
+        // 步骤：只比对 i 小于 j 的组合，避免同一对报两次；命中就报出两层名字与节点名
+        // 上游：DescribeProblem
+        // 下游：RawGet、GetLayerName
+        // 注意：四个层必须是四个不同节点，否则两层互相遮挡、层级管理失效。
         private string DescribeDuplicated()
         {
             for (int i = 0; i < LayerCount; i++)
@@ -278,8 +275,13 @@ namespace NBC.Framework.UI
             return null;
         }
 
-        /// <summary>找出"拖了不属于这个 Canvas 的节点"。</summary>
-        /// <returns>问题描述；都不是则 null。</returns>
+        // 功能：找出第一个不属于当前 Canvas 的层节点。
+        // 入参：无
+        // 返回：问题描述；四层都是本 Canvas 的子节点则 null
+        // 步骤：遍历四层，对每个节点查 IsChildOf(transform)，第一个不满足就返回
+        // 上游：DescribeProblem（只在前两步都通过后调用）
+        // 下游：RawGet、GetLayerName
+        // 注意：这里直接用 node.IsChildOf，前提是字段都已非空 —— 所以 DescribeProblem 必须先查空再调它。
         private string DescribeNotChild()
         {
             for (int i = 0; i < LayerCount; i++)
