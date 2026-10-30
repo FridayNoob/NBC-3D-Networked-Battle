@@ -1,47 +1,32 @@
-// ============================================================================
-//  QuestProgressOverlay —— 把**权威进度**盖到要显示的那些条件行上（界面唯一的入口）
-//  项目：3D联网战斗Demo   对应：`Docs\27` §二十四
-//
-//  ---------------------------------------------------------------------------
-//  一、它保证的那条不变式（本片的全部价值）
-//  ---------------------------------------------------------------------------
-//      每一行显示的数字，**要么是服务端说的、要么被标成「本地预测」** ——
-//      **绝不出现"看不出是谁说的"的数字**。
-//
-//  于是玩家与排查的人都能一眼看出：这一格是事实，还是客户端自己的猜测。
-//  （在此之前两者长得一模一样 —— 一致性只是"碰巧"，不一致时也**不报错**。）
-//
-//  ---------------------------------------------------------------------------
-//  二、⚠️ 三条刻意写死的语义
-//  ---------------------------------------------------------------------------
-//  ① **只在 `TryGetCondition` 返回 true 时才覆盖**：false = 服务端没说
-//     ⇒ 保留**本地那份**并标 `LocalPrediction`。
-//     ❌ 不许把 false 当成 0 —— 那会把"还没同步"画成"进度被清零"。
-//
-//  ② **`authority == null` 也要走同一条路**（全部标成本地预测）：
-//     "没接权威"和"权威还没说话"在界面上是**同一件事**（都不可当真），
-//     合成一条分支就少一处会写错的地方。
-//
-//  ③ **标注文案只在这里定义一次**：两个显示点（任务面板 / 成就）共用它，
-//     免得一处写「本地预测」、另一处写「预测中」，玩家以为是两种状态。
-// ============================================================================
+// 这个文件里有：
+//   QuestProgressOverlay（静态类）：把权威进度盖到要显示的条件行上，并逐行标出这个数字是服务端说的还是本地预测
 
 using System.Collections.Generic;
 
 namespace NBC.Game.Quest
 {
-    /// <summary>把权威进度盖到条件行上（任务面板与成就显示共用同一份）。</summary>
+    // 主要功能：把权威进度盖到一批条件行上，逐行记住来源，并统一给出「本地预测」的标注文案。
+    // 主要数据成员：LocalMark（本地预测的标注文案，权威来源不显示）。
+    // 主要外部方法：Apply（原地覆盖并把来源写进每行，返回拿到权威值的行数）、Mark（按来源给出要显示的标注）。
+    // 谁在用它：任务面板经 QuestPanelModel.CopyTrackingRows / BuildTrackingRow、成就经 AchievementRuntime.BuildTracking 调用，都是 Game 层内部使用，Boot 与 Editor 不直接调用。
+    // 注意：它保证的不变式是每个显示出来的数字要么是服务端说的、要么被标成本地预测，绝不出现看不出是谁说的数字。
     public static class QuestProgressOverlay
     {
-        /// <summary>本地预测的标注（**只在这里定义一次**，见文件头 ③）。</summary>
+        // 本地预测的标注文案；只在这里定义一次，各显示点都取这一份，免得一处写「本地预测」、另一处写「预测中」被当成两种状态
         public const string LocalMark = "（本地预测）";
 
-        /// <summary>
-        /// 按权威进度修正一批条件行，并**逐行**标出它的来源。
-        /// </summary>
-        /// <param name="lines">要显示的条件行（**原地修改**）。</param>
-        /// <param name="authority">权威来源；传 null = 没接权威（全部按本地预测处理）。</param>
-        /// <returns>有几行拿到了权威值（0 = 这批全是预测，界面应当看得出）。</returns>
+        // 功能：按条件编号逐行取权威值覆盖条件行，取不到就保留本地那份并标成本地预测，最后返回拿到权威值的行数。
+        // 入参：lines 要显示的条件行，原地修改，null 表示没有可盖的行；authority 权威来源，null 表示还没接权威，与「权威没说话」同样处理
+        // 步骤：
+        //   1) lines 为 null 直接返回 0 —— 没东西可盖，不值得再往下走
+        //   2) 逐行跳过 null 行，避免一行脏数据中断整批显示
+        //   3) 没接权威、或服务端没提过这条，都走同一条路：保留本地数字，只把来源标成本地预测
+        //   4) 只有确实查到权威值才覆盖累计、需求、是否达成，并把来源标成服务端权威、计数加一
+        // 返回：拿到权威值的行数；0 表示这批全是本地预测，界面应当看得出
+        // 上游：QuestPanelModel.CopyTrackingRows / BuildTrackingRow、AchievementRuntime.BuildTracking，都在拼显示文字之前调用
+        // 下游：IQuestProgressAuthority.TryGetCondition
+        // 注意：TryGetCondition 返回 false 只表示服务端没说，不许当成 0 —— 当成 0 会把「还没同步」画成「进度被清零」。
+        // 注意：authority 为 null 也走同一条分支 —— 没接权威与权威还没说话在界面上都不可当真，合成一条就少一处会写错的地方。
         public static int Apply(List<QuestConditionLine> lines, IQuestProgressAuthority authority)
         {
             if (lines == null)
@@ -62,7 +47,7 @@ namespace NBC.Game.Quest
 
                 AuthoritativeProgress progress;
 
-                // 见文件头 ②：没接权威 —— 与"权威没说话"同一条路
+                // 没接权威与权威没说话合并成一条：两种情况下这个数字都不可当真，都只标成本地预测
                 if (authority == null || !authority.TryGetCondition(line.ConditionId, out progress))
                 {
                     line.Source = EProgressSource.LocalPrediction;
@@ -79,9 +64,13 @@ namespace NBC.Game.Quest
             return authoritative;
         }
 
-        /// <summary>这个来源要不要在界面上标注（**权威不标、预测才标**）。</summary>
-        /// <param name="source">来源。</param>
-        /// <returns>要标的文案；权威来源返回空串。</returns>
+        // 功能：按进度来源返回界面要显示的标注，本地预测加标注、服务端权威不标。
+        // 入参：source 这一行数字的来源（本地预测或服务端权威）
+        // 步骤：
+        //   1) 只有本地预测需要标注，权威是默认事实，到处挂字反而淹掉真正的预测
+        // 返回：本地预测返回「（本地预测）」，服务端权威返回空串（不是 null，调用方可以直接拼接）
+        // 上游：QuestPanelModel.BuildDetail 拼详情行时逐行调用
+        // 下游：LocalMark
         public static string Mark(EProgressSource source)
         {
             return source == EProgressSource.LocalPrediction ? LocalMark : string.Empty;
