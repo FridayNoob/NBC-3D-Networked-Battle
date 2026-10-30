@@ -27,6 +27,7 @@ namespace NBC.Game.Player
         // 合速度，米/秒（≥ 0），给 HUD 之类用
         private float m_currentSpeed;
 
+        // 功能：读当前的前后速度分量（米/秒，W 正、S 负）。
         // 入参：无
         // 返回：前后速度，米/秒（W 正、S 负）
         // 上游：PlayerAnimation
@@ -36,6 +37,7 @@ namespace NBC.Game.Player
             get { return m_forwardSpeed; }
         }
 
+        // 功能：读当前的左右速度分量（米/秒，D 正、A 负）。
         // 入参：无
         // 返回：左右速度，米/秒（转身时会有短暂非零）
         // 上游：PlayerAnimation
@@ -45,6 +47,7 @@ namespace NBC.Game.Player
             get { return m_sideSpeed; }
         }
 
+        // 功能：读配置的移动速度，给动画做归一化的分母。
         // 入参：无
         // 返回：配置的移动速度，米/秒（给动画做归一化的分母）
         // 上游：PlayerAnimation
@@ -54,6 +57,7 @@ namespace NBC.Game.Player
             get { return m_moveSpeed; }
         }
 
+        // 功能：读本帧合速度（米/秒），给 HUD 与调试用。
         // 入参：无
         // 返回：合速度，米/秒（≥ 0）
         // 上游：HUD / 调试
@@ -63,6 +67,7 @@ namespace NBC.Game.Player
             get { return m_currentSpeed; }
         }
 
+        // 功能：每帧把输入压成四向之一，转身或倒退并位移，同时算出前后 / 左右分量。
         // 入参：无（引擎每帧调用）
         // 返回：无
         // 步骤：

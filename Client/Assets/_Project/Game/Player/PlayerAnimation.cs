@@ -35,6 +35,7 @@ namespace NBC.Game.Player
         private int m_speedHash;
         private int m_directionHash;
 
+        // 功能：接好绑定并做启动校验（必须有 PlayerMove、Animator、两个 Float 参数）。
         // 入参：无（引擎在开始帧调一次）
         // 返回：无
         // 步骤：
@@ -77,6 +78,7 @@ namespace NBC.Game.Player
             }
         }
 
+        // 功能：把前后 / 左右分量归一化后写进 Animator 的 Speed 与 Direction。
         // 入参：无（引擎每帧在 Update 之后调）
         // 返回：无
         // 步骤：
@@ -109,6 +111,7 @@ namespace NBC.Game.Player
             m_animator.SetFloat(m_directionHash, Mathf.Clamp(side, -1f, 1f), m_damping, Time.deltaTime);
         }
 
+        // 功能：检查 Controller 里是否存在指定的 Float 参数，缺了就点名报错。
         // 入参：parameterName 要检查的参数名
         // 返回：true = 存在且是 Float；false = 不存在或类型不对
         // 步骤：

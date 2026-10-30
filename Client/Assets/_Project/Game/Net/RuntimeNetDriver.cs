@@ -65,6 +65,7 @@ namespace NBC.Game.Net
         // 最近一次错误（空 = 没出错）
         private string m_lastError = string.Empty;
 
+        // 功能：告诉调用方是否已握手成功。
         // 入参：无
         // 返回：是否已握手成功
         public bool IsOnline
@@ -72,6 +73,7 @@ namespace NBC.Game.Net
             get { return m_session != null && m_session.IsOnline; }
         }
 
+        // 功能：告诉调用方是否已进房。
         // 入参：无
         // 返回：是否已进房
         public bool IsJoined
@@ -79,6 +81,7 @@ namespace NBC.Game.Net
             get { return m_session != null && m_session.InRoom; }
         }
 
+        // 功能：返回最近一次错误描述。
         // 入参：无
         // 返回：最近一次错误描述（空 = 没出错）
         public string LastError
@@ -86,6 +89,7 @@ namespace NBC.Game.Net
             get { return m_lastError; }
         }
 
+        // 功能：建传输层与会话，订阅状态事件，并发起连接。
         // 入参：无（引擎在开始帧调一次）
         // 返回：无
         // 步骤：
@@ -120,6 +124,7 @@ namespace NBC.Game.Net
             m_session.Connect(m_host, m_port);
         }
 
+        // 功能：每帧驱动会话，并在需要时进房、发输入、喂表现层、写统计。
         // 入参：无（引擎每帧调）
         // 返回：无
         // 步骤：
@@ -159,6 +164,7 @@ namespace NBC.Game.Net
             PushStats();
         }
 
+        // 功能：退订事件、释放会话，并把统计清零。
         // 入参：无
         // 返回：无
         // 上游：Update
@@ -178,6 +184,7 @@ namespace NBC.Game.Net
             NetRuntimeStats.Reset();
         }
 
+        // 功能：按节流间隔把本地输入发出去（锁步或状态同步二选一）。
         // 入参：无
         // 返回：无
         // 步骤：
@@ -217,6 +224,7 @@ namespace NBC.Game.Net
             }
         }
 
+        // 功能：选好数据源并刷新表现层，必要时创建 3D 绑定器。
         // 入参：无
         // 返回：无
         // 步骤：
@@ -245,6 +253,7 @@ namespace NBC.Game.Net
             }
         }
 
+        // 功能：把模式、RTT、帧号写进 HUD 只读的静态统计。
         // 入参：无
         // 返回：无
         // 步骤：
@@ -270,6 +279,7 @@ namespace NBC.Game.Net
             }
         }
 
+        // 功能：会话失败或断开时把模式改回离线。
         // 入参：state 新状态
         // 返回：无
         // 上游：NetSession.StateChanged
@@ -282,6 +292,7 @@ namespace NBC.Game.Net
             }
         }
 
+        // 功能：握手成功后按当前模式点亮统计里的模式。
         // 入参：ack 握手结果
         // 返回：无
         // 上游：NetSession.HandshakeCompleted

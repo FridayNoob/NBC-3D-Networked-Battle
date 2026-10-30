@@ -31,6 +31,7 @@ namespace NBC.Game.UI
         // 当前比例：0 = 空血，1 = 满血
         public float Ratio { get; private set; }
 
+        // 功能：按名字取出血条的三个控件（填充必需，背景与数字可选）。
         // 入参：无（BasePanel.Initialize 里调）
         // 返回：无
         // 步骤：
@@ -50,6 +51,7 @@ namespace NBC.Game.UI
             }
         }
 
+        // 功能：按「当前血 / 最大血」更新血条长度、颜色与数字。
         // 入参：current 当前血（会被钳在 0..max）；max 最大血（<= 0 时按 0 比例处理）
         // 返回：无
         // 步骤：
@@ -79,6 +81,7 @@ namespace NBC.Game.UI
             }
         }
 
+        // 功能：按 0..1 的比例设置血条长度，并把颜色从红渐变到绿。
         // 入参：ratio 0..1（越界会被钳住）
         // 返回：无
         // 步骤：

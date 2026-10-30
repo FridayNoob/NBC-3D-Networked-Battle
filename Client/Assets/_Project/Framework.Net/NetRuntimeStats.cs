@@ -85,6 +85,7 @@ namespace NBC.Framework.Net
         private static int m_rttMs = -1;
         private static int m_frame = -1;
 
+        // 功能：记一笔发送字节，并顺带推进采样窗口。
         // 入参：bytes 本次发送的业务字节数
         // 返回：无
         // 步骤：1) 推进采样窗口；2) 当前段与总量都加上
@@ -105,6 +106,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：记一笔接收字节，并顺带推进采样窗口。
         // 入参：bytes 本次收到的业务字节数
         // 返回：无
         // 步骤：同 AddSent，走下行通道
@@ -125,6 +127,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：记录当前同步模式。
         // 入参：mode 当前模式
         // 返回：无
         // 上游：建会话的一方（Editor 窗口 / 运行时启动器）
@@ -138,6 +141,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：记录最近一次往返延迟。
         // 入参：rttMs 往返延迟（毫秒，<0 表示未知）
         // 返回：无
         // 上游：建会话的一方
@@ -151,6 +155,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：记录当前帧号（语义随模式不同）。
         // 入参：frame 当前帧号（状态同步 = 快照 tick；帧同步 = 已步进帧；<0 表示未知）
         // 返回：无
         // 上游：建会话的一方
@@ -164,6 +169,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：把全部统计清零（连接前与断开时调）。
         // 入参：无
         // 返回：无
         // 步骤：清空槽位、当前段、总量与模式（连断开 / 换局都该调）
@@ -187,6 +193,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：取一次一致的全部统计，供 HUD 显示。
         // 入参：无
         // 返回：一次一致的全部统计
         // 步骤：1) 先惰性推进窗口（保证数字是最新的）；2) 4 槽求和 ÷ 1 秒 = B/s；3) 打包返回
@@ -205,6 +212,7 @@ namespace NBC.Framework.Net
             }
         }
 
+        // 功能：把一个采样槽数组求和。
         // 入参：slots 采样槽
         // 返回：槽内字节之和
         // 上游：Snapshot
@@ -221,6 +229,7 @@ namespace NBC.Framework.Net
             return sum;
         }
 
+        // 功能：按真实时间推进四个采样槽，保证带宽读数是最近一秒的。
         // 入参：无
         // 返回：无
         // 步骤：

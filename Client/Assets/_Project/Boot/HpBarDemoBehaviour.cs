@@ -38,6 +38,7 @@ namespace NBC.Boot
         // 资源层是否已经装好
         private bool m_assetsReady;
 
+        // 功能：装资源层、顺手打开血条与网络面板，并挂上运行时网络驱动。
         // 入参：无（引擎在开始帧调一次）
         // 返回：无（异步方法，内部 await）
         // 步骤：
@@ -66,7 +67,7 @@ namespace NBC.Boot
             // ⚠️ 地址对齐（2026-10-26 实际踩过）：
             //   UIManager 的默认地址是 "UI/Canvas" 与 "UI/<面板名>"，
             //   而我们的收集器规则是 AddressByFileName ⇒ 地址只是 "Canvas" / "HpBarPanel"。
-            //   不对齐就会报 Location is invalid: 'UI/Canvas'。必须**在第一次 ShowPanel 之前**设（之后会抛异常）。
+            //   不对齐就会报 Location is invalid: 'UI/Canvas'。必须在第一次 ShowPanel 之前设（之后会抛异常）。
             UIManager.Instance.SetCanvasLocation("Canvas");
             UIManager.Instance.SetPanelLocationPrefix(string.Empty);
 
@@ -93,11 +94,12 @@ namespace NBC.Boot
 
             // R008：资源层与面板都就绪后，才挂运行时网络驱动。
             //   顺序有意义：它一挂上就会建会话，而会话要用 HUD 的统计（NetRuntimeStats）与资源层。
-            //   ⚠️ 与 Editor 的「网络调试」窗口**不要同时连** —— 会占两个座位。
+            //   ⚠️ 与 Editor 的「网络调试」窗口不要同时连 —— 会占两个座位。
             gameObject.AddComponent<RuntimeNetDriver>();
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
 
+        // 功能：按空格扣血并刷新血条（演示用）。
         // 入参：无（引擎每帧调）
         // 返回：无
         // 步骤：
@@ -118,6 +120,7 @@ namespace NBC.Boot
             m_panel.SetHp(m_hp, m_maxHp);
         }
 
+        // 功能：找出最新的模拟清单目录，交给资源层安装。
         // 入参：无
         // 返回：模拟清单目录（找不到返回空串，让底层自己报错）
         // 步骤：

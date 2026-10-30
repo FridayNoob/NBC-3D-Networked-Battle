@@ -21,3 +21,15 @@
 - 现象：模型导入在 `Assets/UnityChan/`，而 `.gitignore` 只挡了 `Art/Characters/`。
 - 处理：补 `Client/Assets/UnityChan/` 与 `UnityChan.meta`，README 说明补法。
 - 依据：Unity-Chan License 不得单独再分发模型数据。
+
+## 2026-10-30 代码注释规范化（方法改五段式，含「功能」）
+
+- 规范变更：方法注释从四段改为五段 —— 功能 → 入参 → 步骤 → 返回 → 上游/下游（负责人要求「先说这个方法干什么」）。
+  已同步 `csharp-code-comment` 技能（含 description 与自检三问）与 `Docs\00` 注释规范第 4 条。
+- 已落地 13 个文件（56 个方法）：`PlayerMove` / `PlayerAnimation` / `FollowCamera` / `HpBarPanel` / `NetHudPanel` /
+  `RuntimeNetDriver` / `NetRuntimeStats` / `CountingTransport` / `HpBarDemoBehaviour` / `IQuestRewardSink` /
+  `IQuestStateAuthority` / `IConfigSource` / `WorldEvents`。
+- 同时删掉：`====` 装饰线、工单编号（M2-A2 / §二十六）、`**加粗**`、反引号、`<summary>` XML 标签。
+- 保留：所有「注意：」里的坑与边界（如「false = 服务端没说，不是未接取」）。
+- 踩坑：批量插入脚本用 `WriteAllLines` 把 7 个 `.cs` 写成了 CRLF，已改回 LF；脚本本身也必须带 BOM（W7c），否则 PS5.1 读成乱码。
+- 范围：按规范第 109 行，其余 200+ 文件不批量改，跟着后续需求逐步规范化。

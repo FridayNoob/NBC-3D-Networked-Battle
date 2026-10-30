@@ -47,6 +47,7 @@ namespace NBC.Game.UI
         // 距离上次刷新累积的时间
         private float m_elapsed;
 
+        // 功能：取出四个文本控件与可见性容器，缺必需控件时抛异常点名。
         // 入参：无（BasePanel.Initialize 里调）
         // 返回：无
         // 步骤：1) 取四个必需文本；2) 取可选的 Box（取不到就整块面板一起隐藏）
@@ -59,14 +60,15 @@ namespace NBC.Game.UI
             m_rtt = RequireControl<TMP_Text>(RttControl);
             m_frame = RequireControl<TMP_Text>(FrameControl);
 
-            // ⚠️ Box 只挂 RectTransform，**不是 UIBehaviour** ⇒ `CollectControls` 收不到它，
-            //    `GetControl` 一定返回 null。第一版就是因此回退成"隐藏自己"，Update 停掉 ⇒ F1 再也按不回来。
-            //    所以这里按层级找（`transform.Find`），只有真的找不到才退回自己。
+            // ⚠️ Box 只挂 RectTransform，不是 UIBehaviour ⇒ CollectControls 收不到它，
+            //    GetControl 一定返回 null。第一版就是因此回退成「隐藏自己」，Update 停掉 ⇒ F1 再也按不回来。
+            //    所以这里按层级找（transform.Find），只有真的找不到才退回自己。
             Transform box = transform.Find(BoxControl);
 
             m_box = box != null ? box.gameObject : gameObject;
         }
 
+        // 功能：每 0.25 秒刷新一次四行文本，并处理 F1 显隐。
         // 入参：无（引擎每帧调）
         // 返回：无
         // 步骤：
@@ -99,6 +101,7 @@ namespace NBC.Game.UI
             m_frame.text = snapshot.Frame < 0 ? "帧 --" : "帧 " + snapshot.Frame;
         }
 
+        // 功能：把模式枚举翻成给人看的中文。
         // 入参：mode 模式枚举
         // 返回：给人看的中文
         private static string DescribeMode(NetSyncMode mode)
@@ -114,7 +117,7 @@ namespace NBC.Game.UI
             }
         }
 
-        // 入参：snapshot 统计快照
+        // 功能：把一次统计快照拼成「上级速率 + 下级速率」一行文本。
         // 入参：snapshot 统计快照
         // 返回：形如「↑ 1.2 KB/s  ↓ 340 B/s」的文本
         private static string FormatSpeed(NetStatsSnapshot snapshot)
@@ -122,6 +125,7 @@ namespace NBC.Game.UI
             return "↑ " + FormatRate(snapshot.BytesPerSecondOut) + "  ↓ " + FormatRate(snapshot.BytesPerSecondIn);
         }
 
+        // 功能：把字节每秒转成带自适应单位的文本（B/s 或 KB/s）。
         // 入参：bytesPerSecond 字节每秒
         // 返回：自适应单位的速率文本
         // 步骤：
