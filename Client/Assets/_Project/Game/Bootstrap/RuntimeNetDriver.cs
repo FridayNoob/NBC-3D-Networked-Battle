@@ -4,11 +4,12 @@
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Framework.Net.Adapter;
+using NBC.Game.Net;
 using NBC.Game.View;
 using NBC.Shared.Sim;
 using UnityEngine;
 
-namespace NBC.Game.Net
+namespace NBC.Game.Bootstrap
 {
     // 运行时用哪种同步方式。只影响「客户端读哪一份世界 + 发哪条上行」，服务端两条链都在跑。
     public enum ERuntimeSyncMode

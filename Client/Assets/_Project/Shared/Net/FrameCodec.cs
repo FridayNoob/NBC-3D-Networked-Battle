@@ -1,71 +1,43 @@
-// ============================================================================
-//  FrameCodec —— TCP 的「分帧」：长度前缀 + 载荷（**双端共享**）
-//  项目：3D联网战斗Demo   对应：M3-S2、Docs\25 §三 D1
-//
-//  ---------------------------------------------------------------------------
-//  一、为什么需要"分帧"（说人话）
-//  ---------------------------------------------------------------------------
-//  TCP 是**字节流**，不是"消息流"。你 `Send` 三次，对面可能：
-//      · 收到一次（**粘包**：三次的数据连在一起）
-//      · 收到三次但边界和你发的不一样（**拆包**：一条消息被切成两半先后到）
-//  所以"一条消息到哪儿结束"**必须自己带信息**。最省的做法是**长度前缀**：
-//
-//      帧 = [4 字节小端长度 N][N 字节载荷]
-//
-//  于是接收侧只要"读到 4 字节 → 知道还差多少 → 攒够就交出一条完整帧"。
-//
-//  ---------------------------------------------------------------------------
-//  二、为什么它住在**共享层**（`Shared\`）
-//  ---------------------------------------------------------------------------
-//  和条件系统、伤害结算是同一条判据：**两端必须算出同一个结果**。
-//  分帧是"两边各写一份就一定会对不上"的典型 —— 只要长度字节序、上限、
-//  对 0 长度帧的处理有一点不同，联机就会表现为"偶尔卡住/偶尔读到垃圾"，
-//  而且**单端测试全绿**。
-//  所以服务端（`NBC.Server.Core`）与客户端用**同一份** `FrameCodec`。
-//
-//  ---------------------------------------------------------------------------
-//  三、三条写死的约定（每一条都对应一个"踩过就难忘"的坑）
-//  ---------------------------------------------------------------------------
-//  ① **长度是 4 字节小端，手写字节而不是 `BitConverter`**
-//     `BitConverter` 的结果**取决于宿主字节序**：本机 x86 是小端，
-//     但如果哪天跑在大端平台上，两端就会互相读成天文数字。
-//     分帧是"两端必须一致"的东西，**不能依赖宿主环境**（和 D2 定点数是同一个理由）。
-//
-//  ② **0 长度帧是合法的**
-//     protobuf 的空消息序列化出来就是 **0 字节**（例如"还没设 payload 的 ClientMessage"）。
-//     如果这里把 0 当非法，那么"空心跳"这类消息就会被静默丢掉 —— 又一个静默失败。
-//
-//  ③ **超过上限 = 协议违规，必须断开**
-//     长度前缀可以撒谎（或对端有 bug）。若不设上限，一句 `N` 就能让本端
-//     `new byte[N]` 把内存吃光。所以超限时**不 try 恢复**，直接标记 fatal 让上层断开
-//     （`FatalReason` 说清为什么，便于排查）。
-//
-//  ---------------------------------------------------------------------------
-//  四、空间与分配（如实记）
-//  ---------------------------------------------------------------------------
-//  · 接收缓冲会**按需增长**，消费后**压缩**（把已消费的部分挪掉），不会无限涨
-//  · `TryDequeue` 每次**新分配一个 byte[]** 交出载荷 —— M3（30Hz、2~4 人）这个量级完全够用；
-//    真要做零分配，再加一个"借出缓冲 + 用完归还"的 API（M5 优化时再说）
-// ============================================================================
+// 这个文件里有：
+//   FrameCodec（静态类）：把载荷包成「4 字节小端长度 + 载荷」的帧，并提供读长度前缀的入口（写长度只给内部成帧用）。
+//   FrameDecoder（类）：增量式拆帧器，把陆续收到的字节攒起来，够一帧就交出一帧。
 
-// 与 Shared\Condition\ 同一处理由：本目录在 Unity（未开可空）与服务端（`Server\Directory.Build.props`
-// 开了 `<Nullable>enable</Nullable>`）下规则不同。显式关掉，让**两端看到同一套规则**。
+// 注意：分帧必须两端算出同一个结果 —— 长度字节序、单帧上限、0 长度帧的处理只要有一处不同，联机就会偶尔卡住或读到垃圾，
+// 而且单端测试全绿。所以客户端与服务端编的是同一份源码；本层只依赖 BCL，不引 UnityEngine 与 NBC.Protocol。
+// 注意：本目录与 Shared\Condition、Shared\Battle 同理 —— Unity 侧未开可空，服务端（Server\Directory.Build.props）开了可空引用；
+// 这里显式关掉，让两端按同一套规则编译。
 #nullable disable
 
 using System;
 
 namespace NBC.Shared.Net
 {
-    /// <summary>把载荷包成帧 / 从字节流里切出帧（**双端共享**）。</summary>
+    // 主要功能：做网络分帧 —— 给出「一条消息到哪儿结束」，并挡住负长度、谎报长度与 0 长度帧这三个坑。
+    // 主要数据成员：无；长度前缀字节数与单帧上限都取自 NetContract。
+    // 主要外部方法：Encode（byte[] 两版 + span 版）、ReadLength；WriteLength 是 internal，只给 Encode 用。
+    // 谁在用它：客户端 TcpTransport 发消息、服务端 TcpServerTransport 发消息（span 版）；FrameDecoder 读长度前缀；FrameCodecTests、Server\_net-probe、Server\_condition-probe 也直接调。
+    /// <summary>把载荷包成 4 字节小端长度前缀 + 载荷的帧，并读出长度前缀；客户端与服务端共用同一份。</summary>
     public static class FrameCodec
     {
-        /// <summary>把一段载荷包成帧（长度前缀 + 载荷）。</summary>
-        /// <param name="payload">载荷（可以为 null / 空 —— 那就是一条 0 长度帧）。</param>
-        /// <param name="offset">从载荷的第几个字节开始。</param>
-        /// <param name="count">取多少字节。</param>
-        /// <returns>可以直接写进 socket 的字节。</returns>
+        /// <summary>把一段载荷包成帧：4 字节小端长度前缀 + 载荷副本。</summary>
+        /// <param name="payload">载荷；可为 null，此时 offset 与 count 必须都是 0（即一条 0 长度帧）。</param>
+        /// <param name="offset">载荷里的起始字节下标（字节）。</param>
+        /// <param name="count">取多少个字节；0 合法。</param>
+        /// <returns>新分配的帧字节，长度 = 4 + count，可直接写进 socket。</returns>
         public static byte[] Encode(byte[] payload, int offset, int count)
         {
+            // 功能：把 payload 从 offset 起的 count 个字节复制到新数组，前面补 4 字节小端长度。
+            // 入参：payload 载荷（可为 null，此时 offset/count 必须为 0）；offset 起点（字节）；count 字节数（0 合法）。
+            // 返回：新数组，前 4 字节是长度前缀，后面是载荷副本；总长 = FrameLengthPrefixBytes + count。
+            // 步骤：
+            //   1) null 时先校验 offset/count 是否为 0 —— 这是调用方 bug，早抛异常比悄悄发出错帧好
+            //   2) 非 null 时校验 offset/count 不越界，同样早抛
+            //   3) 一次分配 4 + count，先把长度写进前 4 字节
+            //   4) count 大于 0 才复制载荷；0 长度帧的帧体就只有前缀
+            // 注意：长度前缀必须手写小端，不能改用 BitConverter —— 它跟随宿主字节序，换台大端机器两端就会把长度读成天文数字。
+            // 注意：0 长度帧是合法的（protobuf 空消息序列化出来就是 0 字节），不要把它当非法丢掉。
+            // 上游：客户端 TcpTransport 发消息、服务端探针
+            // 下游：FrameCodec.WriteLength、Buffer.BlockCopy（count 为 0 时跳过）
             if (payload == null)
             {
                 if (offset != 0 || count != 0)
@@ -92,25 +64,30 @@ namespace NBC.Shared.Net
             return frame;
         }
 
-        /// <summary>把一段载荷包成帧（整段）。</summary>
-        /// <param name="payload">载荷（可以为 null）。</param>
-        /// <returns>帧字节。</returns>
+        /// <summary>把整段载荷包成帧（等价于 offset = 0、count = payload.Length）。</summary>
+        /// <param name="payload">载荷；可为 null，按 0 长度帧处理。</param>
+        /// <returns>新分配的帧字节。</returns>
         public static byte[] Encode(byte[] payload)
         {
+            // 功能：整段成帧；null 按 0 长度帧处理。
             return Encode(payload, 0, payload == null ? 0 : payload.Length);
         }
 
-        /// <summary>
-        /// 把一段载荷包成帧（**span 版**）。
-        /// <para>
-        /// 为什么要有它：服务端的 `INetTransport.Send(long, ReadOnlySpan&lt;byte&gt;)` 拿到的就是 span，
-        /// 没有这一版就得先 `ToArray()` —— 每条消息白复制一次（30Hz × N 人 × 每条快照）。
-        /// </para>
-        /// </summary>
-        /// <param name="payload">载荷（可以为空 —— 那就是一条 0 长度帧）。</param>
-        /// <returns>可以直接写进 socket 的字节。</returns>
+        /// <summary>span 版成帧：直接按 span 长度生成帧，省掉调用方为发送先 ToArray 的一次复制。</summary>
+        /// <param name="payload">载荷；空 span 即一条 0 长度帧。</param>
+        /// <returns>新分配的帧字节，长度 = 4 + payload.Length。</returns>
         public static byte[] Encode(ReadOnlySpan<byte> payload)
         {
+            // 功能：按 span 长度写前缀并复制载荷，服务端拿到 ReadOnlySpan 时不必先 ToArray 多复制一次。
+            // 入参：payload 载荷（空 span 合法，即一条 0 长度帧）。
+            // 返回：新数组，前 4 字节长度前缀，后面是载荷副本；总长 = FrameLengthPrefixBytes + payload.Length。
+            // 步骤：
+            //   1) 按 4 + payload.Length 一次分配，省掉调用方先 ToArray 的那次复制
+            //   2) 先写长度前缀
+            //   3) 非空才 CopyTo，空 span 只剩前缀
+            // 注意：结果必须与 byte[] 版逐字节一致（长度、字节序、0 长度帧都一样），Server\_net-probe 专门比对这一点。
+            // 上游：服务端 TcpServerTransport.Send(long, ReadOnlySpan<byte>)、Server\_net-probe 与 byte[] 版的一致性校验
+            // 下游：FrameCodec.WriteLength、ReadOnlySpan.CopyTo
             byte[] frame = new byte[NetContract.FrameLengthPrefixBytes + payload.Length];
             WriteLength(frame, 0, payload.Length);
 
@@ -122,12 +99,21 @@ namespace NBC.Shared.Net
             return frame;
         }
 
-        /// <summary>读一处长度前缀（**小端**）。给测试与排错用。</summary>
-        /// <param name="buffer">字节。</param>
-        /// <param name="offset">起点。</param>
-        /// <returns>长度。</returns>
+        /// <summary>从 buffer[offset] 起读 4 字节小端长度前缀，给拆帧与排错用。</summary>
+        /// <param name="buffer">字节缓冲。</param>
+        /// <param name="offset">长度前缀的起始下标（字节）。</param>
+        /// <returns>按小端拼出的 int；最高位为 1 时为负数，拆帧器据此判协议违规。</returns>
         public static int ReadLength(byte[] buffer, int offset)
         {
+            // 功能：把 buffer[offset..offset + 4) 按小端拼成一个 int。
+            // 入参：buffer 源字节（不可为 null）；offset 长度前缀的起点（字节）。
+            // 返回：拼出的长度；最高位为 1 时是负数 —— 说明对端不是本协议或数据已损坏，不是合法长度。
+            // 步骤：
+            //   1) 先挡 null 与 offset 越界（offset + 4 超过缓冲长度就抛），别让下面的下标访问越界
+            //   2) 逐字节左移 8 / 16 / 24 位后按位或起来，全程不依赖宿主字节序
+            // 注意：必须手写小端，不能改用 BitConverter —— 它跟随宿主字节序，换台大端机器就会把长度读成天文数字（与定点数不依赖浮点同一个理由）。
+            // 上游：FrameDecoder.TryDequeue 取帧长；FrameCodecTests、Server\_condition-probe 排错时直接读
+            // 下游：无
             if (buffer == null)
             {
                 throw new ArgumentNullException(nameof(buffer));
@@ -139,17 +125,20 @@ namespace NBC.Shared.Net
                     "[FrameCodec] 读长度前缀越界（offset=" + offset + "，长度=" + buffer.Length + "）。");
             }
 
-            // 手写小端：**不要用 BitConverter**（它取决于宿主字节序，见文件头约定①）
             return buffer[offset]
                  | (buffer[offset + 1] << 8)
                  | (buffer[offset + 2] << 16)
                  | (buffer[offset + 3] << 24);
         }
 
-        /// <summary>写一处长度前缀（**小端**）。</summary>
-        /// <param name="buffer">字节。</param>
-        /// <param name="offset">起点。</param>
-        /// <param name="length">长度（必须 ≥ 0）。</param>
+        // 功能：把 length 的低 4 字节按小端写进 buffer[offset..offset + 4)，不做任何校验。
+        // 入参：buffer 目标字节；offset 写入起点（字节）；length 要写的长度（必须 ≥ 0）。
+        // 返回：无。
+        // 步骤：
+        //   1) 逐字节取 length 的 0 / 8 / 16 / 24 位并 & 0xFF，高位自然截断
+        // 注意：本方法不检查缓冲长度与 length 正负，调用方必须先保证 offset + 4 不越界、length ≥ 0 —— 负数会被写成 0xFFFFFFFF 量级的大数。
+        // 上游：FrameCodec.Encode 的 byte[] 两版与 span 版
+        // 下游：无
         internal static void WriteLength(byte[] buffer, int offset, int length)
         {
             buffer[offset] = (byte)(length & 0xFF);
@@ -159,31 +148,42 @@ namespace NBC.Shared.Net
         }
     }
 
-    /// <summary>
-    /// 增量式拆帧器：把"陆续收到的字节"喂进来，够一帧就交出一帧。
-    /// <para>⚠️ **不是线程安全的**：只在网络泵（一个线程/一帧）里用。</para>
-    /// </summary>
+    // 主要功能：缓存半帧、按 4 字节小端长度前缀切出完整帧，并把负长度与超上限判成不可恢复的协议违规。
+    // 主要数据成员：m_maxFrameBytes（字节，单帧上限）、m_buffer（接收缓冲，字节数组，初始 1024）、m_start / m_end（有效区间下标，字节）、m_fatalReason（违规原因，null = 正常）。
+    // 主要外部方法：Append / TryDequeue（两个重载）/ Reset / BufferedBytes / FatalReason。
+    // 谁在用它：客户端 TcpTransport 与 TcpServerTransport 各为每条连接持有一个；FrameCodecTests 与 Server\_net-probe、Server\_condition-probe 直接驱动。
+    /// <summary>增量式拆帧器：把陆续收到的字节喂进来，够一帧就交出一帧；不是线程安全的。</summary>
     public sealed class FrameDecoder
     {
-        /// <summary>单帧载荷上限（超过就判定协议违规）。</summary>
+        // 单帧载荷上限，字节；必须 > 0，默认 NetContract.MaxFrameBytes（524288，即 512 KB），超过即判协议违规。
         private readonly int m_maxFrameBytes;
 
-        /// <summary>接收缓冲（按需增长，消费后压缩）。</summary>
+        // 接收缓冲，字节；初始 1024，装不下时翻倍增长，消费后压缩，不会随连接时长无限涨。
         private byte[] m_buffer;
 
-        /// <summary>有效数据的起点（已消费的部分在这里之前）。</summary>
+        // 已消费数据的起点，字节偏移；0..m_end。
         private int m_start;
 
-        /// <summary>有效数据的终点。</summary>
+        // 有效数据的终点（不含），字节偏移；m_start..m_buffer.Length。
         private int m_end;
 
-        /// <summary>协议违规原因（非 null = 必须断开，别再喂数据）。</summary>
+        // 协议违规原因；null = 正常，非 null = 必须断开，别再喂数据。
         private string m_fatalReason;
 
-        /// <summary>造一个拆帧器。</summary>
-        /// <param name="maxFrameBytes">单帧上限；不传则用 <see cref="NetContract.MaxFrameBytes"/>。</param>
+        /// <summary>造一个拆帧器：记下单帧上限，并分配 1024 字节初始缓冲。</summary>
+        /// <param name="maxFrameBytes">单帧载荷上限（字节）；必须 > 0，默认 NetContract.MaxFrameBytes（524288，即 512 KB）。</param>
         public FrameDecoder(int maxFrameBytes = NetContract.MaxFrameBytes)
         {
+            // 功能：记下单帧上限并分配 1024 字节初始缓冲，之后 Append 只管往里灌。
+            // 入参：maxFrameBytes 单帧载荷上限（字节，必须 > 0）。
+            // 返回：无。
+            // 步骤：
+            //   1) 上限小于等于 0 直接抛 —— 否则任何帧都会被判超限，或上限判断形同虚设
+            //   2) 记下上限，供 TryDequeue 比对
+            //   3) 初始只给 1024 字节，靠 EnsureCapacity 按需增长，不按上限预分配
+            // 注意：上限是防「谎报长度吃内存」的防御值，不是协议协商值；收发两端应当用同一个上限，否则一侧发得出、另一侧直接断开。
+            // 上游：客户端 TcpTransport、服务端 TcpServerTransport（每条连接一个）、FrameCodecTests 与探针
+            // 下游：无
             if (maxFrameBytes <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(maxFrameBytes),
@@ -194,27 +194,38 @@ namespace NBC.Shared.Net
             m_buffer = new byte[1024];
         }
 
-        /// <summary>缓冲里还有多少**没消费**的字节。</summary>
+        /// <summary>缓冲里还没被消费的字节数（字节）。</summary>
         public int BufferedBytes
         {
             get { return m_end - m_start; }
         }
 
-        /// <summary>协议违规原因（null = 正常）。非 null 时上层应当断开连接。</summary>
+        /// <summary>协议违规原因；null = 正常，非 null 时上层应当断开连接。</summary>
         public string FatalReason
         {
             get { return m_fatalReason; }
         }
 
-        /// <summary>喂入**刚收到**的字节（可以是半帧、也可以是好几帧）。</summary>
-        /// <param name="buffer">收到的字节。</param>
-        /// <param name="offset">起点。</param>
-        /// <param name="count">多少字节。</param>
+        /// <summary>把刚收到的字节追加到缓冲尾部；半帧、整帧、多帧都可以一次喂进来。</summary>
+        /// <param name="buffer">源字节。</param>
+        /// <param name="offset">源字节里的起点（字节）。</param>
+        /// <param name="count">字节数；0 合法（本次没读到数据）。</param>
         public void Append(byte[] buffer, int offset, int count)
         {
+            // 功能：把 buffer[offset..offset + count) 复制到缓冲尾部，等 TryDequeue 拆帧。
+            // 入参：buffer 源字节（不可为 null）；offset 起点（字节）；count 字节数（0 合法，直接返回）。
+            // 返回：无。
+            // 步骤：
+            //   1) 已经 fatal 就直接返回 —— 上层本该断开；不收数据也不改状态，避免在坏流上继续攒内存
+            //   2) 挡 null 与 offset/count 越界，调用方 bug 早抛
+            //   3) count 为 0 直接返回，省掉一次扩容判断
+            //   4) EnsureCapacity 保证尾部还有 count 字节空间
+            //   5) BlockCopy 到 m_end，再把 m_end 前移
+            // 注意：fatal 后再喂数据是静默忽略，不抛异常；断开与否由上层读 FatalReason 决定。
+            // 上游：客户端 TcpTransport.Pump（socket 收包回调里）、服务端 TcpServerTransport 收包路径、测试与探针
+            // 下游：FrameDecoder.EnsureCapacity、Buffer.BlockCopy
             if (m_fatalReason != null)
             {
-                // 已经协议违规了还继续喂：直接忽略（上层本该断开），但不静默改状态
                 return;
             }
 
@@ -240,20 +251,29 @@ namespace NBC.Shared.Net
             m_end += count;
         }
 
-        /// <summary>
-        /// 试着取出一条完整帧。
-        /// <para>
-        /// 返回值与 <paramref name="error"/> 的组合是**契约**：
-        /// · `true`  → 取到一帧（`frame` 非 null）
-        /// · `false` + `error == null` → **数据还不够**，继续喂
-        /// · `false` + `error != null` → **协议违规**，必须断开（`FatalReason` 也会被设上）
-        /// </para>
-        /// </summary>
-        /// <param name="frame">取到的载荷（0 长度帧时是**空数组**，不是 null）。</param>
-        /// <param name="error">违规原因；正常时为 null。</param>
-        /// <returns>取到一帧返回 true。</returns>
+        /// <summary>试着从缓冲头部取出一条完整帧。</summary>
+        /// <param name="frame">取到的载荷；0 长度帧给空数组，不是 null；取不到时为 null。</param>
+        /// <param name="error">协议违规原因；数据不够时为 null，违规时与 FatalReason 相同。</param>
+        /// <returns>true = 取到一帧；false 且 error 为 null = 数据还不够，继续喂；false 且 error 非 null = 协议违规，必须断开。</returns>
         public bool TryDequeue(out byte[] frame, out string error)
         {
+            // 功能：按「4 字节长度 + 载荷」从缓冲头部切出一帧，同时区分「数据不够」与「协议违规」两种失败。
+            // 入参：无（frame 与 error 是输出参数，见返回）。
+            // 返回：true 取到一帧；false + error 为 null 是数据不够，继续 Append；false + error 非 null 是协议违规，必须断开。
+            // 步骤：
+            //   1) 先回填 frame = null、error = m_fatalReason：已 fatal 就直接失败，不再往下解析
+            //   2) 连 4 字节长度前缀都没凑齐 → 数据不够，返回 false（error 保持 null）
+            //   3) 读长度；负数说明最高位为 1（对端不是本协议或数据损坏），记 fatal 并返回失败
+            //   4) 长度超过 m_maxFrameBytes → 记 fatal 并返回失败，不按它分配内存
+            //   5) 前缀 + 载荷还没攒齐 → 数据不够，返回 false，缓冲不动
+            //   6) 跳过 4 字节前缀，按 length 新分配数组并复制载荷；0 长度也给空数组
+            //   7) m_start 前移到帧尾，Compact 腾出已消费空间，返回 true
+            // 注意：长度前缀可以撒谎，超上限时必须断开；若继续按它攒内存，一句长度就能把本端内存吃光。
+            // 注意：0 长度帧必须照常交出（protobuf 空消息就是 0 字节），丢它等于丢空心跳这类消息。
+            // 注意：fatal 一旦置上就不会自愈，之后每次调用都返回 false + 同一 error，只能靠 Reset 清。
+            // 注意：每帧都 new byte[length]，不做零分配；30Hz、2~4 人的量级够用，真要零分配再另加借出 / 归还的 API。
+            // 上游：客户端 TcpTransport.Pump 的拆帧循环、服务端 TcpServerTransport 收包路径、测试与探针
+            // 下游：FrameCodec.ReadLength、FrameDecoder.Fail、FrameDecoder.Compact、Buffer.BlockCopy
             frame = null;
             error = m_fatalReason;
 
@@ -264,14 +284,13 @@ namespace NBC.Shared.Net
 
             if (BufferedBytes < NetContract.FrameLengthPrefixBytes)
             {
-                return false;   // 连长度都没凑齐
+                return false;
             }
 
             int length = FrameCodec.ReadLength(m_buffer, m_start);
 
             if (length < 0)
             {
-                // 长度是 uint32 读进来的，最高位为 1 会变成负数 —— 说明对端不是这套协议（或数据烂了）
                 Fail("长度前缀是负数（" + length + "）：对端可能不是本协议，或数据已损坏。");
                 error = m_fatalReason;
                 return false;
@@ -279,7 +298,6 @@ namespace NBC.Shared.Net
 
             if (length > m_maxFrameBytes)
             {
-                // ⚠️ 这里**不 try 恢复**：长度可以撒谎，继续按它攒内存就是被远程吃光内存
                 Fail("单帧 " + length + " 字节，超过上限 " + m_maxFrameBytes +
                      "（可能对端不是本协议，或长度前缀被破坏）。");
                 error = m_fatalReason;
@@ -288,12 +306,11 @@ namespace NBC.Shared.Net
 
             if (BufferedBytes < NetContract.FrameLengthPrefixBytes + length)
             {
-                return false;   // 载荷还没攒够
+                return false;
             }
 
             m_start += NetContract.FrameLengthPrefixBytes;
 
-            // 0 长度帧也要交出去（protobuf 空消息就是 0 字节，见文件头约定②）
             frame = new byte[length];
 
             if (length > 0)
@@ -306,32 +323,56 @@ namespace NBC.Shared.Net
             return true;
         }
 
-        /// <summary>取一条完整帧（不需要错误信息时的简写）。</summary>
-        /// <param name="frame">载荷。</param>
-        /// <returns>取到返回 true；数据不够或违规都返回 false（用 <see cref="FatalReason"/> 区分）。</returns>
+        /// <summary>不需要错误信息时的简写：取不到就返回 false，再用 FatalReason 区分数据不够还是协议违规。</summary>
+        /// <param name="frame">取到的载荷；0 长度帧给空数组。</param>
+        /// <returns>true = 取到一帧；false = 数据不够或协议违规。</returns>
         public bool TryDequeue(out byte[] frame)
         {
+            // 功能：转调带 error 的重载，错误原因留给 FatalReason 区分数据不够还是协议违规。
             string error;
             return TryDequeue(out frame, out error);
         }
 
-        /// <summary>清空缓冲与错误状态（重连时用）。</summary>
+        /// <summary>清空缓冲与 fatal 状态；重连时复用同一个拆帧器。</summary>
         public void Reset()
         {
+            // 功能：把有效区间归零并清掉 fatal，让下一次连接从干净状态开始。
+            // 入参：无。
+            // 返回：无。
+            // 步骤：
+            //   1) m_start 与 m_end 归零 —— 丢弃残留字节，但不释放缓冲（下一次还能用）
+            //   2) 清空 m_fatalReason，解除拒收状态
+            // 注意：不 Reset 就重连，上一局残留的半帧会被当成新连接的开头，表现为第一帧就是垃圾。
+            // 上游：客户端 TcpTransport.Connect（重连前）、FrameCodecTests
+            // 下游：无
             m_start = 0;
             m_end = 0;
             m_fatalReason = null;
         }
 
-        /// <summary>标记一次协议违规。</summary>
-        /// <param name="reason">原因。</param>
+        // 功能：记下协议违规原因；之后 Append 拒收、TryDequeue 持续返回失败。
+        // 入参：reason 给人看的原因（会经 FatalReason 直接交给上层，写清是哪种违规）。
+        // 返回：无。
+        // 步骤：
+        //   1) 只写 m_fatalReason，不抛异常也不主动断连接 —— 传输层才知道怎么关，交给它按 FatalReason 处理
+        // 注意：一旦置上就不会自愈，只能 Reset。
+        // 上游：FrameDecoder.TryDequeue 的负长度与超上限两处分支
+        // 下游：无（Append 与 TryDequeue 读 m_fatalReason）
         private void Fail(string reason)
         {
             m_fatalReason = reason;
         }
 
-        /// <summary>保证还能再塞进 <paramref name="count"/> 个字节。</summary>
-        /// <param name="count">要写入的字节数。</param>
+        // 功能：保证缓冲尾部还能再写 count 字节；不够先压缩，仍不够再翻倍扩容。
+        // 入参：count 本次要追加的字节数（> 0，Append 已挡掉 0）。
+        // 返回：无。
+        // 步骤：
+        //   1) 现有空间够就返回，不做任何拷贝
+        //   2) 先 Compact 把已消费的前缀挪掉 —— 多数情况这一下就够了，省一次分配
+        //   3) 仍不够就按 2 倍增长到能装下 needed，再整体拷贝旧数据
+        // 注意：扩容按 2 倍摊还，避免每来一小段就复制整缓冲；增长到能装下 needed 的最小 2 的幂为止，不按单帧上限预分配。
+        // 上游：FrameDecoder.Append
+        // 下游：FrameDecoder.Compact、Buffer.BlockCopy
         private void EnsureCapacity(int count)
         {
             if (m_end + count <= m_buffer.Length)
@@ -339,7 +380,6 @@ namespace NBC.Shared.Net
                 return;
             }
 
-            // 先看压缩能不能腾出地方（已消费的部分挪掉）
             Compact();
 
             if (m_end + count <= m_buffer.Length)
@@ -360,7 +400,16 @@ namespace NBC.Shared.Net
             m_buffer = grown;
         }
 
-        /// <summary>把已消费的前缀挪掉（避免缓冲只涨不降）。</summary>
+        // 功能：把 [m_start, m_end) 的有效数据挪到缓冲开头，丢掉已消费的前缀。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) m_start 为 0 说明没有已消费前缀，直接返回
+        //   2) 还有有效数据才 BlockCopy 到下标 0
+        //   3) m_start 归零、m_end 改成剩余长度
+        // 注意：源区间与目标区间重叠，靠 BlockCopy 的 memmove 语义；别改成正向逐字节拷贝，会把数据自我覆盖。
+        // 上游：FrameDecoder.TryDequeue（每取出一帧）、FrameDecoder.EnsureCapacity（扩容前）
+        // 下游：Buffer.BlockCopy
         private void Compact()
         {
             if (m_start == 0)

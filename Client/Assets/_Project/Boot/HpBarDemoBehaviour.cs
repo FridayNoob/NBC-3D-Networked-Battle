@@ -6,7 +6,7 @@ using System.IO;
 using System.Threading.Tasks;
 using NBC.Framework.Asset;
 using NBC.Framework.UI;
-using NBC.Game.Net;
+using NBC.Game.Bootstrap;
 using NBC.Game.UI;
 using UnityEngine;
 

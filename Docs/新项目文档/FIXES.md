@@ -41,3 +41,13 @@
   判定标准是「会不会被别的程序集调用」；`CS1591` 不开（会打爆 0 警告基线），靠自检与 review。
 - 样板：`NetRuntimeStats.Snapshot`（`///` 在外、五段在方法体内，互不重复）。
 - 其余 `///` 跟着后续需求逐步补（负责人 2026-10-30 选定节奏）。
+
+## 2026-10-30 修回归：e2e 探针被 RuntimeNetDriver 带崩
+
+- 现象：`dotnet build Server\_net-probe\NetProbe.csproj` 报 CS0234/CS0246（NBC.Game.View / MonoBehaviour / SerializeField 找不到）。
+- 根因：`NetProbe.csproj` 用 `Compile Include="..\..\Client\Assets\_Project\Game\Net\**\*.cs"` 把整个目录编进探针；
+  R008 新增的 `RuntimeNetDriver.cs` 依赖 UnityEngine 与 Game.View，住在 `Game\Net` 里 ⇒ 探针编不过。
+- 修法：把 `RuntimeNetDriver.cs`（含 .meta）移到 `Game\Bootstrap\`，命名空间改 `NBC.Game.Bootstrap`，并补 `using NBC.Game.Net;`；
+  `HpBarDemoBehaviour` 的 using 同步改名。**不再用「排除文件」绕过** —— `Game\Net` 应保持引擎无关。
+- 验证：api-probe 0 错/10 警告；net-probe 0 错/0 警告；asmdef 12/12 全绿。
+- 教训：往「被探针整目录收录」的目录里加文件前，先确认它是否引入引擎依赖。

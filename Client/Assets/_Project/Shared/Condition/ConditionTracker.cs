@@ -1,117 +1,54 @@
-// ============================================================================
-//  ConditionTracker —— 条件系统的核心：订阅 → 累加 → 判定 → 回调
-//  项目：3D联网战斗Demo   对应：M2-A1（条件系统）、Docs\20 §四
-//
-//  ---------------------------------------------------------------------------
-//  它干的事（一句话）
-//  ---------------------------------------------------------------------------
-//      有人告诉它"发生了一件事"（`Notify`）
-//      → 它找出**哪些已登记的条件**关心这件事
-//      → 把进度往前推
-//      → **恰好跨过需求线的那一次**，回调一次
-//
-//  它**不知道**进度是任务的还是成就的，也不知道达成之后要发奖励还是弹窗 ——
-//  那些都在 `Action<int, ConditionProgress>` 这个回调的另一头。
-//
-//  ---------------------------------------------------------------------------
-//  三条写死的语义（**每一条都有理由，别改**）
-//  ---------------------------------------------------------------------------
-//  ① **进度钳位**（见 `ConditionProgress` 的说明）→ 达成**只回调一次**，
-//     不需要任何"已达成"标志位。少一个状态就少一处能不同步的地方。
-//
-//  ② **`Register(..., resetProgress)` 的那个 bool 就是"任务"与"成就"的唯一差别**：
-//        任务（接取才开始算）：`resetProgress = true`  → 进度清零
-//        成就（一直生效）      ：`resetProgress = false` → 用既有进度；
-//                               **如果注册时就已经达成，当场回调一次**
-//        —— 这条对"上次已经打了 10 只、这次登录该解锁成就"是必须的，
-//           否则成就要等玩家**再打一只**才会解锁（一个很典型的、看起来像玄学的 bug）。
-//
-//  ③ **一次 `Notify` 里，条件只在"派发开始那一刻"的登记表里找**：
-//     回调里新登记的条件**不会**被这一次事件影响。
-//     （理由：回调里可能接下一个任务，而"刚接的任务被上一个任务的那只怪计数"
-//       是玩家完全无法理解的。这条语义要和 A3 事件中心的"派发中增删"契约保持一致。）
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么回调要"先收集、后派发"（一个真踩过的坑）
-//  ---------------------------------------------------------------------------
-//  M1-C2 里我写过一段"一边遍历诊断集合、一边调用渲染（渲染会动那个集合）"的代码，
-//  运行期直接抛 `Collection was modified`。
-//  这里形状一模一样：**达成回调里很可能去注销/登记别的条件**
-//  （交任务、接下一个任务、发奖励触发 `CollectItem` 事件再 `Notify` 一次）。
-//
-//  所以 `Notify` 分成两段：
-//      第一段：只做"读 + 写进度"，把**恰好达成的那些**收集到一个局部列表
-//      第二段：遍历那个列表逐个回调 —— 此刻随便增删登记表都安全
-//  代价是"有东西达成时"要分配一个小列表；没东西达成时**零分配**
-//  （绝大多数 `Notify` 都属于后者：打一只怪不会有任务完成）。
-// ============================================================================
+// 这个文件里有：
+//   ConditionTracker（类）：条件系统的核心，登记条件、喂进玩法事件、按进度判定，并在恰好达成时回调。
+//   Completion（结构体）：一次达成派发用的小记录，装条件编号与达成时的进度，只在本文件内使用。
 
 using System;
 using System.Collections.Generic;
 
-// ============================================================================
-//  ⚠️ `#nullable disable` —— 让**双端看到同一套规则**（D1 的"不许漂移"）
-// ============================================================================
-//  同一份源码在两个 nullable 设置**不同**的工程里编译：
-//      · Unity 侧（`NBC.Shared.asmdef`）      ：没开可空引用类型
-//      · 服务端（`NBC.Shared.csproj` → `Server\Directory.Build.props`）：`<Nullable>enable</Nullable>`
-//
-//  不处理的话会出现**两头都不干净**：
-//      · 服务端多出一批 CS86xx（事件没初始化、局部变量赋 null……）
-//      · 而如果为了消警告去写 `string?` / `List<T>?`，**Unity 侧**又会因为
-//        "可空注解出现在未开启可空上下文的文件里"报 **CS8632**
-//
-//  所以这里显式关掉：**两边都按"没有可空注解"这套规则编译**。
-//  这不是"为了消警告而关检查"，而是**把环境差异钉死在一处** ——
-//  否则"服务端编得过、Unity 编不过"（或反过来）正是 D1 要防的那种漂移。
-//
-//  ⚠️ 代价（如实记）：本目录里**放弃**了可空引用类型的静态检查，
-//     "可能为 null"要靠 XML 注释和运行期校验（本目录两个都做了）。
-//     若将来两端统一开启可空，把这几行删掉即可 —— 它们集中且显眼。
-// ============================================================================
-
+// 注意：顶部关闭可空是让双端看到同一套规则 —— Unity 侧（NBC.Shared.asmdef）没开可空引用类型，
+//     服务端（NBC.Shared.csproj → Server\Directory.Build.props）开了；不关的话服务端会多出一批 CS86xx，
+//     而若为了消警告去写可空注解，Unity 侧又会报 CS8632，两头都不干净。
+// 注意：代价是本目录放弃可空静态检查，「可能为 null」靠运行期校验兜住；将来两端统一开启可空，删掉那条指令即可。
 #nullable disable
 
 namespace NBC.Shared.Condition
 {
-    /// <summary>条件系统核心：登记条件、喂事件、达成时回调。</summary>
+    // 主要功能：条件系统的核心 —— 登记条件、喂进玩法事件、累加进度，并在恰好跨过需求线的那一次回调。
+    // 主要数据成员：m_store（进度存放处）、m_registered（条件编号 → 定义）；进度值是业务次数，没有毫米/米与 tick/秒。
+    // 主要外部方法：Register / Unregister / Notify / TryGetProgress / IsMet / Clear / Describe，以及 ConditionMet / ProgressChanged 两个事件。
+    // 谁在用它：客户端 QuestRuntime / AchievementRuntime / ConditionEventBridge 与 Editor 调试窗口；服务端 QuestAuthority / AchievementAuthority；EditMode 测试直接构造。
+    // 注意：达成只回调一次靠的是「构造进度时钳位」，不需要「已达成」标志位 —— 少一个状态就少一处能不同步的地方。
+    // 注意：任务与成就共用本类，唯一差别是 Register 的 resetProgress：任务传 true（接取才清零），成就传 false（用既有进度，注册时已达成要当场回调，否则玩家得再打一只才解锁）。
+    // 注意：一次 Notify 只在派发开始那一刻的登记表里找条件，回调里新登记的条件不算这一次 —— 否则刚接的任务会被上一只怪计数，玩家无法理解。
+    /// <summary>条件系统核心：登记条件、喂事件、按进度判定，并在恰好达成时回调。</summary>
     public sealed class ConditionTracker
     {
-        /// <summary>进度存放处（换数据库实现时这里不变）。</summary>
+        // 进度存放处；换数据库实现时这里不变，内存与 MySQL 实现都只认 IConditionProgressStore，无单位
         private readonly IConditionProgressStore m_store;
 
-        /// <summary>已登记的条件：条件编号 → 定义。</summary>
+        // 已登记的条件：条件编号（配置表主键，≥ 1）→ 定义，无单位；空表表示没有任何条件关心事件
         private readonly Dictionary<int, ConditionDef> m_registered = new Dictionary<int, ConditionDef>();
 
-        /// <summary>
-        /// 达成事件（参数：条件编号、达成时的进度）。
-        /// <para>
-        /// ⚠️ **为什么是"事件"而不是构造函数的回调参数**（两个理由，第二个才是关键）：
-        /// ① 构造顺序会变成死结：`QuestRuntime` 需要 `ConditionTracker`，
-        ///    而 `ConditionTracker` 的回调又要指向 `QuestRuntime`；
-        /// ② 更重要的：**达成这件事可以有多个观察者**。
-        ///    M4 的任务与成就要**共用这一套条件系统**，它们会同时关心同一批条件 ——
-        ///    单个回调参数会让"第二个观察者"无处安放。
-        /// </para>
-        /// </summary>
+        // 注意：用事件而不是构造函数的回调参数，是因为「达成」可以有多个观察者（任务与成就共用本类）；单个回调会让第二个观察者无处安放，还会让构造顺序绕成死结。
+        /// <summary>条件达成事件，参数是条件编号与达成时的进度；一条条件只触发一次。</summary>
         public event Action<int, ConditionProgress> ConditionMet;
 
-        /// <summary>
-        /// 进度变化事件（**每次真的推进了**都广播，包括"这一下正好达成"的那一次）。
-        /// <para>
-        /// ⚠️ 它和 <see cref="ConditionMet"/> 的分工要分清：
-        ///   · `ProgressChanged` = "**2/3 了**" —— 给追踪条、进度条用，每次推进都发
-        ///   · `ConditionMet`     = "**满了**" —— 给"任务完成/成就解锁"用，一条条件只发一次
-        /// 只提供后者的话，UI 就只能显示"完成/未完成"，中间那格数字是死的。
-        /// </para>
-        /// <para>派发顺序：**先全部 `ProgressChanged`，再全部 `ConditionMet`**（见 `Notify`）。</para>
-        /// </summary>
+        // 注意：与 ConditionMet 分工 —— 本事件每次真的推进都发（给追踪条显示 2/3），ConditionMet 只在满了发一次；只发后者的话 UI 只能显示完成/未完成。
+        /// <summary>进度推进事件，每次真的涨了都广播，包括正好达成的那一次。</summary>
         public event Action<int, ConditionProgress> ProgressChanged;
 
-        /// <summary>造一个条件系统。</summary>
-        /// <param name="store">进度存放处（不能为 null）。</param>
+        /// <summary>造一个条件系统，进度读写全部委托给 store；store 为 null 时当场抛 ArgumentNullException。</summary>
+        /// <param name="store">进度存放处，不能为 null；测试用 InMemoryConditionProgressStore。</param>
         public ConditionTracker(IConditionProgressStore store)
         {
+            // 功能：接上进度存放处；没有存放处就当场报错，不留一个跑到一半才炸的实例。
+            // 入参：store 进度存放处（不能为 null）
+            // 返回：无
+            // 步骤：
+            //   1) 先查 null —— 后面每次登记与累加都要读它，晚炸不如早炸
+            //   2) 通过后再赋值；字段是 readonly，装配期之后不再换
+            // 上游：BattleSession 装配、Editor 调试窗口、服务端 QuestAuthority / AchievementAuthority、EditMode 测试
+            // 下游：无
             if (store == null)
             {
                 throw new ArgumentNullException(nameof(store),
@@ -122,17 +59,27 @@ namespace NBC.Shared.Condition
             m_store = store;
         }
 
-        /// <summary>当前登记了多少条条件。</summary>
+        // 功能：直接返回登记表的条数。
+        /// <summary>当前登记了多少条条件；只读，不触发进度读取。</summary>
         public int RegisteredCount
         {
             get { return m_registered.Count; }
         }
 
-        /// <summary>当前登记的条件里，已经达成的有多少条（UI/调试用）。</summary>
+        /// <summary>已登记条件里已达成多少条，供 UI 与调试显示；要逐条读进度，复杂度 O(n)。</summary>
         public int MetCount
         {
             get
             {
+                // 功能：逐条把已存进度与需求值比较，数出已达成的条数。
+                // 入参：无
+                // 返回：已达成的条数（0..RegisteredCount）
+                // 步骤：
+                //   1) 从 0 起数，遍历期间不修改任何状态
+                //   2) 用 >= 比较 —— 进度本该被钳位，用 >= 能容忍历史数据超出需求值
+                // 注意：每访问一次就把存放处整个读一遍，别放进每帧刷新的 UI；它没有缓存，也就不存在缓存过期。
+                // 上游：Editor 调试窗口、UI 调试显示
+                // 下游：m_store.GetProgress
                 int count = 0;
 
                 foreach (KeyValuePair<int, ConditionDef> pair in m_registered)
@@ -147,26 +94,26 @@ namespace NBC.Shared.Condition
             }
         }
 
-        // ====================================================================
-        //  登记 / 注销
-        // ====================================================================
-
-        /// <summary>
-        /// 登记一条条件（之后 `Notify` 才会算它）。
-        /// </summary>
-        /// <param name="conditionKey">条件编号（配置表里的行主键）。</param>
-        /// <param name="def">条件定义。</param>
-        /// <param name="resetProgress">
-        /// 是否把已有进度清零。任务传 true（接取才开始算），成就传 false（一直生效）。
-        /// </param>
-        /// <exception cref="InvalidOperationException">同一个编号**重复登记**时抛。</exception>
+        /// <summary>登记一条条件，之后 Notify 才会算它；同一编号重复登记会抛异常，不清零且已达成时会当场回调一次。</summary>
+        /// <param name="conditionKey">条件编号，配置表里的行主键（≥ 1）。</param>
+        /// <param name="def">条件定义，不能为 null。</param>
+        /// <param name="resetProgress">是否把已有进度清零；任务传 true（接取才开始算），成就传 false（一直生效）。</param>
         public void Register(int conditionKey, ConditionDef def, bool resetProgress)
         {
+            // 功能：登记一条条件，并决定是否把已有进度清零；不清零且已经达成时当场回调一次。
+            // 入参：conditionKey 条件编号（≥ 1）；def 条件定义（非 null）；resetProgress 是否清零（任务 true，成就 false）
+            // 返回：无
+            // 步骤：
+            //   1) 先查重复登记 —— 同一个编号只该有一个持有者，重复会让进度被悄悄清零、回调发两次
+            //   2) 通过后写进登记表，之后 Notify 才会遍历到它
+            //   3) resetProgress 为 true 就把进度清零并返回（任务接取才开始算）
+            //   4) 否则读既有进度，已达成则当场回调一次（成就：上次已经打够，这次登录就该解锁，不能等再打一只）
+            // 注意：重复登记必须当场抛异常，不能静默覆盖 —— 静默覆盖会让「进度被清零 / 回调发两次」永远查不出来。
+            // 注意：第 4 步的回调发生在 Notify 之外，此刻没有遍历登记表，所以在回调里增删登记是安全的。
+            // 上游：客户端 QuestRuntime / AchievementRuntime 读配置表时登记、Editor 调试窗口、服务端两个权威类、测试
+            // 下游：RaiseConditionMet、m_store.SetProgress / GetProgress
             if (m_registered.ContainsKey(conditionKey))
             {
-                // 重复登记几乎总是 bug：两处都以为自己在管这条条件，
-                // 于是进度被别人悄悄清零 / 回调发两次。
-                // 静默覆盖会让这个 bug 永远查不出来，所以当场报错。
                 throw new InvalidOperationException(
                     "[ConditionTracker] 条件 " + conditionKey + " 已经登记过了，不能重复登记。\n" +
                     "同一个条件编号只应该被一个持有者登记（重复登记会让进度被清零、或回调发两次）。\n" +
@@ -181,9 +128,6 @@ namespace NBC.Shared.Condition
                 return;
             }
 
-            // 语义②：不清零时，如果**本来就已经达成**，当场回调一次。
-            // （成就："上次已经打了 10 只，这次登录就该解锁"。不这么做的话，
-            //   玩家得再打一只才解锁 —— 看起来像玄学。）
             int current = m_store.GetProgress(conditionKey);
             ConditionProgress progress = new ConditionProgress(current, def.RequiredCount);
 
@@ -193,13 +137,19 @@ namespace NBC.Shared.Condition
             }
         }
 
-        /// <summary>注销一条条件（之后 `Notify` 不再算它）。</summary>
+        /// <summary>注销一条条件，之后 Notify 不再算它；只动登记表，不动已存进度。</summary>
         /// <param name="conditionKey">条件编号。</param>
-        /// <returns>本来登记过、真的注销了才返回 true。</returns>
+        /// <returns>true 表示本来登记过、真的移除了；false 表示本来就没登记。</returns>
         public bool Unregister(int conditionKey)
         {
-            // ⚠️ **只注销登记，不动进度**：进度留在存放处，
-            //    这样"重新接同一个任务"能选择接着算（传 resetProgress = false）。
+            // 功能：把一条条件从登记表移除，之后 Notify 不再算它。
+            // 入参：conditionKey 条件编号（找不到不算错误）
+            // 返回：true 表示本来登记过、真的移除了；false 表示本来就没登记
+            // 步骤：
+            //   1) 直接从登记表 Remove，返回值就是「原来在不在」
+            // 注意：只注销登记、不动进度 —— 进度留在存放处，重新接同一个任务时才可以传 resetProgress = false 接着算。
+            // 上游：客户端 QuestRuntime / AchievementRuntime 收尾、服务端两个权威类、测试
+            // 下游：无
             return m_registered.Remove(conditionKey);
         }
 
@@ -208,28 +158,35 @@ namespace NBC.Shared.Condition
         /// <returns>登记了返回 true。</returns>
         public bool IsRegistered(int conditionKey)
         {
+            // 功能：只查登记状态，不看进度。
             return m_registered.ContainsKey(conditionKey);
         }
 
         /// <summary>取一条已登记条件的定义。</summary>
         /// <param name="conditionKey">条件编号。</param>
-        /// <param name="def">定义。</param>
+        /// <param name="def">成功时是定义，失败时是 default。</param>
         /// <returns>登记过返回 true。</returns>
         public bool TryGetDef(int conditionKey, out ConditionDef def)
         {
+            // 功能：按编号从登记表取定义，取到就顺带通过 out 返回。
             return m_registered.TryGetValue(conditionKey, out def);
         }
 
-        // ====================================================================
-        //  进度查询
-        // ====================================================================
-
-        /// <summary>取一条已登记条件的进度（**没登记时返回 false**，不抛异常）。</summary>
+        /// <summary>取一条已登记条件的进度；没登记时返回 false，不抛异常。</summary>
         /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">进度。</param>
+        /// <param name="progress">成功时是进度，失败时是 default。</param>
         /// <returns>登记过返回 true。</returns>
         public bool TryGetProgress(int conditionKey, out ConditionProgress progress)
         {
+            // 功能：取一条已登记条件的进度，没登记时给 default 并返回 false。
+            // 入参：conditionKey 条件编号；progress 输出进度（失败时为 default，需求值为 0）
+            // 返回：true 表示登记过、progress 有效；false 表示没登记，不抛异常
+            // 步骤：
+            //   1) 先查登记表拿定义 —— 没登记就无从知道需求值，只能返回 false
+            //   2) 有定义才把「已存进度 + 需求值」组成 ConditionProgress，钳位在构造里完成
+            // 注意：失败时 progress 是 default，它的 IsMet 为 true（0 >= 0）；要判「有没有这个条件」得看返回值，别用 IsMet。
+            // 上游：客户端 QuestRuntime / UI 追踪条、Editor 调试窗口、服务端下发、测试
+            // 下游：m_store.GetProgress、ConditionProgress 构造
             ConditionDef def;
 
             if (!m_registered.TryGetValue(conditionKey, out def))
@@ -242,11 +199,20 @@ namespace NBC.Shared.Condition
             return true;
         }
 
-        /// <summary>这条条件达成了吗（**没登记时返回 false**）。</summary>
+        /// <summary>这条条件达成了吗；没登记时返回 false，不抛异常。</summary>
         /// <param name="conditionKey">条件编号。</param>
-        /// <returns>达成了返回 true。</returns>
+        /// <returns>登记过且已存进度够到需求值时返回 true。</returns>
         public bool IsMet(int conditionKey)
         {
+            // 功能：查一条条件是否已达成；没登记一律算未达成。
+            // 入参：conditionKey 条件编号
+            // 返回：true 表示登记过且已存进度 ≥ 需求值；false 表示没登记或还没到
+            // 步骤：
+            //   1) 先取定义，没登记直接返回 false —— 不抛异常，调用方不必先查存在性
+            //   2) 用 >= 比较，容忍历史数据超过需求值
+            // 注意：没登记与没达成都是 false；调用方要区分这两者，就用 TryGetProgress。
+            // 上游：客户端 QuestRuntime 收尾判定、服务端权威类、测试
+            // 下游：m_store.GetProgress
             ConditionDef def;
 
             if (!m_registered.TryGetValue(conditionKey, out def))
@@ -257,19 +223,28 @@ namespace NBC.Shared.Condition
             return m_store.GetProgress(conditionKey) >= def.RequiredCount;
         }
 
-        // ====================================================================
-        //  喂事件
-        // ====================================================================
-
-        /// <summary>
-        /// 告诉条件系统"发生了一件事"。
-        /// </summary>
-        /// <param name="eventType">发生了什么（必须是合法成员）。</param>
-        /// <param name="targetId">发生在谁身上（0 = 没有具体目标，只有"任意"条件会匹配到）。</param>
-        /// <param name="count">发生了多少次，必须 ≥ 1（一次击杀就是 1）。</param>
-        /// <returns>**这一次调用**让多少条条件达成（0 = 只是涨了进度）。</returns>
+        /// <summary>告诉条件系统发生了一件事，推进所有匹配条件的进度并广播；返回这一次让多少条条件达成。</summary>
+        /// <param name="eventType">发生了什么，必须是 EConditionEvent 的合法成员。</param>
+        /// <param name="targetId">发生在谁身上；0 = 没有具体目标，只有「任意目标」的条件会匹配到。</param>
+        /// <param name="count">发生了多少次，必须 ≥ 1（一次击杀传 1）。</param>
+        /// <returns>本次调用让多少条条件达成（0 = 只是涨了进度，或根本没有条件匹配）。</returns>
         public int Notify(EConditionEvent eventType, int targetId, int count)
         {
+            // 功能：把一次玩法事件推进给所有匹配的条件，先广播进度、再广播达成，返回本次达成的条数。
+            // 入参：eventType 事件类型（必须是合法成员）；targetId 发生在谁身上（0 = 任意目标，负数非法）；count 发生次数（≥ 1）
+            // 返回：本次调用让多少条条件达成（0 = 只是涨了进度，或根本没有条件匹配）
+            // 步骤：
+            //   1) 先校验三个入参 —— 枚举强转出来的假值 C# 不报错，只会安静地匹配不到任何条件，必须在入口拦住
+            //   2) 没有登记就直接返回 0，避免无谓的遍历与分配
+            //   3) 第一段只读登记表、只写进度：跳过错配与已达成的条件，把「变了的」和「正好达成的」分别收进局部列表
+            //   4) 第二段才回调：先遍历 changed 发 ProgressChanged，再遍历 completed 发 ConditionMet
+            // 注意：必须先收集、后派发 —— 回调里很可能注销/登记别的条件（交任务、接下一个任务、发奖再触发一次事件），边遍历边改登记表会直接抛 Collection was modified。
+            // 注意：派发顺序是契约：先全部 ProgressChanged 再全部 ConditionMet，反过来的话 UI 会先收到「完成了」再收到「2/3」，显示上闪一下。
+            // 注意：已经达成的条件不再累计 —— 进度是钳位的，再涨也没有意义，而且这样达成天然只回调一次。
+            // 注意：本次事件只认派发开始那一刻的登记表，回调里新登记的条件不会被这一次事件计数（刚接的任务不该被上一只怪算进去）。
+            // 注意：只有真的有条件被推进时才分配两个列表；绝大多数 Notify（打死一只怪）走的是零分配路径，这点分配留给「有东西达成」的少数情况。
+            // 上游：客户端 ConditionEventBridge 把 EventCenter 的事件转进来、Editor 调试窗口、服务端权威类、测试
+            // 下游：ConditionDef.Matches、m_store.GetProgress / SetProgress、ProgressChanged、RaiseConditionMet
             if (!ConditionEvents.IsDefined(eventType))
             {
                 throw new ArgumentOutOfRangeException(nameof(eventType),
@@ -279,8 +254,6 @@ namespace NBC.Shared.Condition
 
             if (count < 1)
             {
-                // "发生了 0 次"不是一个事件，通常是调用方算错了。
-                // 静默忽略它会让"任务怎么不涨进度"变成悬案。
                 throw new ArgumentOutOfRangeException(nameof(count),
                     "[ConditionTracker] count 必须 ≥ 1（当前 " + count + "）。\n" +
                     "一次击杀传 1；要一次加多次请传实际次数，不要传 0 或负数。");
@@ -298,11 +271,6 @@ namespace NBC.Shared.Condition
                 return 0;
             }
 
-            // -------- 第一段：读 + 写进度，把"变了的"和"正好达成的"收集起来 --------
-            // ⚠️ 只有在**真的有条件被推进**时才分配这两个列表。
-            //    这里的调用频率是"每次玩法事件"（打死一只怪、捡到一件物品），
-            //    **不是每帧** —— 所以这点分配可以接受，换来的是"回调里随便增删登记表"的安全性，
-            //    以及"达成只回调一次"不需要额外标志位。
             List<Completion> changed = null;
             List<Completion> completed = null;
 
@@ -317,7 +285,6 @@ namespace NBC.Shared.Condition
 
                 int before = m_store.GetProgress(pair.Key);
 
-                // 已经达成了：**不再累计**（进度是钳位的，再涨也没有意义）
                 if (before >= def.RequiredCount)
                 {
                     continue;
@@ -351,9 +318,6 @@ namespace NBC.Shared.Condition
                 return 0;
             }
 
-            // -------- 第二段：派发（此刻增删登记表都安全） --------
-            // 顺序是契约的一部分：**先把所有"进度变了"发完，再发"达成"**。
-            // 反过来的话，UI 会先收到"任务完成了"、再收到"2/3"，显示上会闪一下。
             for (int i = 0; i < changed.Count; i++)
             {
                 Action<int, ConditionProgress> handler = ProgressChanged;
@@ -377,11 +341,16 @@ namespace NBC.Shared.Condition
             return completed.Count;
         }
 
-        /// <summary>安全地广播一次"达成"（没人订阅时什么都不做）。</summary>
-        /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">达成时的进度。</param>
         private void RaiseConditionMet(int conditionKey, ConditionProgress progress)
         {
+            // 功能：先把事件拷到本地再判空调用，没人订阅时什么都不做。
+            // 入参：conditionKey 条件编号；progress 达成时的进度
+            // 返回：无
+            // 步骤：
+            //   1) 先把事件拷到局部变量 —— 判空与调用之间有人退订，也不会拿到 null
+            //   2) 有订阅者才调用，没有就什么都不做
+            // 上游：Register（注册时已达成）、Notify（第二段派发）
+            // 下游：订阅了 ConditionMet 的调用方
             Action<int, ConditionProgress> handler = ConditionMet;
 
             if (handler != null)
@@ -390,16 +359,34 @@ namespace NBC.Shared.Condition
             }
         }
 
-        /// <summary>清空全部登记（**不动进度**；测试收尾、切账号用）。</summary>
+        /// <summary>清空全部登记，不动已存进度；测试收尾、切账号用。</summary>
         public void Clear()
         {
+            // 功能：清空登记表，之后 Notify 不会匹配到任何条件。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 直接清空登记表，只动内存里的那一份
+            // 注意：不动已存进度 —— 重新登记时可以接着算；要连进度一起清，得自己调存放处。
+            // 上游：BattleSession 收尾、测试
+            // 下游：无
             m_registered.Clear();
         }
 
-        /// <summary>把当前登记与进度拼成一段文本（调试面板/日志用）。</summary>
-        /// <returns>多行文本。</returns>
+        /// <summary>把当前登记与进度拼成多行文本，供调试面板与日志用。</summary>
+        /// <returns>多行文本，每行一条条件；没有任何登记时只有一行表头。</returns>
         public string Describe()
         {
+            // 功能：逐条把编号、定义描述与进度拼成多行文本，并标出已达成的条目。
+            // 入参：无
+            // 返回：多行文本，每行一条条件；没有登记时只有一行表头
+            // 步骤：
+            //   1) 先写表头，带上登记条数
+            //   2) 逐条取进度（构造时钳位），把编号、定义描述与「当前/需求」按固定顺序拼起来
+            //   3) 已达成的那条补一个对勾标记，便于肉眼扫
+            // 注意：这里每次都读存放处，只适合调试与日志，不要放进每帧刷新的界面。
+            // 上游：Editor 调试窗口、日志输出、测试
+            // 下游：ConditionDef.Describe、ConditionProgress.ToString、m_store.GetProgress
             System.Text.StringBuilder builder = new System.Text.StringBuilder();
             builder.Append("[ConditionTracker] 登记 ").Append(m_registered.Count).Append(" 条：\n");
 
@@ -416,20 +403,21 @@ namespace NBC.Shared.Condition
             return builder.ToString();
         }
 
-        /// <summary>一条"刚刚达成的条件"（第一段收集、第二段派发，所以要一个小结构）。</summary>
+        // 主要功能：一次派发用的小记录，把「哪条条件」与「达成时的进度」绑在一起，让第二段派发不依赖仍在变的登记表。
+        // 主要数据成员：Key（条件编号）、Progress（达成时的进度，此刻已满）。
+        // 主要外部方法：无，只有构造与两个只读字段。
+        // 谁在用它：本文件的 ConditionTracker.Notify，第一段收集、第二段遍历。
         private readonly struct Completion
         {
-            /// <summary>条件编号。</summary>
+            // 条件编号（配置表主键，≥ 1），无单位
             public readonly int Key;
 
-            /// <summary>达成时的进度（此刻一定是满的）。</summary>
+            // 达成时的进度，此刻一定是满的（Current == Required），无单位
             public readonly ConditionProgress Progress;
 
-            /// <summary>造一条记录。</summary>
-            /// <param name="key">条件编号。</param>
-            /// <param name="progress">达成时的进度。</param>
             public Completion(int key, ConditionProgress progress)
             {
+                // 功能：把一次达成的编号与进度装进记录，供第二段派发读取。
                 Key = key;
                 Progress = progress;
             }
