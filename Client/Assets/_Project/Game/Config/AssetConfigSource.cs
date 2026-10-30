@@ -1,45 +1,5 @@
-// ============================================================================
-//  AssetConfigSource —— `IConfigSource` 的**真实现**：从资源层取配置表
-//  项目：3D联网战斗Demo   对应：M2-C1、CFG-R2（走内容包而不是 Resources）
-//
-//  ---------------------------------------------------------------------------
-//  它是 M1-C4 留的那道缝的**兑现**
-//  ---------------------------------------------------------------------------
-//  M1-C4 里 `ConfigMgr` 只定义了接缝（`IConfigSource`），并明确写了：
-//
-//      "真正的实现（走资源层）等打包做完再接，**一行都不用改 ConfigMgr**"
-//
-//  这个文件就是那次兑现。**`ConfigMgr` 确实一行都没改**（可以 `git log` 对）。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 它为什么住在 `NBC.Game`，而不是适配层
-//  ---------------------------------------------------------------------------
-//  因为它**完全不认识第三方**：它只用框架的 `AssetManager` 接缝
-//  （`LoadAssetAsync<T>` / `OnComplete` / `IsValid`）。
-//  "第三方"（内容包的实现）在 `NBC.Framework.YooAsset` 里，由组合根 `NBC.Boot` 装上去。
-//  三层各管一段，谁也不越界：
-//
-//      NBC.Boot          装底层加载器（唯一认识实现的地方）
-//      NBC.Game（本文件） 把"表名"翻译成"资源地址"，交给 AssetManager
-//      ConfigMgr         管缓存 + 提供查询（**从头到尾不知道资源系统存在**）
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 三个刻意的选择
-//  ---------------------------------------------------------------------------
-//  ① **用异步而不是同步**：`AssetManager.LoadAsset<T>` 是**受限接口**
-//     （ADR-001 决策 5：同步会阻塞主线程，播放模式下还会打警告）。
-//     配置表虽然小，但"启动时一次加载好几张"正是最不该阻塞的那一段，
-//     而 `IConfigSource` 本来就是回调式的 —— 用异步**零成本**。
-//
-//  ② **句柄一直持有、不 Dispose**：配置表在进程生命周期内常驻，
-//     释放句柄 = 让资源系统把它卸掉。这是**有意为之**，不是漏了；
-//     将来若要做"配置热重载"，那时才需要一条真正的释放路径（M2 明确不做）。
-//
-//  ③ **判成功用 `IsValid`，不看句柄是不是 null**：句柄非 null 但资产是 null
-//     是**真实会发生的**（M1-B5 我就把这种"假成功"报成过 ✅）。
-//     `IsValid` = `Status == Succeeded && AssetObject != null` ——
-//     框架已经把这个教训写进属性里了，这里直接用。
-// ============================================================================
+// 这个文件里有：
+//   AssetConfigSource（类）：IConfigSource 的真实实现，把表名翻成资源地址后经 AssetManager 异步取回配置表，并常驻持有句柄
 
 using System;
 using System.Collections.Generic;
@@ -48,58 +8,66 @@ using UnityEngine;
 
 namespace NBC.Game.Config
 {
-    /// <summary>从资源层（`AssetManager`）取配置表的来源实现。</summary>
+    /// <summary>实现 IConfigSource：表名按约定后缀拼成资源地址，从 AssetManager 异步取回配置资产。</summary>
+    // 主要功能：表名拼上后缀得到资源地址，交给 AssetManager 异步加载成 ScriptableObject，并把句柄常驻持有。
+    // 主要数据成员：m_addressSuffix（地址后缀，默认 Config）、m_handles（加载成功后不释放的句柄列表）。
+    // 主要外部方法：LoadTable（异步取表，成功与失败必回调其一）、AddressOf（表名转地址）；Description 与 HeldHandleCount 只给报错和调试。
+    // 谁在用它：Boot 的 M2DemoBehaviour 装好资源层后 new 出来交给 ConfigMgr.SetSource，之后 ConfigMgr 只经 IConfigSource 调用。
+    // 注意：只认框架的 AssetManager 接缝（LoadAssetAsync / OnComplete / IsValid），不认识内容包实现 —— 那层在 YooAsset 里、由 Boot 装上，
+    //       所以它住在 Game 而不是适配层：Boot 装加载器、本文件翻地址、ConfigMgr 管缓存，谁也不越界；配置表因此走内容包而不走 Resources。
+    // 注意：只能走异步 —— AssetManager.LoadAsset 是受限接口，同步会阻塞主线程，播放模式下还会打警告。
     public sealed class AssetConfigSource : IConfigSource
     {
-        /// <summary>地址前缀/后缀用的资产类型后缀（`Hero` → `HeroConfig`）。</summary>
+        // 地址后缀，追加在表名后面（默认 Config，Hero 表 → HeroConfig 地址）；取值为非空字符串，无单位
         private readonly string m_addressSuffix;
 
-        /// <summary>**常驻**的句柄（见文件头选择②：配置表不卸载）。</summary>
+        // 已加载且刻意不释放的资产句柄，长度 = 成功加载过的表数，只增不减；无单位
         private readonly List<AssetHandle<ScriptableObject>> m_handles = new List<AssetHandle<ScriptableObject>>();
 
-        /// <summary>造一个来源。</summary>
-        /// <param name="addressSuffix">
-        /// 资源地址的后缀，默认与 `ConfigMgr` 的命名约定一致（`Hero` → `HeroConfig`）。
-        /// 收集配置里的地址规则若改过，把它一起改。
-        /// </param>
+        /// <summary>创建来源；Boot 用无参构造即可，只有地址规则改过才需要传后缀。</summary>
+        // 功能：保存地址后缀，传空时回落到 ConfigMgr.AssetTypeSuffix。
+        // 注意：收集器的地址规则若改过，这个后缀要跟着改，否则地址对不上、加载全失败。
         public AssetConfigSource(string addressSuffix = ConfigMgr.AssetTypeSuffix)
         {
             m_addressSuffix = string.IsNullOrEmpty(addressSuffix) ? ConfigMgr.AssetTypeSuffix : addressSuffix;
         }
 
-        /// <summary>来源描述（报错与日志里用）。</summary>
+        // 功能：来源描述，报错与日志里用来说明表是从资源层读的。
         public string Description
         {
             get { return "资源层（AssetManager）"; }
         }
 
-        /// <summary>已经持有了几个句柄（测试/调试用）。</summary>
+        // 功能：当前持有的句柄数，测试与调试用来确认加载成功后句柄确实留在列表里。
         public int HeldHandleCount
         {
             get { return m_handles.Count; }
         }
 
-        /// <summary>表名 → 资源地址（`Hero` → `HeroConfig`）。</summary>
-        /// <param name="tableName">表名。</param>
-        /// <returns>资源地址。</returns>
+        // 功能：按「表名 + 后缀」拼出资源地址（Hero → HeroConfig），不检查资源是否存在。
         public string AddressOf(string tableName)
         {
             return tableName + m_addressSuffix;
         }
 
-        /// <summary>
-        /// 加载一张表的配置资产。
-        /// <para>⚠️ 成功与失败**都会**回调，且只在主线程回调一次（接口契约）。</para>
-        /// </summary>
-        /// <param name="tableName">表名（如 `Hero`）。</param>
-        /// <param name="onLoaded">成功：交出资产。</param>
-        /// <param name="onFailed">失败：交出一句人话原因。</param>
+        // 功能：把表名翻成地址后异步加载配置资产，成功交出资产，失败交出一句人话原因。
+        // 入参：tableName 表名（如 Hero，不带 Config 后缀）；onLoaded 成功回调，交出资产；
+        //       onFailed 失败回调，交出可直接展示的原因（为 null 时打到日志）
+        // 步骤：
+        //   1) 先拼地址：后面报错与加载都用这一个地址，避免两处拼法不一致
+        //   2) 先查 HasProvider：没装底层加载器时底层会把原因报成「表不存在」，排查方向完全相反，所以在这里拦下并点明是组合根没跑
+        //   3) 异步发起加载并立刻取句柄；句柄为 null 直接算失败，不再注册回调
+        //   4) 注册 OnComplete：它在已经完成时会立刻回调一次，所以没有「加载太快、注册太晚」的竞态
+        //   5) 用 IsValid（成功且资产非 null）判成功，不看句柄是不是 null —— 句柄非 null 而资产为 null 是真会发生的（类型不对、包里没这个资源）
+        //   6) 判失败先 Dispose 再回调，只有成功才把句柄存进 m_handles 常驻
+        // 返回：无返回值；成功与失败都会回调，且只在主线程回调一次（接口契约），调用方不用自己判空等
+        // 注意：句柄刻意不 Dispose —— 配置表整进程常驻，释放等于让资源系统把表卸掉；将来做热重载才需要真正的释放路径。
+        // 上游：ConfigMgr 经 IConfigSource 的加载流程（Boot 预加载那一路）、EditMode 测试直接调
+        // 下游：AddressOf、AssetManager.Instance、Fail、TableLoadFailedMessage
         public void LoadTable(string tableName, Action<ScriptableObject> onLoaded, Action<string> onFailed)
         {
             string address = AddressOf(tableName);
 
-            // 先看底层加载器装了没有：没装的话，后面拿到的错误会**看起来像"表不存在"**，
-            // 而真实原因是"组合根没跑"。这两件事的排查方向完全相反，所以要在这里分开。
             if (!AssetManager.Instance.HasProvider)
             {
                 Fail(onFailed,
@@ -120,12 +88,8 @@ namespace NBC.Game.Config
                 return;
             }
 
-            // ⚠️ `OnComplete` 在**已经完成**时会立刻回调一次，所以这里没有
-            //    "加载太快、回调注册太晚"的竞态（框架在属性 setter 里保证了，见 AssetHandle）。
             handle.OnComplete += completed =>
             {
-                // ⚠️ 判成功用 `IsValid`（= 成功 且 资产非 null），**不看句柄是不是 null**：
-                //    句柄非 null 但资产是 null 是真会发生的（类型不对、包里没这个资源）。
                 if (!completed.IsValid)
                 {
                     completed.Dispose();
@@ -138,11 +102,16 @@ namespace NBC.Game.Config
             };
         }
 
-        /// <summary>表加载失败的报错：**哪张表 + 地址 + 三个常见原因 + 怎么查**。</summary>
-        /// <param name="tableName">表名。</param>
-        /// <param name="address">资源地址。</param>
-        /// <param name="reason">底层给的原因（可能为空）。</param>
-        /// <returns>报错文本。</returns>
+        // 功能：拼出表加载失败的报错，含表名、地址、底层原因与四个常见原因的排查方法。
+        // 入参：tableName 表名；address 实际请求的资源地址；reason 底层给的原因，可为空
+        // 步骤：
+        //   1) 先写清哪张表、哪个地址，否则看报错的人无从复现
+        //   2) 底层原因非空才追加，避免多出一行空的「底层原因」
+        //   3) 按可能性从高到低列四条最常见原因，并各给一条查法：资产没进包（新加的表尤其）、表没导入成资产、
+        //      收集配置没收 config 组、地址规则对不上
+        // 返回：给 onFailed 的报错文本（最终经 Fail 交给调用方或日志）
+        // 上游：LoadTable 的失败分支
+        // 下游：Fail
         private static string TableLoadFailedMessage(string tableName, string address, string reason)
         {
             return "[AssetConfigSource] 读配置表「" + tableName + "」失败（地址「" + address + "」）。\n" +
@@ -160,9 +129,14 @@ namespace NBC.Game.Config
                    "收集器若用了别的地址规则，改 `AssetConfigSource` 的构造参数";
         }
 
-        /// <summary>没人接失败回调时**不能静默吞掉**（否则就是一次无声的加载失败）。</summary>
-        /// <param name="onFailed">失败回调。</param>
-        /// <param name="message">原因。</param>
+        // 功能：把失败原因交给 onFailed；没人接就打到日志，绝不静默吞掉。
+        // 入参：onFailed 失败回调，可为 null；message 失败原因
+        // 步骤：
+        //   1) 有回调就交出去并返回
+        //   2) 没有回调才打 Debug.LogError，并点明这次加载没有任何失败回调
+        // 返回：无
+        // 上游：LoadTable 的三个失败分支
+        // 下游：onFailed / Debug.LogError
         private static void Fail(Action<string> onFailed, string message)
         {
             if (onFailed != null)

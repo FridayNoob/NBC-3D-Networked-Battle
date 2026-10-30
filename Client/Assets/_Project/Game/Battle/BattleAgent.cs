@@ -1,31 +1,6 @@
-// ============================================================================
-//  BattleAgent —— 一个战斗单位（玩家或怪物）
-//  项目：3D联网战斗Demo   对应：M2-B1
-//
-//  ---------------------------------------------------------------------------
-//  它**只做三件事**，而且刻意不做别的
-//  ---------------------------------------------------------------------------
-//      ① 记住自己的属性（最大血 / 攻击 / 技能列表）
-//      ② 记住自己现在剩多少血
-//      ③ 提供一个"被打一下"的入口，内部调共享层的 `DamageMath` 结算
-//
-//  ⚠️ 它**不广播事件、不认识事件中心、不认识配置表**：
-//     这些都是 `BattleWorld` 的事。理由：
-//     · 单位对象是"数据 + 一条规则"，能脱离事件中心单独测（本项目的可测性套路）
-//     · "谁死了要告诉谁"是**世界级**的判断（要知道是谁打死的、死了要不要从世界摘掉）
-//
-//  ⚠️ 它**不做 AI / 不移动**（M2 的范围决定，见 `Docs\22` B 组）：
-//     怪的行为编排（巡逻/追击/技能循环）属 M3 的 BOSS 与行为树，
-//     M2 的怪就是"站着让你打"，因为这一轮的验收是**任务闭环**，不是战斗手感。
-//     如实记在这里，免得以后以为漏了。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ `Attack` 对英雄是没有意义的（读配置时给 0），这不是 bug
-//  ---------------------------------------------------------------------------
-//  `Hero` 表里**没有 attack 列** —— 英雄的伤害来自**技能**（`Skill.damage`），
-//  而不是平砍。所以英雄的 `Attack` 是 0，伤害一律走 `BattleWorld.CastSkill`。
-//  （如果哪天要做普攻，那是给 `Hero` 表加列 + 在这里接上，不是"把 0 当成 bug 修掉"。）
-// ============================================================================
+// 这个文件里有：
+//   EBattleAgentKind（枚举）：战斗单位的种类，玩家英雄或怪物
+//   BattleAgent（类）：一个战斗单位的数据与一条「挨打结算」规则，不管事件、AI 与移动
 
 using System;
 using NBC.Game.Config;
@@ -33,51 +8,64 @@ using NBC.Shared.Battle;
 
 namespace NBC.Game.Battle
 {
-    /// <summary>战斗单位的种类。</summary>
+    // 主要功能：区分玩家英雄与怪物，决定 Attack 有没有意义，以及死亡事件里怎么认出怪物。
+    // 主要数据成员：Hero（0）、Monster（1）。
+    // 主要外部方法：无。
+    // 谁在用它：BattleWorld 筛怪、ServerEventBridge 把死亡事件的种类翻回怪物、EditMode 用例断言种类。
+    // 注意：英雄的 Attack 恒为 0，伤害来自技能 —— 别把它当成配置错误。
     public enum EBattleAgentKind
     {
-        /// <summary>玩家英雄。</summary>
+        // 玩家英雄：0，伤害走技能，Attack 恒为 0
         Hero = 0,
 
-        /// <summary>怪物。</summary>
+        // 怪物：1，Attack 是平砍伤害（点）
         Monster = 1
     }
 
-    /// <summary>一个战斗单位。</summary>
+    // 主要功能：持有一个战斗单位的属性与当前血量，只提供「挨一下伤害」这一条规则。
+    // 主要数据成员：m_hp（当前生命值，点）、m_maxHp（最大生命值，点）、m_attack（攻击力，点）、m_skillIds（技能编号列表）。
+    // 主要外部方法：InstanceId / Hp / IsAlive / ApplyDamage / ToString（只读属性与实例方法）。
+    // 谁在用它：BattleWorld 造与摘，BattleSession 持 Hero 与在场列表，Boot 的演示读 Hero.SkillIds 取技能并把 Hero 直接拼进界面，EditMode 用例断言属性。
+    // 注意：它刻意不广播事件、不认识事件中心与配置表 —— 那些是 BattleWorld 的事；单位只管「数据 + 一条规则」，才能脱离事件中心单独测。
+    // 注意：它不做 AI、不移动是范围决定（怪就是站着让你打），行为编排留给以后的行为树（详见 Docs\22）。
+    // 注意：Attack 对英雄没有意义（读配置时给 0），英雄伤害一律走 BattleWorld.CastSkill。
     public sealed class BattleAgent
     {
-        /// <summary>运行时唯一编号（由 `BattleWorld` 发号）。</summary>
+        // 运行时唯一编号，由 BattleWorld 递增发号，从 1 起
         private readonly int m_instanceId;
 
-        /// <summary>配置表编号（怪物 = `Monster` 主键；英雄 = `Hero` 主键）。</summary>
+        // 配置表主键：怪物是 Monster 的主键，英雄是 Hero 的主键
         private readonly int m_configId;
 
-        /// <summary>种类。</summary>
+        // 种类：玩家英雄或怪物
         private readonly EBattleAgentKind m_kind;
 
-        /// <summary>显示名（日志/UI 用）。</summary>
+        // 显示名（日志与 UI 用），构造时 null 归一成空串
         private readonly string m_name;
 
-        /// <summary>最大生命值。</summary>
+        // 最大生命值（点），构造时要求 ≥ 1
         private readonly int m_maxHp;
 
-        /// <summary>攻击力（**英雄恒为 0**，见文件头说明）。</summary>
+        // 攻击力（点），构造时负数按 0；英雄恒为 0，伤害走技能
         private readonly int m_attack;
 
-        /// <summary>技能列表（可能为空数组）。</summary>
+        // 技能编号列表（Skill 表主键），构造时 null 归一成空数组
         private readonly int[] m_skillIds;
 
-        /// <summary>当前生命值（**永远 ≥ 0**，由 `DamageMath` 保证）。</summary>
+        // 当前生命值（点），范围 0..m_maxHp；只经 DamageMath 结算，0 即死亡
         private int m_hp;
 
-        /// <summary>造一个战斗单位（只有 `BattleWorld` 会调）。</summary>
-        /// <param name="instanceId">实例编号。</param>
-        /// <param name="configId">配置编号。</param>
-        /// <param name="kind">种类。</param>
-        /// <param name="name">显示名。</param>
-        /// <param name="maxHp">最大生命值（必须 ≥ 1）。</param>
-        /// <param name="attack">攻击力。</param>
-        /// <param name="skillIds">技能列表（可以为 null）。</param>
+        // 功能：把配置行的属性抄进字段，当前血从满血开始。
+        // 入参：instanceId 世界内唯一编号；configId 配置主键；kind 种类；name 显示名（null 按空串）；
+        //       maxHp 最大生命值（点，必须 ≥ 1）；attack 攻击力（点，负数按 0）；skillIds 技能编号列表（null 按空数组）
+        // 返回：无
+        // 步骤：
+        //   1) 先校验 maxHp ≥ 1：0 血单位出生即死、还会立刻触发一次死亡事件，几乎总是配置填错（Monster.hp 的规则行是 range(1,999999)）
+        //   2) 逐个字段赋值；name 与 skillIds 的 null 在这里归一，之后所有读取都不用再判空
+        //   3) 当前血置为最大血 —— 出生即满血
+        // 上游：FromMonster / FromHero（只有 BattleWorld 会经它们调）
+        // 下游：无
+        // 注意：maxHp < 1 抛 ArgumentOutOfRangeException，不静默抬到 1 —— 那样只是把配置错误藏起来。
         internal BattleAgent(int instanceId, int configId, EBattleAgentKind kind, string name,
                             int maxHp, int attack, int[] skillIds)
         {
@@ -100,66 +88,71 @@ namespace NBC.Game.Battle
             m_hp = maxHp;
         }
 
-        /// <summary>实例编号（世界内唯一）。</summary>
+        // 功能：读世界内唯一的实例编号。
         public int InstanceId
         {
             get { return m_instanceId; }
         }
 
-        /// <summary>配置编号。</summary>
+        // 功能：读配置表主键：怪物为 Monster 的主键，英雄为 Hero 的主键。
         public int ConfigId
         {
             get { return m_configId; }
         }
 
-        /// <summary>种类。</summary>
+        // 功能：读单位种类（玩家英雄或怪物）。
         public EBattleAgentKind Kind
         {
             get { return m_kind; }
         }
 
-        /// <summary>显示名。</summary>
+        // 功能：读显示名（构造时已把 null 归一成空串）。
         public string Name
         {
             get { return m_name; }
         }
 
-        /// <summary>最大生命值。</summary>
+        // 功能：读最大生命值（点）。
         public int MaxHp
         {
             get { return m_maxHp; }
         }
 
-        /// <summary>当前生命值。</summary>
+        // 功能：读当前生命值（点，范围 0..m_maxHp）。
         public int Hp
         {
             get { return m_hp; }
         }
 
-        /// <summary>攻击力（英雄为 0）。</summary>
+        // 功能：读攻击力（点，英雄恒为 0）。
         public int Attack
         {
             get { return m_attack; }
         }
 
-        /// <summary>还活着吗（HP &gt; 0）。</summary>
+        // 功能：判断还活着吗（当前血 > 0）。
         public bool IsAlive
         {
             get { return m_hp > 0; }
         }
 
-        /// <summary>技能列表（只读视图；空数组表示没有技能）。</summary>
+        /// <summary>技能编号列表，空数组表示没有技能。</summary>
+        // 功能：把内部技能编号数组原样交出去（不是副本，调用方别改）。
         public int[] SkillIds
         {
             get { return m_skillIds; }
         }
 
-        /// <summary>
-        /// 挨一下伤害：内部走共享层的 <see cref="DamageMath"/> 结算并改自己的血。
-        /// <para>⚠️ **不广播事件**（那是 `BattleWorld` 的事），但**会**拒绝非法输入。</para>
-        /// </summary>
-        /// <param name="damage">伤害值（≥ 0）。</param>
-        /// <returns>结算结果。</returns>
+        // 功能：按共享层 DamageMath 结算一次伤害，并把结果写回自己的血。
+        // 入参：damage 伤害值（点，必须 ≥ 0；负数由 DamageMath 抛异常，不在这里圆）
+        // 返回：结算结果：Applied 实际扣血、RemainingHp 剩余血、Overkill 过量伤害、IsLethal 这一下是否致死
+        // 步骤：
+        //   1) 交给 DamageMath.Resolve 算，伤害规则只写在那一边，这里不重复实现
+        //   2) 把 RemainingHp 写回 m_hp，本类只负责持有血量
+        // 上游：BattleWorld.ApplyDamage（CastSkill 也经它）
+        // 下游：DamageMath.Resolve
+        // 注意：这里不广播事件 —— 谁死了要告诉谁是 BattleWorld 的事，单位才能脱离事件中心单独测。
+        // 注意：打已经 0 血的目标不扣血、也不算致死，这条由 DamageMath 保证，这里不用再判一次。
         public DamageOutcome ApplyDamage(int damage)
         {
             DamageOutcome outcome = DamageMath.Resolve(m_hp, damage);
@@ -167,10 +160,15 @@ namespace NBC.Game.Battle
             return outcome;
         }
 
-        /// <summary>从配置表的一行怪物造一个单位（**只有 `BattleWorld` 会调**）。</summary>
-        /// <param name="instanceId">实例编号。</param>
-        /// <param name="row">怪物表的行。</param>
-        /// <returns>战斗单位。</returns>
+        // 功能：用怪物表的一行造一个怪物单位。
+        // 入参：instanceId 世界内唯一编号；row 怪物表的行（null 抛 ArgumentNullException）
+        // 返回：新单位，还没进世界（登记由 BattleWorld 做）
+        // 步骤：
+        //   1) 先判 row 为 null：配置错误尽早炸，别等到读字段时才空引用
+        //   2) 把 row.id / row.name / row.hp / row.attack / row.skillIds 原样交给构造函数
+        // 上游：BattleWorld.SpawnMonster
+        // 下游：构造函数
+        // 注意：skillIds 由生成物保证不是 null，这里不补默认值；hp 与 attack 的单位都是点。
         internal static BattleAgent FromMonster(int instanceId, Config_Monster row)
         {
             if (row == null)
@@ -178,15 +176,19 @@ namespace NBC.Game.Battle
                 throw new ArgumentNullException(nameof(row), "[BattleAgent] 怪物配置行是 null。");
             }
 
-            // 怪物表没有攻击外的技能之外的属性；skillIds 由生成物保证不是 null
             return new BattleAgent(instanceId, row.id, EBattleAgentKind.Monster,
                                    row.name, row.hp, row.attack, row.skillIds);
         }
 
-        /// <summary>从配置表的一行英雄造一个单位（**只有 `BattleWorld` 会调**）。</summary>
-        /// <param name="instanceId">实例编号。</param>
-        /// <param name="row">英雄表的行。</param>
-        /// <returns>战斗单位。</returns>
+        // 功能：用英雄表的一行造一个英雄单位。
+        // 入参：instanceId 世界内唯一编号；row 英雄表的行（null 抛 ArgumentNullException）
+        // 返回：新单位，还没进世界（登记由 BattleWorld 做）
+        // 步骤：
+        //   1) 先判 row 为 null：配置错误尽早炸，别等到读字段时才空引用
+        //   2) 攻击力固定传 0 —— 英雄的伤害来自技能，Hero 表里根本没有 attack 列
+        // 上游：BattleWorld.SpawnHero
+        // 下游：构造函数
+        // 注意：传 0 不是 bug；哪天做普攻，是给 Hero 表加列再在这里接上，别把 0 当成 bug 修掉。
         internal static BattleAgent FromHero(int instanceId, Config_Hero row)
         {
             if (row == null)
@@ -194,13 +196,21 @@ namespace NBC.Game.Battle
                 throw new ArgumentNullException(nameof(row), "[BattleAgent] 英雄配置行是 null。");
             }
 
-            // ⚠️ 攻击力传 0：英雄的伤害来自技能，`Hero` 表里根本没有 attack 列（见文件头）
             return new BattleAgent(instanceId, row.id, EBattleAgentKind.Hero,
                                    row.name, row.hp, 0, row.skillIds);
         }
 
-        /// <summary>转成一句人话。</summary>
-        /// <returns>例如「野狼#3（怪物 6001） 220/300」。</returns>
+        /// <summary>拼成一句人话，给日志与 Boot 的演示界面直接显示。</summary>
+        /// <returns>形如「野狼#3（怪物 6001） 220/300」的字符串。</returns>
+        // 功能：把名字、实例编号、种类、配置编号与当前血量拼成一句可读文案。
+        // 入参：无
+        // 返回：形如「野狼#3（怪物 6001） 220/300」；括号里是种类与配置编号，末尾是当前血/最大血
+        // 步骤：
+        //   1) 名字与实例编号用井号相连，日志里好认是哪一个
+        //   2) 括号里写种类与配置编号，同一配置刷出来的多只也能对上
+        //   3) 末尾写当前血/最大血，单位是点
+        // 上游：日志与 Boot 的演示界面
+        // 下游：无
         public override string ToString()
         {
             return m_name + "#" + m_instanceId + "（" +
