@@ -276,3 +276,11 @@ Client/Assets/_Project/Art/Characters/*
 # ============================================================================
 Client/Assets/UnityChan/
 Client/Assets/UnityChan.meta
+
+# ============================================================================
+#  CombatGirlsCharacterPack（2026-10-30 出现在 Assets/Art/Model/，约 389 MB）
+#  第三方角色包，**包内没有任何 license/readme** ⇒ 授权不明，不进公开仓库。
+#  用途仅限本地试验；要正式用必须先确认授权（做法同 Unity-chan：README 写清来源与放置路径）。
+# ============================================================================
+Client/Assets/Art/Model/
+Client/Assets/Art/Model.meta

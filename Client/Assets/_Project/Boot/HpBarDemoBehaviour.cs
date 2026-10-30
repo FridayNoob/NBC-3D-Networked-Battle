@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading.Tasks;
 using NBC.Framework.Asset;
 using NBC.Framework.UI;
+using NBC.Game.Net;
 using NBC.Game.UI;
 using UnityEngine;
 
@@ -89,6 +90,12 @@ namespace NBC.Boot
                 UILayer.Bot,
                 null,
                 error => Debug.LogError("[HpBarDemo] 打不开网络面板：" + error.Message));
+
+            // R008：资源层与面板都就绪后，才挂运行时网络驱动。
+            //   顺序有意义：它一挂上就会建会话，而会话要用 HUD 的统计（NetRuntimeStats）与资源层。
+            //   ⚠️ 与 Editor 的「网络调试」窗口**不要同时连** —— 会占两个座位。
+            gameObject.AddComponent<RuntimeNetDriver>();
+            Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
 
         // 入参：无（引擎每帧调）
