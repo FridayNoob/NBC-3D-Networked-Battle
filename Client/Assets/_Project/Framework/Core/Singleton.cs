@@ -1,165 +1,70 @@
-// ============================================================================
-//  NBC.Framework · 纯 C# 单例基类
-//  替代：唐老师框架 Base/BaseManager.cs（原 18 行）
-//  缺陷编号：FW-01（可被 new 出第二个实例）+ FW-M01（线程 / 场景重载 / 编辑器退出安全）
-//  完整记录：Docs/06-框架改造记录.md §三 FW-01
-//
-//  ---------------------------------------------------------------------------
-//  一、原版错在哪
-//  ---------------------------------------------------------------------------
-//      public class BaseManager<T> where T : new()
-//      {
-//          private static T instance;
-//          public static T GetInstance()
-//          {
-//              if (instance == null) instance = new T();
-//              return instance;
-//          }
-//      }
-//
-//  任何人写 new EventCenter() 都能得到一个"和单例不是同一个"的对象。
-//  两份状态各改各的，不报错、不警告 —— 排查起来毫无线索。
-//
-//  ---------------------------------------------------------------------------
-//  二、为什么不能简单地"给子类加 private 构造"
-//  ---------------------------------------------------------------------------
-//  这是本条最关键、也最容易踩的一点：
-//      where T : new()  这个约束，反过来【要求 T 具有 public 无参构造】。
-//  也就是说 C# 里"禁止外部 new"（private 构造）与"用 new T() 创建"（要求 public 构造）
-//  【互相排斥】。想同时做到，只剩一条路：
-//      Activator.CreateInstance(typeof(T), nonPublic: true)
-//  而那是【反射】。
-//
-//  本项目已经用实测付过反射的学费：M0 的 D17 实验里，protobuf-net 就是因为
-//  在 IL2CPP 上依赖运行时反射建模而不可用（见 Docs/01 §5.4.6 与 Docs/12）。
-//  所以这里不用反射。
-//
-//  ---------------------------------------------------------------------------
-//  三、破解办法：一个 [ThreadStatic] 的"内部创建中"标记
-//  ---------------------------------------------------------------------------
-//  既然不能靠构造可见性，就让【构造函数自己判断"这次 new 是谁发起的"】：
-//
-//      [ThreadStatic] private static bool t_creatingInsideSingleton;
-//
-//  只有 Instance 内部在 new 之前把标记置 true，构造完成后复位。
-//  于是：
-//      · 外部任何 new（包括"在此之前谁都没访问过"的第一次）-> 标记为 false -> 抛异常
-//      · 单例自己在创建 -> 标记为 true -> 正常构造
-//
-//  为什么是 [ThreadStatic] 而不是普通静态 bool：
-//      普通静态字段是全线程共享的。若 A 线程正在创建（标记为 true），
-//      B 线程此刻 new 一下就会被"误放行"。ThreadStatic 让这个标记成为
-//      "本线程正在创建"的局部事实，语义精确，也不会互相干扰。
-//
-//  这条改动本身也是一个面试点：
-//      "编译期禁止 new"需要反射，"不反射"就只能把保证从编译期挪到运行期，
-//      而挪到运行期之后，就要把断言做得【没有漏洞、且错误信息指向调用点】。
-//
-//  早先一版实现用的是 s_created 标志（"已经创建过一次就不许再 new"），
-//  它有漏洞：如果第一次访问就是外部 new，那次 new 会被放行，随后 Instance
-//  仍然会创建自己的那一个 —— 于是又出现两个实例，而且是静默的。
-//  现在的写法把第一次 new 也堵住了。
-//
-//  ---------------------------------------------------------------------------
-//  四、改造后的保证（四条）
-//  ---------------------------------------------------------------------------
-//  ① 线程安全：无锁快路径 + 加锁慢路径 + 二次检查，s_instance 用 volatile
-//     （双重检查锁在锁外读字段，不加 volatile 可能读到"非 null 但未构造完"的对象）。
-//  ② 外部 new 一律失败，错误消息点名"请改用 Xxx.Instance"，在调用点暴露。
-//  ③ 发布时机正确：OnInit() 执行完毕之后才把实例写进 s_instance，
-//     别的线程不会拿到一个"初始化了一半"的单例。
-//     代价是需要一个 s_pending 兼顾"OnInit 里重入访问 Instance"的情况。
-//  ④ 场景重载安全：关闭 Domain Reload 后静态字段会跨 Play 会话存活，
-//     统一由 SingletonRegistry 在 SubsystemRegistration 阶段重置。
-//
-//  ---------------------------------------------------------------------------
-//  五、怎么用
-//  ---------------------------------------------------------------------------
-//      public sealed class EventCenter : Singleton<EventCenter>
-//      {
-//          protected override void OnInit()
-//          {
-//              // 单例第一次被创建时执行；不要写构造函数
-//          }
-//      }
-//
-//      EventCenter.Instance.Trigger(...);   // 或者沿用老写法 EventCenter.GetInstance()
-//
-//  约定：子类一律写 sealed。单例本来就不该被继承 —— 继承会多出一份"新的静态字段"，
-//        因为 C# 的泛型静态字段是"每个封闭类型一份"（Singleton<A> 和 Singleton<B> 各存各的）。
-// ============================================================================
+// 这个文件里有：
+//   Singleton<T>（抽象类）：纯 C# 单例基类，保证每个子类全进程唯一、外部 new 立即失败，并在发布前跑完 OnInit
 
 using System;
 
 namespace NBC.Framework
 {
+    // 主要功能：用 CRTP 写法的纯 C# 泛型单例基类，保证每个子类全进程只有一个实例，外部 new 当场抛异常。
+    // 主要数据成员：s_instance（已发布的实例）、s_pending（OnInit 期间暂存的实例）、s_lock（创建 / 释放锁）、t_creatingInsideSingleton（本线程内部创建标记）。
+    // 主要外部方法：Instance（取单例，不存在则创建）、GetInstance（旧写法转发）、HasInstance、DisposeInstance。
+    // 谁在用它：Framework 的 EventCenter / UIManager / SceneLoader / LogSystem / InputManager / AssetManager / AudioManager 与 Game 的 ConfigMgr 继承它；Game / Boot / Editor 与测试经它取单例。
+    // 注意：子类一律写 sealed —— 泛型静态字段是每个封闭类型一份，被继承会多出一份状态；为什么不用反射见 Docs\06-框架改造记录.md 的「单例三件套」一节。
     /// <summary>
-    /// 纯 C# 单例基类（CRTP 写法：T 是自己的子类）。
-    /// 适用于管理器这类"不需要挂在 GameObject 上"的对象。
+    /// 纯 C# 单例基类（T 是自己的子类），适用于不需要挂在 GameObject 上的管理器。
     /// 需要 MonoBehaviour 生命周期的请用 <see cref="SingletonMono{T}"/> 或 <see cref="SingletonAutoMono{T}"/>。
     /// </summary>
-    /// <typeparam name="T">具体单例类型，必须继承本类并提供无参构造。</typeparam>
+    /// <typeparam name="T">具体单例类型，必须继承本类并提供 public 无参构造。</typeparam>
     public abstract class Singleton<T> where T : Singleton<T>, new()
     {
-        /// <summary>
-        /// 单例实例。null 表示尚未创建，或已被重置 / 释放。
-        /// <para>
-        /// 为什么必须 volatile：这是"双重检查锁"（DCLP）。快路径在【锁外】读取本字段，
-        /// 若不加 volatile，编译器 / CPU 可以把"写字段"重排到"构造完成"之前，
-        /// 于是另一个线程可能看到一个【非 null 但尚未构造完】的对象。
-        /// 加锁只约束锁内外的可见性，管不到锁外那次无锁读，所以这里必须 volatile。
-        /// </para>
-        /// </summary>
+        // 已发布的单例实例；取值是 null 或已构造完成的 T。
         private static volatile T s_instance;
 
-        /// <summary>
-        /// 正在初始化、尚未发布的实例。
-        /// 只为一件事存在：OnInit() 里若再次访问 Instance，应当拿到"正在初始化的自己"，
-        /// 而不是触发第二次创建（也避免死等自己持有的锁）。
-        /// </summary>
+        // OnInit 执行期间暂存的新实例；非 null 表示本线程正在初始化，重入 Instance 时直接返回它。
         private static volatile T s_pending;
 
-        /// <summary>创建单例时用的锁。</summary>
+        // 创建 / 释放单例时抢的锁，只保护慢路径，快路径无锁。
         private static readonly object s_lock = new object();
 
-        /// <summary>
-        /// "本线程正在由 Singleton 内部创建实例"的标记。
-        /// 构造函数用它区分"合法的内部创建"与"外部误写的 new"。
-        /// [ThreadStatic]：不能有初始值，默认即 false，正好符合需要。
-        /// </summary>
+        // 本线程是否正在由 Singleton 内部创建实例；[ThreadStatic] 让它只属于当前线程，取值 true / false，默认 false 正好拦住外部 new。
         [ThreadStatic]
         private static bool t_creatingInsideSingleton;
 
-        /// <summary>
-        /// 获取单例实例（不存在则创建）。
-        /// </summary>
+        /// <summary>获取单例实例；不存在则创建，创建完成之后才对外发布。</summary>
         public static T Instance
         {
             get
             {
-                // 快路径：已发布就直接返回，不抢锁。绝大多数调用走这里，必须便宜。
+                // 功能：取单例；没建过就现在建，建好且 OnInit 跑完之后才对外发布。
+                // 入参：无
+                // 返回：唯一的 T 实例；首次访问会触发创建，DisposeInstance 之后再访问会重新创建。
+                // 步骤：
+                //   1) 先无锁读 s_instance，已发布就直接返回（绝大多数调用走这里，必须便宜）
+                //   2) 没读到才加锁，锁内二次检查：等锁期间可能已被别的线程发布
+                //   3) s_pending 非空说明本线程正在跑 OnInit，直接返回它，避免递归创建或死等自己持有的锁
+                //   4) 置本线程「内部创建中」标记再 new T()，让构造函数放行，finally 里无论成败都复位
+                //   5) 先挂 s_pending 再跑 OnInit，最后才写 s_instance：别的线程与 OnInit 里的重入都拿不到半成品
+                // 上游：所有子类的调用方（Game / Boot / Editor），GetInstance 也转发到这里
+                // 下游：子类构造函数、OnInit、SingletonRegistry.Register
+                // 注意：s_instance 必须 volatile —— 第 1 步在锁外读它，不加可能读到「非 null 但尚未构造完」的对象。
                 T published = s_instance;
                 if (published != null)
                 {
                     return published;
                 }
 
-                // 慢路径：只有"第一次"或"被重置之后"才会走到这里。
                 lock (s_lock)
                 {
-                    // 二次检查：等锁期间别人可能已经发布好了。
                     if (s_instance != null)
                     {
                         return s_instance;
                     }
 
-                    // 重入：本线程正在跑 OnInit，直接返回那个实例。
                     if (s_pending != null)
                     {
                         return s_pending;
                     }
 
-                    // 创建：先置"内部创建中"，让构造函数放行；无论成败都要复位标记。
                     T created;
                     t_creatingInsideSingleton = true;
                     try
@@ -171,37 +76,44 @@ namespace NBC.Framework
                         t_creatingInsideSingleton = false;
                     }
 
-                    // 先挂到 pending 再跑 OnInit：这样 OnInit 里访问 Instance 不会递归创建。
                     s_pending = created;
                     created.OnInit();
                     s_pending = null;
 
-                    // OnInit 完成之后才发布：别的线程不会拿到半成品。
                     s_instance = created;
                     return created;
                 }
             }
         }
 
-        /// <summary>
-        /// 获取单例实例。保留这个名字是为了兼容唐老师框架的调用习惯。
-        /// </summary>
-        /// <returns>单例实例。</returns>
+        /// <summary>获取单例实例，等价于 <see cref="Instance"/>；保留旧框架的调用写法。</summary>
         public static T GetInstance()
         {
+            // 功能：一行转发到 Instance。
             return Instance;
         }
 
-        /// <summary>是否已经存在实例（不触发创建）。调试面板与测试用。</summary>
+        /// <summary>是否已有已发布的实例；只查询，不触发创建。调试面板与测试用。</summary>
         public static bool HasInstance
         {
+            // 功能：读 s_instance 判断是否已发布，不会创建实例。
+            // 入参：无
+            // 返回：true 表示已有已发布实例；false 表示尚未创建或已被释放。
+            // 步骤：直接比较字段，不加锁，只读一次 volatile 字段拿到瞬时值即可。
+            // 上游：调试面板、测试与业务里的防御性判断
+            // 下游：无
             get { return s_instance != null; }
         }
 
-        /// <summary>
-        /// 受保护构造：子类可以声明自己的私有构造，
-        /// 但只有 Singleton.Instance 发起的创建会被放行，其它 new 一律抛异常。
-        /// </summary>
+        // 功能：拦住外部 new，保证单例唯一；同时向 SingletonRegistry 登记跨 Play 会话的重置动作。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 检查本线程的 t_creatingInsideSingleton：不是 Instance 发起的创建就抛异常，消息直接点名「改用 Xxx.Instance」
+        //   2) 合法创建才登记 ResetStaticState，供关闭 Domain Reload 时在 SubsystemRegistration 阶段清空静态状态
+        // 上游：只有 Singleton<T>.Instance 内部的 new T() 会进入
+        // 下游：SingletonRegistry.Register(ResetStaticState)
+        // 注意：不能靠 private 构造禁 new —— where T : new() 反过来要求 public 无参构造，不想用反射就只能运行期拦。
         protected Singleton()
         {
             if (!t_creatingInsideSingleton)
@@ -211,30 +123,41 @@ namespace NBC.Framework
                     typeof(T).Name + ".Instance 或 " + typeof(T).Name + ".GetInstance()。");
             }
 
-            // 登记重置动作：关闭 Domain Reload 时，进入 Play 模式前需要把静态状态清干净。
             SingletonRegistry.Register(ResetStaticState);
         }
 
-        /// <summary>
-        /// 单例第一次被创建时调用。子类的初始化逻辑写在这里，不要写构造函数。
-        /// </summary>
+        // 功能：初始化钩子，单例第一次创建时、发布之前调用一次。
+        // 入参：无
+        // 返回：无
+        // 步骤：空实现，留给子类覆写；初始化写在这里而不是构造函数，创建窗口由基类控制。
+        // 上游：Instance 在 new T() 之后、写 s_instance 之前调用
+        // 下游：子类覆写
         protected virtual void OnInit()
         {
         }
 
-        /// <summary>
-        /// 释放单例时调用。子类在这里注销监听、关闭连接。
-        /// </summary>
+        // 功能：释放钩子，交给子类注销监听、关闭连接。
+        // 入参：无
+        // 返回：无
+        // 步骤：空实现，留给子类覆写。
+        // 上游：DisposeInstance 清空 s_instance 之后调用
+        // 下游：子类覆写
         protected virtual void OnDispose()
         {
         }
 
-        /// <summary>
-        /// 主动释放单例（编辑器退出、测试收尾、确定不再需要时）。
-        /// 释放后再次访问 <see cref="Instance"/> 会创建一个新的实例。
-        /// </summary>
+        /// <summary>主动释放单例：清空实例并调用 OnDispose；之后再访问 Instance 会重新创建。</summary>
         public static void DisposeInstance()
         {
+            // 功能：释放已发布的单例，让子类收尾（编辑器退出、测试收尾、确定不再需要时）。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 加锁后先取 s_instance，为空就直接返回，没有可释放的对象
+            //   2) 先把 s_instance 置空再回调 OnDispose：期间访问 Instance 会新建实例，而不是拿到正在释放的旧对象
+            // 上游：编辑器退出、EditMode 测试收尾
+            // 下游：子类 OnDispose
+            // 注意：OnDispose 在锁内执行，回调里不要长时间阻塞，也不要依赖旧实例还留在字段里。
             lock (s_lock)
             {
                 T disposing = s_instance;
@@ -243,18 +166,18 @@ namespace NBC.Framework
                     return;
                 }
 
-                // 先清字段再回调：避免 OnDispose 里访问 Instance 又触发一次创建。
                 s_instance = null;
                 disposing.OnDispose();
             }
         }
 
-        /// <summary>
-        /// 把静态状态清空。由 SingletonRegistry 在进入 Play 模式时统一调用，
-        /// 也用于 EditMode 测试之间隔离状态。
-        /// 注意：这里【故意不调用 OnDispose】。SubsystemRegistration 阶段跑用户代码风险大，
-        /// 而此刻本来也没有"活着的业务状态"需要收尾。
-        /// </summary>
+        // 功能：清空本封闭类型的静态状态，供进入 Play 模式前统一重置，也用于 EditMode 测试之间隔离状态。
+        // 入参：无
+        // 返回：无
+        // 步骤：只置空 s_instance 与 s_pending，故意不调用 OnDispose。
+        // 上游：SingletonRegistry 在 SubsystemRegistration 阶段统一调用（EditMode 测试需手动 ResetAll）
+        // 下游：无
+        // 注意：关闭 Domain Reload 后静态字段会跨 Play 会话存活，不重置就会把上一场的实例带进下一场；而 SubsystemRegistration 阶段跑用户代码风险大，所以这里只清字段、不做收尾。
         private static void ResetStaticState()
         {
             s_instance = null;

@@ -1,25 +1,5 @@
-// ============================================================================
-//  NBC.Framework · 单例注册表（非泛型，Unity 生命周期回调的落点）
-//  来源：唐老师框架 Base/BaseManager.cs 的替代品之一（见 Docs/06-框架改造记录.md FW-01 / FW-M01）
-//
-//  为什么需要这个类？
-//    单例的状态保存在【泛型类的静态字段】里，例如 Singleton<T> 的 s_instance。
-//    C# 的泛型是"每个封闭类型一份静态字段"（Singleton<A> 与 Singleton<B> 各有各的），
-//    这本身是我们想要的。但它带来两个麻烦：
-//
-//    麻烦 1：Unity 的 [RuntimeInitializeOnLoadMethod] 扫描【不会为开放泛型类型实例化】。
-//            把该特性写在 Singleton<T> 里，存在"Unity 根本不调用"的风险，而且
-//            失败是【静默的】—— 这正是本项目最想避免的一类缺陷（见 Docs/06 §五）。
-//            所以把回调放在这个【非泛型】类里，各单例把自己的"重置动作"注册进来。
-//
-//    麻烦 2：编辑器关闭 Domain Reload（Enter Play Mode Options）后，静态字段
-//            会跨 Play 会话存活，上一次战斗的数据会带进下一次运行。
-//            标准解法就是在 SubsystemRegistration 阶段把静态状态清干净。
-//
-//  设计取舍：注册的是 Action（重置委托），不是反射调用。
-//            本项目在 IL2CPP 路径上已实测过反射的代价（D17 / protobuf-net），
-//            能用委托解决的地方不用反射。
-// ============================================================================
+// 这个文件里有：
+//   SingletonRegistry（类）：单例静态状态的集中管理点，登记重置与退出动作，并在进入 Play 模式时统一清空
 
 using System;
 using System.Collections.Generic;
@@ -27,42 +7,38 @@ using UnityEngine;
 
 namespace NBC.Framework
 {
-    /// <summary>
-    /// 单例静态状态的集中管理点。
-    /// 只做三件事：登记重置动作、统一重置、统一挂接 Application.quitting。
-    /// 它是 internal 的：业务层不需要知道它的存在。
-    /// </summary>
+    // 主要功能：集中管理各单例的静态状态，登记重置与退出通知动作，并在固定时机统一触发。
+    // 主要数据成员：s_resetters（重置动作表）、s_quitHandlers（退出通知表）、s_lock（保护两张表的锁）、s_quitHooked（退出是否已挂接）。
+    // 主要外部方法：Register / RegisterQuitHandler / ResetAll（internal，仅框架与测试可见）。
+    // 谁在用它：Singleton<T> 构造时登记重置；SingletonMono<T> / SingletonAutoMono<T> 在 Awake 里登记重置与退出；测试用 ResetAll 隔离用例。
     internal static class SingletonRegistry
     {
-        /// <summary>已登记的重置动作（去重，避免重复登记同一方法）。</summary>
+        // 已登记的重置动作表；元素为 Action，按登记顺序执行，去重后同一方法只保留一份
         private static readonly List<Action> s_resetters = new List<Action>();
 
-        /// <summary>已登记的退出通知动作。</summary>
+        // 已登记的退出通知动作表；元素为 Action，按登记顺序执行，去重后同一方法只保留一份
         private static readonly List<Action> s_quitHandlers = new List<Action>();
 
-        /// <summary>
-        /// 保护两张表的锁。
-        /// 为什么需要：不同单例类型有各自的锁，所以"两个类型在不同线程上同时构造"
-        /// 会并发走到这里。List 不是线程安全容器，必须自己加锁。
-        /// </summary>
+        // 保护两张表的锁对象；不同泛型类型的单例各持有自己的锁，两个类型在不同线程同时构造会并发到这里，而 List 不是线程安全容器
         private static readonly object s_lock = new object();
 
-        /// <summary>是否已经挂接过 Application.quitting，避免重复订阅。</summary>
+        // 是否已经挂接 Application.quitting；取值为 false / true，关闭 Domain Reload 时靠它保证只订阅一次
         private static bool s_quitHooked;
 
-        /// <summary>
-        /// 静态构造函数：第一次访问本类时执行一次。
-        /// 在这里挂接退出通知，保证"只有真的用了单例才付这份开销"。
-        /// </summary>
+        // 功能：第一次访问本类时挂接退出通知，让没用到单例的程序不付这份开销。
         static SingletonRegistry()
         {
             HookQuitting();
         }
 
-        /// <summary>
-        /// 登记一个"把某单例的静态状态清干净"的动作。
-        /// </summary>
-        /// <param name="reset">重置动作，通常是一个访问该泛型类型静态字段的静态方法。</param>
+        // 功能：登记一个把某单例的静态状态清干净的重置动作，供进入 Play 模式与测试统一调用。
+        // 入参：reset 重置动作，通常是访问该泛型类型静态字段的静态方法；为 null 时直接忽略。
+        // 返回：无
+        // 步骤：
+        //   1) 先挡掉 null，避免之后执行空委托
+        //   2) 在 s_lock 内判断是否已登记，未登记才加入，避免同一方法重复执行
+        // 上游：Singleton<T> 的受保护构造
+        // 下游：ResetAll 遍历执行
         internal static void Register(Action reset)
         {
             if (reset == null)
@@ -79,10 +55,14 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 登记一个"应用即将退出"时要执行的动作。
-        /// </summary>
-        /// <param name="handler">退出通知动作。</param>
+        // 功能：登记一个应用即将退出时要执行的动作，由退出通知统一触发。
+        // 入参：handler 退出通知动作；为 null 时直接忽略。
+        // 返回：无
+        // 步骤：
+        //   1) 先挡掉 null，避免之后执行空委托
+        //   2) 在 s_lock 内去重后加入，避免同一方法重复执行
+        // 上游：SingletonMono<T> / SingletonAutoMono<T> 的 Awake
+        // 下游：NotifyQuitting
         internal static void RegisterQuitHandler(Action handler)
         {
             if (handler == null)
@@ -99,23 +79,26 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 清空所有单例的静态状态。
-        /// 由 Unity 在进入 Play 模式的最早阶段（SubsystemRegistration）自动调用一次。
-        /// </summary>
+        // 功能：Unity 进入 Play 模式的最早阶段（SubsystemRegistration）转调 ResetAll，清掉上一轮会话残留的静态状态。
+        // 注意：这个回调必须留在非泛型类上——Unity 的 RuntimeInitializeOnLoadMethod 扫描不会为开放泛型类型实例化，写在 Singleton<T> 里可能根本不执行，而且失败是静默的。
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetAllOnEnterPlayMode()
         {
             ResetAll();
         }
 
-        /// <summary>
-        /// 重置全部单例状态。测试里可以直接调用（Unity 的自动调用在 EditMode 测试中不会发生）。
-        /// </summary>
+        // 功能：重置全部单例状态，让下一次访问重新创建实例。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 在 s_lock 内把重置表拷成数组，先拿到快照
+        //   2) 解锁后逐个执行；单个失败只记日志，不拦断其它单例
+        // 上游：ResetAllOnEnterPlayMode 自动调用；EditMode 与 PlayMode 测试直接调用（EditMode 下 Unity 不会自动触发）
+        // 下游：各单例登记的重置委托
+        // 注意：必须先快照再执行——重置动作可能访问其它单例并触发新的登记，直接遍历活列表会撞上「遍历中修改集合」。
+        // 注意：关闭 Domain Reload 后静态字段会跨 Play 会话存活，不清就会把上一场战斗的数据带进下一次运行。
         internal static void ResetAll()
         {
-            // 先快照再执行：重置动作本身可能访问其它单例（进而触发登记），
-            // 直接遍历活列表会撞上"遍历中修改集合"。
             Action[] snapshot;
             lock (s_lock)
             {
@@ -130,15 +113,20 @@ namespace NBC.Framework
                 }
                 catch (Exception e)
                 {
-                    // 重置失败不能拦断其它单例，但必须留下痕迹（不静默）
                     Debug.LogException(e);
                 }
             }
         }
 
-        /// <summary>
-        /// 通知所有单例"应用要退出了"。
-        /// </summary>
+        // 功能：应用退出时遍历退出通知表，让每个已登记的单例自行清理。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 在 s_lock 内把退出通知表拷成数组
+        //   2) 解锁后逐个执行；单个失败只记日志，不拦断其它
+        // 上游：Application.quitting 事件（由 HookQuitting 挂接）
+        // 下游：各单例登记的退出委托
+        // 注意：退出播放时对象销毁顺序不受控，处理器里不要假设别的单例或场景对象还活着。
         private static void NotifyQuitting()
         {
             Action[] snapshot;
@@ -160,10 +148,15 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 挂接 Application.quitting（幂等）。
-        /// 说明：静态字段在 Domain Reload 关闭时会存活，所以这里用 s_quitHooked 保证只订阅一次。
-        /// </summary>
+        // 功能：挂接 Application.quitting，保证整个会话只订阅一次。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 已挂接就直接返回
+        //   2) 先把 s_quitHooked 置 true 再订阅，避免重入时重复挂接
+        // 上游：SingletonRegistry 的静态构造
+        // 下游：Application.quitting → NotifyQuitting
+        // 注意：关闭 Domain Reload 时静态字段跨 Play 会话存活，s_quitHooked 就是为幂等而留的。
         private static void HookQuitting()
         {
             if (s_quitHooked)
