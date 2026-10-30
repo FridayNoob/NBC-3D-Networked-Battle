@@ -1,82 +1,59 @@
-// ============================================================================
-//  SimulatedTransport —— 网络模拟器（`ITransport` 外面包一层，可注入延迟/抖动/丢包）
-//  项目：3D联网战斗Demo   对应：需求 NET-07、Docs\25 §四 S8
+// 这个文件里有：
+//   NetSimProfile（结构体）：网络模拟档位，固定延迟 / 抖动（毫秒）与丢包概率（万分比）
+//   SimulatedTransport（类）：包住任意 ITransport，按档位延迟或丢弃上下行消息，对外仍是 ITransport
+//   InFlight（结构体）：一个还在路上的包，记载荷、送达时刻与本次延迟
 //
-//  ---------------------------------------------------------------------------
-//  一、它是什么（一句话）
-//  ---------------------------------------------------------------------------
-//      **它也是一个 `ITransport`** —— 所以能插在**任何**实现外面：
-//          真实：  NetSession → SimulatedTransport → TcpTransport → 网线
-//          测试：  NetSession → SimulatedTransport → FakeTransport（纯内存）
-//      上层一行都不用改（这就是当初留 `ITransport` 接缝的回报之一）。
-//
-//  ⚠️ 它是**故意的坏网络**：好网络测不出同步策略的问题。面试里问"你怎么验证抗抖动"，
-//     答案就是"我能把延迟/抖动/丢包调出来，然后证明它仍然对得上"。
-//
-//  ---------------------------------------------------------------------------
-//  二、为什么它多了一个 `Advance(deltaMs)`（`ITransport` 里没有时间）
-//  ---------------------------------------------------------------------------
-//  延迟必须有**时间轴**，而 `ITransport.Pump()` 是"没有时间的推一帧"（那样两端同源、可复现）。
-//  所以这里**不污染接缝**，而是在实现上多加一个入口：
-//
-//      sim.Advance(deltaMs);   // ① 推进模拟器的时钟（延迟到期、丢包结算）
-//      session.Pump(deltaMs);  // ② 会话推进：内部会调 sim.Pump()
-//
-//  ⚠️ 顺序不能反：先推进时钟再 Pump，否则"这一帧该到的包"要等下一帧。
-//
-//  ---------------------------------------------------------------------------
-//  三、丢包在 M3 的真实含义（⚠️ 这条必须说清，否则会误用）
-//  ---------------------------------------------------------------------------
-//  M3 走的是 **TCP**：可靠性（重传）是 TCP 自己保证的，**应用层丢一条就是真丢了**。
-//  所以：
-//      · **延迟 / 抖动**：TCP 完全容忍 → 可以直接用来验"抗抖动"（探针里就这么用）
-//      · **丢包**：在 TCP 上等于"**这条消息永远不到**" → 连握手都会失败（协议不允许缺消息）
-//        ⇒ 它的正确用途是 **M4 的帧同步（UDP 式）** 与"客户端容错"的验证；
-//          M3 的探针只用延迟/抖动，丢包留给 EditMode 用例单独验（证明模拟器真的在丢）
-//
-//  ---------------------------------------------------------------------------
-//  四、随机数：自己写（同一个理由，但**故意各写一份**）
-//  ---------------------------------------------------------------------------
-//  用 xorshift（与 `Server\NBC.Server.Game\BattleRandom.cs` 同一套算法），**不用 `System.Random`**
-//  （它的算法在 .NET 版本之间变过 → 同一个种子给不出同一串数 → 测试会"偶尔红"）。
-//  ⚠️ **为什么这里不共用服务端那一份**：那份是**战斗规则**的一部分（双端要对账），
-//     这份只是"本端什么时候丢一个包"（只影响本端、只要可复现即可）—— 两者会朝不同方向演化，
-//     硬合并反而会让"改模拟器"顺手改到"战斗随机"。**该分的地方分，该合的地方合**（这里是该分）。
-//
-//  ---------------------------------------------------------------------------
-//  五、它不做什么（如实写）
-//  ---------------------------------------------------------------------------
-//  · **不做重传/乱序重组**：TCP 已经保证了；UDP 的那套（序号 + 冗余重传）属 M4
-//  · **不做带宽限制/大包切片**：M3 的包很小（几百字节），切片是 M5 优化的事
-//  · **不模拟"连接断开"**：那由 `Closed` 事件表达，模拟器只延迟与丢弃
-// ============================================================================
+// 注意：用法必须先 Advance(deltaMs) 再 Pump()，顺序反了这一帧该到的包要等下一帧。
+// 注意：当前链路是 TCP，应用层丢一条就是真的永远不到，连握手都会失败；验抗抖动用延迟 / 抖动，丢包留给以后 UDP 式的帧同步与 EditMode 用例（证明模拟器真的在丢）。
+// 注意：随机数用自带的 xorshift，不用 System.Random（算法跨 .NET 版本变过，同一颗种子给不出同一串数，测试会偶发红）。
+// 注意：这份随机数不与服务端的 BattleRandom 合并 —— 那份属战斗规则、双端要对账，这份只决定本端丢不丢包，两者会朝不同方向演化。
+// 注意：不模拟重传 / 乱序重组 / 带宽限制 / 断线，断开只由 Closed 事件表达。
 
 using System;
 using System.Collections.Generic;
 
 namespace NBC.Framework.Net.Sim
 {
-    /// <summary>模拟参数（全部可空手调；单位见名字）。</summary>
+    // 主要功能：描述一条模拟链路有多坏：固定延迟、抖动幅度与丢包概率，充当 SimulatedTransport 的档位参数。
+    // 主要数据成员：LatencyMs（毫秒）、JitterMs（毫秒）、LossPerTenThousand（万分比，0~10000）。
+    // 主要外部方法：Default（默认档）、ToString（人话描述）；三个字段本身公开，调用方直接改。
+    // 谁在用它：SimulatedTransport 读它决定延迟与丢包；EditMode 的 SimulatedTransportTests 构造它来设档。
+    /// <summary>网络模拟档位：固定延迟、抖动幅度与丢包概率，字段公开，直接改即可。</summary>
     public struct NetSimProfile
     {
-        /// <summary>固定延迟（毫秒）。0 = 不延迟。</summary>
+        /// <summary>固定延迟，毫秒；0 表示不延迟。</summary>
         public int LatencyMs;
 
-        /// <summary>抖动幅度（毫秒）：实际延迟 = 固定延迟 + [0, JitterMs]。</summary>
+        /// <summary>抖动幅度，毫秒；实际延迟 = 固定延迟 + [0, JitterMs]，0 表示不抖。</summary>
         public int JitterMs;
 
-        /// <summary>丢包概率（**万分比**：10000 = 全丢，500 = 5%）。见文件头第三节：M3 的 TCP 上丢包=消息永远不到。</summary>
+        /// <summary>丢包概率，万分比，0~10000（500 = 5%，10000 = 全丢）；TCP 上丢了就是这条消息永远不到。</summary>
         public int LossPerTenThousand;
 
-        /// <summary>一个"看起来正常"的默认档（本机联调时用）。</summary>
-        /// <returns>参数。</returns>
+        // 功能：给出一档「看起来正常」的本机联调参数：延迟 100 毫秒、抖动 40 毫秒、不丢包。
+        // 入参：无
+        // 返回：填好的档位；每次都是新值，调用方可以随手改。
+        // 步骤：
+        //   1) 三项写死，不读外部配置 —— 默认档只为本机联调，要别的档位直接设字段
+        // 上游：本机联调、EditMode 的 SimulatedTransportTests
+        // 下游：无
+        /// <summary>默认档：延迟 100 毫秒、抖动 40 毫秒、不丢包，本机联调用。</summary>
+        /// <returns>新建的档位，调用方可以直接改。</returns>
         public static NetSimProfile Default()
         {
             return new NetSimProfile { LatencyMs = 100, JitterMs = 40, LossPerTenThousand = 0 };
         }
 
-        /// <summary>一句人话（界面/日志直接用）。</summary>
-        /// <returns>描述。</returns>
+        // 功能：把档位拼成一句人话；三项全为 0 时说「直连（不模拟）」，否则形如「延迟 100ms±40ms，丢包 5%」。
+        // 入参：无
+        // 返回：给界面与日志直接显示的字符串；丢包按 LossPerTenThousand / 100 换算成百分比，未开启的项不出现。
+        // 步骤：
+        //   1) 三项都 <= 0 就按直连处理，免得显示成「延迟 0ms」
+        //   2) 否则先拼固定延迟，有抖动才追加 ±，有丢包才追加百分比
+        // 上游：SimulatedTransport.Description，以及直接打日志 / 显示档位的地方
+        // 下游：无
+        /// <summary>拼成一句人话，供界面与日志显示。</summary>
+        /// <returns>例如「延迟 100ms±40ms，丢包 5%」；全 0 时为「直连（不模拟）」。</returns>
         public override string ToString()
         {
             if (LatencyMs <= 0 && JitterMs <= 0 && LossPerTenThousand <= 0)
@@ -90,36 +67,47 @@ namespace NBC.Framework.Net.Sim
         }
     }
 
-    /// <summary>
-    /// 网络模拟器：包住任意 `ITransport`，按参数延迟/丢弃消息。
-    /// <para>⚠️ 用法是 **先 `Advance(deltaMs)` 再 `Pump()`**（见文件头第二节）。</para>
-    /// </summary>
+    // 主要功能：包住任意 ITransport，按档位给上下行消息加延迟与抖动、按概率丢弃，对外仍然只是同一条 ITransport。
+    // 主要数据成员：m_inner（被包的实现）、m_sending / m_receiving（上下行延迟队列，按模拟时钟排队）、m_clockMs（模拟时钟，毫秒）、m_random（xorshift 状态）、m_profile（当前档位）。
+    // 主要外部方法：Advance（推进模拟时钟，必须先于 Pump）、Send / Pump / Connect / Close / Dispose，以及 Profile / ClockMs / FramesDropped / FramesDelayed / InFlightCount / MaxDelayMs 等观测成员。
+    // 谁在用它：目前只有 EditMode 的 SimulatedTransportTests（包住 FakeTransport 验延迟与丢包）；上层拿到的是 ITransport，不关心包没包模拟器。
+    // 注意：它是有意做的坏网络 —— 好网络测不出同步策略的问题。
+    /// <summary>网络模拟器：包住任意 ITransport，按档位延迟或丢弃消息，对外仍是一条 ITransport。</summary>
     public sealed class SimulatedTransport : ITransport
     {
-        /// <summary>被包住的那个真实实现。</summary>
+        // 被包住的实现：真实的 TcpTransport，或测试用的 FakeTransport；构造时已判空，之后不再更换
         private readonly ITransport m_inner;
 
-        /// <summary>延迟中的**上行**包（`Send` 出去的，等待送达 inner）。</summary>
+        // 延迟中的上行包：Send 出来、等模拟时钟到点再交给 m_inner
         private readonly List<InFlight> m_sending = new List<InFlight>();
 
-        /// <summary>延迟中的**下行**包（inner 收到的，等待交给上层）。</summary>
+        // 延迟中的下行包：m_inner 收到、等模拟时钟到点再交给上层
         private readonly List<InFlight> m_receiving = new List<InFlight>();
 
-        /// <summary>抖动/丢包用的确定性随机数（见文件头第四节）。</summary>
+        // 抖动与丢包用的 xorshift32 状态；任意 uint 都行，0 会让输出永远是 0（构造里已避开）
         private uint m_random;
 
-        /// <summary>模拟时钟（由 `Advance` 累加）。</summary>
+        // 模拟时钟，毫秒；从 0 起只增不减，只由 Advance 推进
         private long m_clockMs;
 
-        /// <summary>当前参数。</summary>
+        // 当前档位；default 全 0 即直连，改 Profile 立刻生效
         private NetSimProfile m_profile;
 
-        /// <summary>是否已经连上（透传 inner）。</summary>
+        // 是否已经 Dispose 过；true 时 Dispose 直接返回，保证只释放一次
         private bool m_disposed;
 
-        /// <summary>建一个模拟器（默认直连）。</summary>
-        /// <param name="inner">被包住的实现。</param>
-        /// <param name="seed">随机种子（固定值 → 可复现；不同连接用不同种子即可）。</param>
+        // 功能：包住一个真实传输层，接上它的收帧与关闭事件，并把种子换成 xorshift 初值。
+        // 入参：inner 被包的实现，不能为 null；seed 随机种子，默认 20260923，0 换成固定初值 0x12345678（同一种子才能复现同一串丢包）
+        // 返回：无（构造）
+        // 步骤：
+        //   1) 先判空：null 存进去要等每次转发才炸，爆点离现场很远
+        //   2) seed 为 0 时换成非 0 初值，否则 xorshift 会一直输出 0
+        //   3) 订阅 inner 的 FrameReceived / Closed，之后由本类按延迟与丢包重放
+        // 上游：SimulatedTransportTests 的 Make
+        // 下游：m_inner.FrameReceived、m_inner.Closed
+        /// <summary>包住一个传输层，此后收发都先经本类的延迟与丢包模拟。</summary>
+        /// <param name="inner">被包的传输层，不能为 null。</param>
+        /// <param name="seed">随机种子，默认 20260923；固定种子才能复现同一串丢包，0 按固定初值处理。</param>
         public SimulatedTransport(ITransport inner, int seed = 20260923)
         {
             m_inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -129,76 +117,86 @@ namespace NBC.Framework.Net.Sim
             m_inner.Closed += OnInnerClosed;
         }
 
-        /// <summary>当前参数（改它立刻生效）。</summary>
+        /// <summary>当前档位；改它立刻生效，默认全 0 即直连。</summary>
         public NetSimProfile Profile
         {
             get { return m_profile; }
             set { m_profile = value; }
         }
 
-        /// <summary>模拟时钟（毫秒）。</summary>
+        /// <summary>模拟时钟，毫秒；从 0 起只增不减，只由 Advance 推进。</summary>
         public long ClockMs
         {
             get { return m_clockMs; }
         }
 
-        /// <summary>累计丢了多少条（上行 + 下行）。</summary>
+        /// <summary>累计丢弃的帧数，上下行合计；只增不减。</summary>
         public long FramesDropped { get; private set; }
 
-        /// <summary>累计延迟送达了多少条。</summary>
+        /// <summary>累计被延迟送达的帧数，上下行合计；延迟为 0 直接送达的不算。</summary>
         public long FramesDelayed { get; private set; }
 
-        /// <summary>当前还在"路上"的包数（上行 + 下行）。</summary>
+        /// <summary>当前还在路上的帧数，上下行合计。</summary>
         public int InFlightCount
         {
             get { return m_sending.Count + m_receiving.Count; }
         }
 
-        /// <summary>实测到的最大单程延迟（毫秒）。</summary>
+        /// <summary>实测到的最大单次延迟，毫秒；只增不减，改档位也不重置。</summary>
         public int MaxDelayMs { get; private set; }
 
-        /// <summary>透传：inner 的状态。</summary>
+        /// <summary>m_inner 的状态，原样透传。</summary>
         public ETransportState State
         {
             get { return m_inner.State; }
         }
 
-        /// <summary>透传：inner 的统计（模拟器自己的丢包/延迟另有计数）。</summary>
+        /// <summary>m_inner 的收发统计，原样透传；本层自己的丢包与延迟看 FramesDropped / FramesDelayed。</summary>
         public TransportStats Stats
         {
             get { return m_inner.Stats; }
         }
 
-        /// <summary>人话描述（带上模拟档位）。</summary>
+        /// <summary>m_inner 的人话描述，后面拼上本层档位，形如「tcp 127.0.0.1:7777 +模拟[延迟 100ms]」。</summary>
         public string Description
         {
             get { return m_inner.Description + " +模拟[" + m_profile + "]"; }
         }
 
-        /// <summary>透传。</summary>
+        /// <summary>m_inner 是否已连接，原样透传。</summary>
         public bool IsConnected
         {
             get { return m_inner.IsConnected; }
         }
 
-        /// <summary>收到一整帧（**延迟之后**才触发）。</summary>
+        /// <summary>收到一整帧时回调，已按档位延迟；只在 Advance 里、在调用 Advance 的线程上触发。</summary>
         public event Action<byte[]> FrameReceived;
 
-        /// <summary>断开（透传）。</summary>
+        /// <summary>断开或出错时回调，参数是人话原因；原样透传，不加延迟。</summary>
         public event Action<string> Closed;
 
-        /// <summary>发起连接（透传给 inner）。</summary>
-        /// <param name="host">主机。</param>
-        /// <param name="port">端口。</param>
+        // 功能：把连接请求原样转给 m_inner；本层不握手、不缓存地址。
+        /// <summary>发起连接，原样转给 m_inner。</summary>
+        /// <param name="host">主机（IP 或域名）。</param>
+        /// <param name="port">端口（1~65535）。</param>
         public void Connect(string host, int port)
         {
             m_inner.Connect(host, port);
         }
 
-        /// <summary>
-        /// 发一条消息：**先按丢包概率决定要不要丢**，没丢就延迟 `Latency + 抖动` 之后再交给 inner。
-        /// </summary>
-        /// <param name="payload">载荷。</param>
+        // 功能：上行发包 —— 先按丢包率掷一次，没丢就按固定延迟加抖动排进队列，到点再交给 m_inner。
+        // 入参：payload 一帧载荷，不能为 null（0 长度帧传空数组，不传 null）
+        // 返回：无；丢包与延迟都只是排队或结束，不报错
+        // 步骤：
+        //   1) 先判空：null 交给 m_inner 会炸在更远的地方
+        //   2) 先掷丢包再复制：丢掉的包不必复制，省一次分配
+        //   3) 复制一份再延迟：调用方可能复用同一块缓冲，不复制会把后来的内容带给 m_inner
+        //   4) 延迟为 0 直接发，省一次队列进出
+        //   5) 否则记 FramesDelayed 并按送达时刻入 m_sending，等 Advance 到期再发
+        // 上游：NetSession 的每条上行消息（当它被包在 SimulatedTransport 里时）
+        // 下游：RollLoss、RollDelay、m_inner.Send、m_sending
+        /// <summary>发一条消息：先掷丢包，没丢再按延迟排队后交给 m_inner。</summary>
+        /// <param name="payload">一帧载荷，不能为 null；0 长度帧传空数组。</param>
         public void Send(byte[] payload)
         {
             if (payload == null)
@@ -224,8 +222,19 @@ namespace NBC.Framework.Net.Sim
             m_sending.Add(new InFlight(copy, m_clockMs + delay, delay));
         }
 
-        /// <summary>推进模拟器的时钟：把"该到了"的包送出去 / 交上来（见文件头第二节）。</summary>
-        /// <param name="deltaMs">距上次调用的毫秒数。</param>
+        // 功能：推进模拟时钟，把到期的上下行包分别交给 m_inner 与上层。
+        // 入参：deltaMs 距上次调用的毫秒数；负数按 0 处理
+        // 返回：无
+        // 步骤：
+        //   1) 负数钳到 0，时钟只前进不后退
+        //   2) 时钟先加 deltaMs，这一帧到期的包才算得出来
+        //   3) 上行从后往前扫：送出去的包要从队列里移除，倒序才不会漏掉换位上来的元素
+        //   4) 下行同样倒序，到期的包交给 RaiseFrameReceived
+        // 上游：每帧驱动方（NetSession.Pump 之前）；SimulatedTransportTests 手动调
+        // 下游：m_inner.Send、RaiseFrameReceived
+        // 注意：必须先 Advance 再 Pump，否则这一帧该到的包要等下一帧；ITransport 里没有时间轴，时间只能由这个额外入口推。
+        /// <summary>推进模拟时钟，把到期的包送出去或交上来；必须先于 Pump 调用。</summary>
+        /// <param name="deltaMs">距上次调用的毫秒数，负数按 0 处理。</param>
         public void Advance(int deltaMs)
         {
             if (deltaMs < 0)
@@ -258,13 +267,22 @@ namespace NBC.Framework.Net.Sim
             }
         }
 
-        /// <summary>推进 inner（模拟器自己的推进请用 `Advance`）。</summary>
+        // 功能：把推进一帧原样转给 m_inner；模拟器自己的时间推进走 Advance。
+        /// <summary>推进 m_inner 一帧；时间推进用 Advance，不用这里。</summary>
         public void Pump()
         {
             m_inner.Pump();
         }
 
-        /// <summary>主动关闭（透传）。</summary>
+        // 功能：清掉上下行两个延迟队列，再关闭 m_inner。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 先清队列：关掉之后这些包已经不可能送达，留着只会让 InFlightCount 停在非 0
+        //   2) 再关 m_inner，让它按自己的契约触发 Closed
+        // 上游：NetSession 的主动断开与退出流程
+        // 下游：m_inner.Close
+        /// <summary>主动关闭：丢弃还在路上的包，再关闭 m_inner。</summary>
         public void Close()
         {
             m_sending.Clear();
@@ -272,7 +290,16 @@ namespace NBC.Framework.Net.Sim
             m_inner.Close();
         }
 
-        /// <summary>释放（同时释放 inner）。</summary>
+        // 功能：先退订 m_inner 的事件再释放它；重复调用直接返回。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 用 m_disposed 做幂等闸门，第二次起什么都不做
+        //   2) 先退订再释放：否则 m_inner 释放时发的 Closed 还会被本类转出去，订阅者会多收一次「释放导致的断开」
+        //   3) 清掉两个队列，再释放 m_inner，最后置位 m_disposed
+        // 上游：NetSession.Dispose（持有本类的一方收尾）
+        // 下游：m_inner.FrameReceived、m_inner.Closed、m_inner.Dispose
+        /// <summary>退订事件、清空在路上队列并释放 m_inner；可重复调用。</summary>
         public void Dispose()
         {
             if (m_disposed)
@@ -288,8 +315,16 @@ namespace NBC.Framework.Net.Sim
             m_disposed = true;
         }
 
-        /// <summary>inner 收到一帧：按参数延迟之后才交给上层。</summary>
-        /// <param name="payload">载荷。</param>
+        // 功能：m_inner 收到一帧时，按同一套丢包与延迟规则处理后交给上层。
+        // 入参：payload 收到的一整帧（m_inner 给的数组，本层不复制）
+        // 返回：无
+        // 步骤：
+        //   1) 先掷丢包：丢了就不再排队，直接结束
+        //   2) 掷延迟，0 就直接交给上层，省一次队列进出
+        //   3) 否则记 FramesDelayed 并按送达时刻入 m_receiving，等 Advance 到点再交
+        // 上游：m_inner 的 FrameReceived（即 m_inner.Pump 期间）
+        // 下游：RollLoss、RollDelay、RaiseFrameReceived、m_receiving
+        // 注意：下行没有复制载荷 —— 若将来 m_inner 复用同一块缓冲，这里必须补一次复制。
         private void OnInnerFrameReceived(byte[] payload)
         {
             if (RollLoss("下行"))
@@ -309,8 +344,14 @@ namespace NBC.Framework.Net.Sim
             m_receiving.Add(new InFlight(payload, m_clockMs + delay, delay));
         }
 
-        /// <summary>inner 断开：直接透传（断开不模拟延迟 —— "说不通"比"晚一点说不通"更重要）。</summary>
-        /// <param name="reason">原因。</param>
+        // 功能：m_inner 断开时，把原因原样转给本类订阅者。
+        // 入参：reason 关闭原因，人话，日志可直接显示
+        // 返回：无
+        // 步骤：
+        //   1) 先把事件复制到局部变量再判空，避免判空与调用之间订阅者被摘掉而空引用
+        // 上游：m_inner 的 Closed
+        // 下游：本类 Closed 订阅者
+        // 注意：断开故意不排队延迟 —— 让上层晚一点知道「说不通」没有意义。
         private void OnInnerClosed(string reason)
         {
             Action<string> handler = Closed;
@@ -321,8 +362,13 @@ namespace NBC.Framework.Net.Sim
             }
         }
 
-        /// <summary>把一帧交给上层（并记下实测延迟）。</summary>
-        /// <param name="payload">载荷。</param>
+        // 功能：把一帧交给本类订阅者。
+        // 入参：payload 要交上去的一整帧
+        // 返回：无
+        // 步骤：
+        //   1) 先复制事件到局部变量再判空，理由同 OnInnerClosed
+        // 上游：Advance（到期的下行包）、OnInnerFrameReceived（零延迟）
+        // 下游：本类 FrameReceived 订阅者；没有订阅者时这一帧就丢了
         private void RaiseFrameReceived(byte[] payload)
         {
             Action<byte[]> handler = FrameReceived;
@@ -333,9 +379,14 @@ namespace NBC.Framework.Net.Sim
             }
         }
 
-        /// <summary>掷一次丢包。</summary>
-        /// <param name="direction">方向（日志用）。</param>
-        /// <returns>该丢返回 true。</returns>
+        // 功能：按档位掷一次丢包，中了就累加 FramesDropped。
+        // 入参：direction 方向，取「上行」或「下行」；目前不参与判断，留给日志
+        // 返回：true 表示这一帧该丢；概率 <= 0 时恒为 false
+        // 步骤：
+        //   1) 概率 <= 0 直接放行，省一次随机数与取模
+        //   2) 掷 0~9999，>= 阈值算不丢 —— 所以阈值 10000 必丢、500 约丢 5%
+        // 上游：Send（上行）、OnInnerFrameReceived（下行）
+        // 下游：NextPerTenThousand、FramesDropped
         private bool RollLoss(string direction)
         {
             if (m_profile.LossPerTenThousand <= 0)
@@ -352,8 +403,15 @@ namespace NBC.Framework.Net.Sim
             return true;
         }
 
-        /// <summary>掷一次延迟（固定 + 抖动）。</summary>
-        /// <returns>毫秒。</returns>
+        // 功能：算出这一次的延迟，固定延迟加抖动，并更新 MaxDelayMs。
+        // 入参：无
+        // 返回：延迟毫秒数，已钳到 >= 0
+        // 步骤：
+        //   1) 固定延迟打底；有抖动才掷随机数，取 [0, JitterMs]（上界 +1 是为了能取到 JitterMs 本身）
+        //   2) 负数钳到 0，防止负延迟让包提前到期
+        //   3) 更新 MaxDelayMs，供观测
+        // 上游：Send、OnInnerFrameReceived
+        // 下游：Next、MaxDelayMs
         private int RollDelay()
         {
             int delay = m_profile.LatencyMs;
@@ -376,18 +434,32 @@ namespace NBC.Framework.Net.Sim
             return delay;
         }
 
-        /// <summary>确定性随机：`[0, maxExclusive)`。</summary>
-        /// <param name="maxExclusive">上界。</param>
-        /// <returns>值。</returns>
+        // 功能：取一个 [0, maxExclusive) 的确定性随机整数。
+        // 入参：maxExclusive 上界（不含）；<= 0 时直接返回 0
+        // 返回：0 ~ maxExclusive-1；上界为 0 时返回 0
+        // 步骤：
+        //   1) 上界 <= 0 先挡住，否则取模会除零
+        //   2) 用 xorshift 的输出对 (uint)maxExclusive 取模，不引入 System.Random
+        // 上游：RollDelay、NextPerTenThousand
+        // 下游：NextUInt
         private int Next(int maxExclusive)
             => maxExclusive <= 0 ? 0 : (int)(NextUInt() % (uint)maxExclusive);
 
-        /// <summary>确定性随机：万分比掷骰（0..9999）。</summary>
-        /// <returns>值。</returns>
+        // 功能：掷一个 0~9999 的万分比随机数。
+        // 入参：无
+        // 返回：0~9999，配合 LossPerTenThousand 判断丢包
+        // 上游：RollLoss
+        // 下游：Next(10000)
         private int NextPerTenThousand() => Next(10000);
 
-        /// <summary>xorshift32（与 `BattleRandom` 同一套算法，见文件头第四节）。</summary>
-        /// <returns>随机数。</returns>
+        // 功能：推进一步 xorshift32，产出下一个随机数。
+        // 入参：无
+        // 返回：uint 随机值；状态为 0 时会一直输出 0（构造已保证初值非 0）
+        // 步骤：
+        //   1) 依次左移 13、右移 17、左移 5 再异或，是 xorshift32 的标准三步
+        //   2) 新值写回 m_random，下一次从它继续
+        // 上游：Next
+        // 下游：无
         private uint NextUInt()
         {
             uint x = m_random;
@@ -398,22 +470,28 @@ namespace NBC.Framework.Net.Sim
             return x;
         }
 
-        /// <summary>一个"在路上"的包。</summary>
+        // 主要功能：记下一个还在路上的包，只给 SimulatedTransport 的两个延迟队列用。
+        // 主要数据成员：Payload（载荷）、DeliverAtMs（送达时刻，模拟时钟毫秒）、DelayMs（本次延迟，毫秒）。
+        // 主要外部方法：只有构造函数；三个字段都是 readonly，建好不再改。
+        // 谁在用它：SimulatedTransport 的 Send / OnInnerFrameReceived 入队、Advance 出队；不跨出本类。
         private readonly struct InFlight
         {
-            /// <summary>载荷。</summary>
+            // 载荷；上行是 Send 前复制的副本，下行是 m_inner 给的数组
             public readonly byte[] Payload;
 
-            /// <summary>什么时候该送达（模拟时钟，毫秒）。</summary>
+            // 送达时刻，模拟时钟毫秒；Advance 里 <= m_clockMs 即到期
             public readonly long DeliverAtMs;
 
-            /// <summary>这一包被延迟了多少毫秒。</summary>
+            // 这一次的延迟，毫秒；目前只记录，没有读取方
             public readonly int DelayMs;
 
-            /// <summary>记一包。</summary>
-            /// <param name="payload">载荷。</param>
-            /// <param name="deliverAtMs">送达时刻。</param>
-            /// <param name="delayMs">延迟。</param>
+            // 功能：记下一个待送达的包。
+            // 入参：payload 载荷（调用方负责复制）；deliverAtMs 送达时刻（模拟时钟，毫秒）；delayMs 本次延迟（毫秒）
+            // 返回：无（构造）
+            // 步骤：
+            //   1) 三个字段都是 readonly，只能在这里一次赋值
+            // 上游：SimulatedTransport.Send、SimulatedTransport.OnInnerFrameReceived
+            // 下游：无
             public InFlight(byte[] payload, long deliverAtMs, int delayMs)
             {
                 Payload = payload;

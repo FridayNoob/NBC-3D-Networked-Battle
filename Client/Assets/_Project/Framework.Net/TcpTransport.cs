@@ -1,52 +1,8 @@
-// ============================================================================
-//  TcpTransport —— `ITransport` 的 **TCP 实现**（M3 的唯一传输）
-//  项目：3D联网战斗Demo   对应：M3-S2b、Docs\25 §三 D1（TCP + 4 字节小端长度前缀 + protobuf）
+// 这个文件里有：
+//   TcpTransport（类）：把 TCP 套接字包成 ITransport，负责长度前缀分帧、非阻塞连接与每帧拉取式收发。
 //
-//  ---------------------------------------------------------------------------
-//  一、它只用 BCL（`System.Net.Sockets`），一行引擎代码都没有
-//  ---------------------------------------------------------------------------
-//  `NBC.Framework.Net.asmdef` 是 `noEngineReferences: true` + 只引 `NBC.Shared`，
-//  所以"用 UnityEngine"在这里是**编译错误**，不是纪律问题。
-//  这样做的直接好处：本文件可以被 `Server\_condition-probe`（.NET 8）**编进去真跑** ——
-//  回环收发、粘包、拆包、对端关闭、超限帧，全都在没有 Unity 的情况下拿到证据。
-//
-//  ---------------------------------------------------------------------------
-//  二、三个"不做就会以别的 bug 面目出现"的细节
-//  ---------------------------------------------------------------------------
-//  ① **非阻塞连接 + `Poll`**（不是 `Connect` 之后 sleep 等）
-//     `Blocking = false` 之后 `Connect` 立刻返回（抛 `WouldBlock` 表示"正在连"），
-//     之后每次 `Pump` 用 `Poll` 问一句"能写了吗 / 出错了吗"。
-//     连不上（对方没监听、主机名解析不了、超时）一律走 `Closed` 报**人话原因** ——
-//     不允许"一直停在 Connecting"那种谁也看不懂的卡住。
-//
-//  ② **`NoDelay = true`（关掉 Nagle）**
-//     Nagle 会把小包攒起来再发，最多能压到 ~200ms 才出门。
-//     对一个 30Hz 的动作战斗 Demo 来说，这就是"操作延迟忽然一顿一顿的"。
-//     代价是包变多 —— 我们的包本来就小、频率也就 30Hz，值得。
-//
-//  ③ **收到 0 字节 = 对端关了，必须当成断开**
-//     `Poll(SelectRead)` 为真但 `Available == 0` 就是 FIN。
-//     漏掉这一条的表现是"对方早已退出，本端一直以为自己还连着" ——
-//     又一个静默失败，而且只在联机对局里才看得见。
-//
-//  ---------------------------------------------------------------------------
-//  三、粘包 / 拆包怎么处理（上层永远看不到）
-//  ---------------------------------------------------------------------------
-//  收：`Receive` 到什么就是什么（可能半帧、也可能三帧粘在一起），
-//      全部塞给 `FrameDecoder`，然后**循环 `TryDequeue` 直到取不出整帧** ——
-//      每取出一条就回调一次 `FrameReceived`。这样"一次 Receive 收到 3 条消息"
-//      对上层就是三次回调，符合直觉。
-//  发：先 `FrameCodec.Encode` 成帧再入队；`Pump` 里尽力写出，
-//      **写了一半也算正常**（TCP 发送缓冲满了），下次 `Pump` 接着从断点写 ——
-//      所以队里存的是"帧 + 已写出多少"，不是一个裸的 byte[] 列表。
-//
-//  ---------------------------------------------------------------------------
-//  四、统计口径（如实记，免得看板对不上）
-//  ---------------------------------------------------------------------------
-//  · `BytesSent` / `FramesSent`：**完整写出去**的帧才算（还躺在队列里的不算）
-//  · 统计在每次 `Connect` 时**清零** —— 口径是"这一次连接"，不是"进程生命周期"
-//    （重连前后混在一起的话，"这一局丢了多少"就看不出来了）
-// ============================================================================
+// 注意：本程序集是 noEngineReferences 且只引 NBC.Shared，这里只能出现 BCL，写一行 UnityEngine 就是编译错误；
+//       换来的是这份实现能被 .NET 8 探针直接编进去真跑，回环收发与粘包拆包都不需要 Unity 也能拿到证据。
 
 using System;
 using System.Collections.Generic;
@@ -57,73 +13,88 @@ using NBC.Shared.Net;
 
 namespace NBC.Framework.Net.Adapter
 {
-    /// <summary>
-    /// TCP 传输：长度前缀分帧 + 非阻塞连接 + 拉模式收发（`Pump`）。
-    /// </summary>
+    // 主要功能：用 TCP 承载帧流——4 字节小端长度前缀分帧、非阻塞连接、每帧 Pump 里收字节拆帧并回调。
+    // 主要数据成员：m_socket（套接字，未连为 null）、m_pending / m_writing / m_writingOffset（待发队列与正在写的帧）、m_decoder（拆帧器）、m_state（连接状态）。
+    // 主要外部方法：Connect / Send / Pump / Close / Dispose，State / Stats / Description / IsConnected，事件 FrameReceived / Closed。
+    // 谁在用它：Game 的 RuntimeNetDriver 以 CountingTransport(TcpTransport) 装配；Editor 的 NetDebugWindow 也 new 一个（外面同样包 CountingTransport）再交给 NetSession；TcpTransportTests 走真端口验证。
+    /// <summary>TCP 传输实现：4 字节小端长度前缀分帧、非阻塞连接、每帧 Pump 拉取式收发。</summary>
     public sealed class TcpTransport : ITransport
     {
-        /// <summary>默认连接超时（毫秒）。</summary>
+        /// <summary>默认连接超时，毫秒；取 5000，即 5 秒。</summary>
         public const int DefaultConnectTimeoutMs = 5000;
 
-        /// <summary>接收缓冲大小（一次 `Receive` 最多读这么多）。</summary>
+        // 接收缓冲大小，字节；一次 Receive 最多读这么多（16 KiB），整条连接复用同一块数组，避免每帧分配。
         private const int ReceiveBufferBytes = 16 * 1024;
 
-        /// <summary>连接超时（毫秒）。</summary>
+        // 连接超时，毫秒；取值必须 > 0，构造时校验，Pump 推进握手时用它判超时。
         private readonly int m_connectTimeoutMs;
 
-        /// <summary>单帧上限（发与收同一口径）。</summary>
+        // 单帧载荷上限，字节；收发同一口径，默认 NetContract.MaxFrameBytes（524288，即 512 KiB）。
         private readonly int m_maxFrameBytes;
 
-        /// <summary>拆帧器（粘包/拆包都在它里面）。</summary>
+        // 拆帧器；粘包、拆包与协议违规判断都在它里面，重连时 Reset。
         private readonly FrameDecoder m_decoder;
 
-        /// <summary>待发队列（元素已经是**包好帧**的字节）。</summary>
+        // 待发队列；元素是已经包好 4 字节长度前缀的整帧，不是裸载荷。
         private readonly Queue<byte[]> m_pending = new Queue<byte[]>();
 
-        /// <summary>连接计时（算超时用）。</summary>
+        // 连接计时器，毫秒；Connect 时 Restart、连上或关闭时 Stop，用来判连接超时。
         private readonly Stopwatch m_connectTimer = new Stopwatch();
 
-        /// <summary>接收缓冲（复用，避免每次收都分配）。</summary>
+        // 接收缓冲，字节；长度 16 KiB，整条连接复用，避免每次收都新分配。
         private readonly byte[] m_receiveBuffer = new byte[ReceiveBufferBytes];
 
-        /// <summary>套接字（未连接时为 null）。</summary>
+        // 底层套接字；未连接或已关闭时为 null。
         private Socket m_socket;
 
-        /// <summary>正在往外写的帧（部分写出后等下次 `Pump` 接着写）。</summary>
+        // 正在往外写的那一帧（已包好帧头）；写了一半就留到下次 Pump 接着写，空闲为 null。
         private byte[] m_writing;
 
-        /// <summary>正在写的那一帧已经写出多少字节。</summary>
+        // m_writing 里已经写出的字节数，范围 0..m_writing.Length；0 表示还没开始写。
         private int m_writingOffset;
 
-        /// <summary>目标主机（只用于日志/统计）。</summary>
+        // 目标主机（IP 或域名）；只用于日志与端点描述，null 表示从未连接。
         private string m_host;
 
-        /// <summary>目标端口（只用于日志/统计）。</summary>
+        // 目标端口，取值 1~65535；只用于日志与端点描述。
         private int m_port;
 
-        /// <summary>当前状态。</summary>
+        // 当前连接状态，取值见 ETransportState；初值 Disconnected。
         private ETransportState m_state = ETransportState.Disconnected;
 
-        /// <summary>关闭原因（人话；关闭后 `Description` 里会带上它）。</summary>
+        // 关闭原因（人话）；null 表示还没关闭，非 null 时 Description 会把它带出来。
         private string m_closedReason;
 
-        /// <summary>`Closed` 是否已经报过（**契约：至多一次**）。</summary>
+        // Closed 是否已经报过；契约是至多一次，关闭路径靠它去重。
         private bool m_closeNotified;
 
-        /// <summary>是否已经 `Dispose`（之后再 `Connect`/`Send` 就是调用方的 bug）。</summary>
+        // 是否已经 Dispose；置上之后再 Connect / Send 就是调用方的 bug，会抛 ObjectDisposedException。
         private bool m_disposed;
 
+        // 本次连接累计发出的字节数（含 4 字节帧头），单位字节；Connect 时清零。
         private long m_bytesSent;
+        // 本次连接累计收到的字节数（含 4 字节帧头），单位字节；Connect 时清零。
         private long m_bytesReceived;
+        // 本次连接完整写出的帧数，单位帧；只算整帧写完的，Connect 时清零。
         private int m_framesSent;
+        // 本次连接收到的完整帧数，单位帧；0 长度帧也算一帧，Connect 时清零。
         private int m_framesReceived;
 
-        /// <summary>造一个 TCP 传输（此时还没有连接）。</summary>
-        /// <param name="connectTimeoutMs">连接超时（毫秒）；不传为 <see cref="DefaultConnectTimeoutMs"/>。</param>
-        /// <param name="maxFrameBytes">单帧上限；不传为 <see cref="NetContract.MaxFrameBytes"/>。</param>
+        /// <summary>造一个 TCP 传输，此时还没有连接；参数越界当场抛。</summary>
+        /// <param name="connectTimeoutMs">连接超时（毫秒），必须 > 0；默认 DefaultConnectTimeoutMs。</param>
+        /// <param name="maxFrameBytes">单帧载荷上限（字节），必须 > 0；默认 NetContract.MaxFrameBytes。</param>
         public TcpTransport(int connectTimeoutMs = DefaultConnectTimeoutMs,
                             int maxFrameBytes = NetContract.MaxFrameBytes)
         {
+            // 功能：校验参数后记下连接超时与单帧上限，并造好配套的拆帧器。
+            // 入参：connectTimeoutMs 连接超时（毫秒，必须 > 0）；maxFrameBytes 单帧载荷上限（字节，必须 > 0）
+            // 返回：无
+            // 步骤：
+            //   1) 先挡两个非正数：超时 <= 0 会让连接立刻判超时，上限 <= 0 会让任何帧都算超限
+            //   2) 记下两个值，供 Connect 判超时与 Send 判上限
+            //   3) 拆帧器与发送端用同一个上限，保证「发得出」与「收得下」是同一口径
+            // 上游：Game 的 RuntimeNetDriver（装在 CountingTransport 里）、Editor 的 NetDebugWindow、TcpTransportTests
+            // 下游：FrameDecoder 构造
             if (connectTimeoutMs <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(connectTimeoutMs),
@@ -141,19 +112,19 @@ namespace NBC.Framework.Net.Adapter
             m_decoder = new FrameDecoder(maxFrameBytes);
         }
 
-        /// <summary>当前状态。</summary>
+        /// <summary>当前连接状态，取值见 ETransportState。</summary>
         public ETransportState State
         {
             get { return m_state; }
         }
 
-        /// <summary>收发统计（口径见文件头第四节）。</summary>
+        /// <summary>本次连接的收发统计快照；字节含帧头，Connect 时清零，口径是「这一次连接」而不是进程生命周期。</summary>
         public TransportStats Stats
         {
             get { return new TransportStats(m_bytesSent, m_bytesReceived, m_framesSent, m_framesReceived); }
         }
 
-        /// <summary>人话描述，例如 `tcp 127.0.0.1:7777`；关闭后形如 `tcp 127.0.0.1:7777（连接超时…）`。</summary>
+        /// <summary>一句人话端点描述，形如 tcp 127.0.0.1:7777；未连接时为 tcp (未连接)，关闭后附带原因。</summary>
         public string Description
         {
             get
@@ -163,23 +134,38 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>是不是连上了。</summary>
+        /// <summary>是否已连上，等价于 State 为 Connected；只有该状态才能 Send。</summary>
         public bool IsConnected
         {
             get { return m_state == ETransportState.Connected; }
         }
 
-        /// <summary>收到一整帧（载荷）时回调；**只在 `Pump` 里被调**。</summary>
+        /// <summary>收到一整帧载荷时回调；只在 Pump 里、由调用 Pump 的那条线程触发，0 长度帧也会回调。</summary>
         public event Action<byte[]> FrameReceived;
 
-        /// <summary>断开或出错时回调（**至多一次**）。</summary>
+        /// <summary>断开或出错时回调，参数是一句人话原因；至多触发一次，主动关闭时原因是「主动关闭」。</summary>
         public event Action<string> Closed;
 
-        /// <summary>发起连接（非阻塞；连不上走 `Closed`）。</summary>
-        /// <param name="host">主机（IP 或域名）。</param>
-        /// <param name="port">端口（1~65535）。</param>
+        /// <summary>发起连接并立即返回；握手进度靠 Pump 推进，连不上不抛异常，改由 Closed 报原因。</summary>
+        /// <param name="host">主机，IP 或域名，不能为空。</param>
+        /// <param name="port">端口，取值 1~65535。</param>
         public void Connect(string host, int port)
         {
+            // 功能：把传输层从「未连」切到「正在连」，建好非阻塞套接字，真正的握手留给后面的 Pump。
+            // 入参：host 主机（IP 或域名，不能为空）；port 端口（1~65535）
+            // 返回：无
+            // 步骤：
+            //   1) 已释放、已在连或已连上都当场抛错，避免一个实例背负两条连接
+            //   2) 校验主机与端口，空主机与越界端口在这里就挡住
+            //   3) 清掉上一局的拆帧缓冲、待发队列、统计与关闭标记——否则上一局的半帧会被当成这一局的开头
+            //   4) 记下目标、置为 Connecting 并启动计时器；此刻仍在异步握手中，失败只能走 Closed
+            //   5) 解析地址后建非阻塞套接字：关掉 Nagle，并让 Connect 立刻返回
+            //   6) 非阻塞下「正在进行」是正常结果，交给 Pump；已经连上的极快情况直接进 Connected
+            //   7) 其余错误一律转成 Closed 的人话原因，不允许停在 Connecting；域名解析失败抛的也是 SocketException，所以外层套接字与其它异常两个 catch 都要兜
+            // 注意：Blocking 为 false 时 Connect 不会等待，调用方别 sleep 等连接；连不上必须走 Closed，否则会一直停在 Connecting，谁也看不懂。
+            // 注意：NoDelay 关掉 Nagle，否则小包会被攒起来、最多约 200ms 才出门，30Hz 的动作战斗里就是操作一顿一顿；代价是包变多，但包本来就小、频率也就 30Hz，值得。
+            // 上游：NetSession 的登录与重连流程、Editor 的 NetDebugWindow
+            // 下游：Pump（推进握手）、CloseWithReason、Closed
             ThrowIfDisposed();
 
             if (m_state == ETransportState.Connecting || m_state == ETransportState.Connected)
@@ -200,7 +186,6 @@ namespace NBC.Framework.Net.Adapter
                     "[TcpTransport] 端口必须在 1~65535（当前 " + port + "）。");
             }
 
-            // 重连前先把上一次的残留清干净（否则上一局的半帧会被当成这一局的开头）
             m_decoder.Reset();
             m_pending.Clear();
             m_writing = null;
@@ -222,19 +207,19 @@ namespace NBC.Framework.Net.Adapter
                 IPAddress address = ResolveAddress(host);
 
                 m_socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                m_socket.NoDelay = true;        // 见文件头 ②
-                m_socket.Blocking = false;      // 见文件头 ①
+                m_socket.NoDelay = true;
+                m_socket.Blocking = false;
 
                 try
                 {
                     m_socket.Connect(new IPEndPoint(address, port));
-                    EnterConnected();           // 极快的情况下会直接连上
+                    EnterConnected();
                 }
                 catch (SocketException ex)
                 {
                     if (IsConnectPending(ex.SocketErrorCode))
                     {
-                        return;                 // 正常：正在连，交给 Pump 推进
+                        return;
                     }
 
                     if (ex.SocketErrorCode == SocketError.IsConnected)
@@ -248,7 +233,6 @@ namespace NBC.Framework.Net.Adapter
             }
             catch (SocketException ex)
             {
-                // 多半是域名解析失败（Dns.GetHostAddresses 抛的也是 SocketException）
                 CloseWithReason("连接 " + Endpoint + " 失败：" + DescribeError(ex.SocketErrorCode));
             }
             catch (Exception ex)
@@ -257,10 +241,20 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>发一条消息（载荷；分帧在这里做）。未连接**直接报错**，不静默丢。</summary>
-        /// <param name="payload">载荷（可以为 null）。</param>
+        /// <summary>发一条载荷，分帧在这里做；未连接直接抛异常，不静默丢。</summary>
+        /// <param name="payload">载荷，可以为 null，表示一条 0 长度帧。</param>
         public void Send(byte[] payload)
         {
+            // 功能：把一段载荷包上 4 字节长度前缀后入队，并立刻尝试写出去。
+            // 入参：payload 载荷（可以为 null，表示一条 0 长度帧）；载荷超过单帧上限会被拒收
+            // 返回：无
+            // 步骤：
+            //   1) 已释放、未连上都当场抛错——静默丢会变成偶发少一条消息，是最难查的一类问题
+            //   2) 先编码成帧，再按「帧长 - 4 字节帧头」比对上限，保证本端发得出的对端收得下
+            //   3) 入队后立刻冲刷一次，免得调用方忘了 Pump 就静默不发
+            // 注意：上限比的是载荷长度，不含 4 字节帧头，与 FrameDecoder 的口径一致；超限当场抛，别等对端按协议违规断开。
+            // 上游：NetSession 的握手、心跳与业务消息发送
+            // 下游：FrameCodec.Encode、FlushPending
             ThrowIfDisposed();
 
             if (m_state != ETransportState.Connected)
@@ -282,13 +276,24 @@ namespace NBC.Framework.Net.Adapter
 
             m_pending.Enqueue(frame);
 
-            // 立刻试着发一次：不然"忘了 Pump"就变成静默不发（Pump 里还会再冲刷一遍）
             FlushPending();
         }
 
-        /// <summary>推进一帧：冲刷发送队列 + 收字节拆帧。</summary>
+        /// <summary>推进一帧：推进握手、冲刷发送队列、收字节并拆帧。</summary>
         public void Pump()
         {
+            // 功能：每帧调一次，把这一帧能做的都做掉：推进握手、冲刷待发、读干净内核里已到的字节并拆帧。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 已释放就直接返回，不碰任何状态
+            //   2) 正在连就先推进握手；没连上就此打住，本帧不做事
+            //   3) 先冲刷待发再读取，让本轮之前排队的消息优先出门
+            //   4) 冲刷过程中可能因出错而关闭，所以再查一次状态
+            //   5) 读干净内核缓冲并拆帧，每凑齐一帧回调一次 FrameReceived
+            // 注意：回调只在调用 Pump 的这条线程上发生（通常是主线程），所以回调里可以直接碰 Transform 与 UI；也意味着别的线程不能调 Pump。
+            // 上游：NetSession.Pump 每帧调用（由 NetDebugWindow 与 RuntimeNetDriver 驱动）
+            // 下游：PumpConnecting / FlushPending / ReceiveAvailable / DispatchFrames、Closed
             if (m_disposed)
             {
                 return;
@@ -308,21 +313,30 @@ namespace NBC.Framework.Net.Adapter
 
             if (m_state != ETransportState.Connected)
             {
-                return;     // 冲刷过程中出错已经关掉了
+                return;
             }
 
             ReceiveAvailable();
         }
 
-        /// <summary>主动关闭（可重复调用；第一次之后状态就是 Closed）。</summary>
+        /// <summary>主动关闭，可重复调用；第一次之后状态就是 Closed。</summary>
         public void Close()
         {
+            // 功能：以「主动关闭」为原因关闭连接，未发出的消息随之丢弃，并至多上报一次 Closed。
             CloseWithReason("主动关闭");
         }
 
-        /// <summary>释放（等价于 `Close`；之后再 `Connect`/`Send` 会报 `ObjectDisposedException`）。</summary>
+        /// <summary>释放：等价于 Close；之后再 Connect / Send 会抛 ObjectDisposedException。</summary>
         public void Dispose()
         {
+            // 功能：先关闭连接，再把自己标记成已释放；重复调用没有副作用。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 已经释放就直接返回，保证幂等
+            //   2) 先 Close 再置标记：Close 里还要用套接字，顺序反了会漏关
+            // 上游：using 语句、NetSession 与 NetDebugWindow 的销毁流程
+            // 下游：Close
             if (m_disposed)
             {
                 return;
@@ -332,18 +346,24 @@ namespace NBC.Framework.Net.Adapter
             m_disposed = true;
         }
 
-        // ====================================================================
-        //  内部：连接推进
-        // ====================================================================
-
-        /// <summary>推进"正在连"这个状态（只在 <see cref="Pump"/> 里调）。</summary>
+        // 功能：在 Connecting 状态下问一次套接字「出错了吗 / 能写了吗」，据此连上、报错或继续等。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 套接字为 null 说明 Connect 里连分配都没成功（那边已经报过错），这里只兜底关闭
+        //   2) 先查 SelectError 再查 SelectWrite，出错优先于可写
+        //   3) 可写不等于连上：Windows 上「连接被拒」也会让套接字变可写，真正的结论在 SO_ERROR 里，非 0 即失败
+        //   4) 两项都过才进 Connected
+        //   5) 最后拿计时器判超时，超时就关掉并报出毫秒数
+        // 注意：这里只 Poll 一次、不等待，握手靠每次 Pump 推进；调用方不每帧调 Pump，连接会一直停在 Connecting，连超时都判不出来。
+        // 上游：Pump
+        // 下游：EnterConnected、CloseWithReason、GetSocketError、DescribeError
         private void PumpConnecting()
         {
             Socket socket = m_socket;
 
             if (socket == null)
             {
-                // Connect 里分配套接字失败才会走到这（上面已经报了错），这里只兜底
                 CloseWithReason("连接 " + Endpoint + " 失败：套接字没有建立");
                 return;
             }
@@ -359,8 +379,6 @@ namespace NBC.Framework.Net.Adapter
 
                 if (socket.Poll(0, SelectMode.SelectWrite))
                 {
-                    // 可写了不等于连上了：Windows 上"连接被拒"也会让套接字变可写，
-                    // 真正的结论在 SO_ERROR 里（0 = 成功）
                     int error = GetSocketError(socket);
 
                     if (error != 0)
@@ -381,7 +399,7 @@ namespace NBC.Framework.Net.Adapter
             }
             catch (ObjectDisposedException)
             {
-                return;     // 回调里已经关掉了
+                return;
             }
 
             if (m_connectTimer.ElapsedMilliseconds >= m_connectTimeoutMs)
@@ -390,18 +408,33 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>进入"已连接"。</summary>
+        // 功能：把状态切到 Connected 并停掉连接计时器。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 先停计时器，之后不再用连接超时
+        //   2) 再改状态，保证状态一变成 Connected 时计时器已经不会再跳
+        // 上游：Connect（极快连上时）、PumpConnecting
+        // 下游：无
         private void EnterConnected()
         {
             m_connectTimer.Stop();
             m_state = ETransportState.Connected;
         }
 
-        // ====================================================================
-        //  内部：发送
-        // ====================================================================
-
-        /// <summary>尽力把待发队列写出去（写不完就等下次 `Pump`，不是错误）。</summary>
+        // 功能：按队列顺序把整帧尽量写出去，写不完就停在断点等下次 Pump。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 套接字为 null 说明没连上或已关，直接返回
+        //   2) 没有正在写的帧就从队列取一个，取出即视为开始写
+        //   3) 从 m_writingOffset 处续写，Send 只发剩下的部分
+        //   4) WouldBlock 是正常情况：内核发送缓冲满了，保留断点等下次
+        //   5) 整帧写满才累计字节与帧数——统计口径是「完整写出去」；Send 返回 <= 0 理论上不会发生，不推进也不假装成功
+        // 注意：部分写出是正常的，不是错误；把「没写完」当失败关连接，弱网下会频繁掉线。
+        // 注意：统计在整帧写完后才加，别在入队时加，否则看板会把还没发出去的消息算进去。
+        // 上游：Send、Pump
+        // 下游：Socket.Send
         private void FlushPending()
         {
             Socket socket = m_socket;
@@ -435,7 +468,7 @@ namespace NBC.Framework.Net.Adapter
                 {
                     if (ex.SocketErrorCode == SocketError.WouldBlock)
                     {
-                        return;     // 内核发送缓冲满了：下次 Pump 继续
+                        return;
                     }
 
                     CloseWithReason("发送失败：" + DescribeError(ex.SocketErrorCode));
@@ -448,14 +481,14 @@ namespace NBC.Framework.Net.Adapter
 
                 if (sent <= 0)
                 {
-                    return;         // 理论上不会发生；不推进也不假装成功
+                    return;
                 }
 
                 m_writingOffset += sent;
 
                 if (m_writingOffset < m_writing.Length)
                 {
-                    return;         // 部分写出：下次 Pump 从断点接着写
+                    return;
                 }
 
                 m_bytesSent += m_writing.Length;
@@ -465,11 +498,19 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        // ====================================================================
-        //  内部：接收
-        // ====================================================================
-
-        /// <summary>把内核里已经收到的字节全部读干净，并拆成帧交出去。</summary>
+        // 功能：把内核里当前已经到达的字节读干净，喂给拆帧器并逐帧回调。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 状态不是 Connected 或套接字已空就停
+        //   2) 用 Poll(SelectRead) 问有没有东西；没有就结束本帧
+        //   3) 可读但 Available 为 0，说明对端发了 FIN，必须按断开处理
+        //   4) 一次最多读满接收缓冲，读到的字节先计入统计再喂给拆帧器
+        //   5) 立刻拆帧，把凑齐的帧交出去
+        // 注意：可读但收到 0 字节就是对端关闭；漏掉这条会表现成「对方早已退出，本端还一直以为自己连着」，而且只在联机对局里才看得见。
+        // 注意：一次 Receive 可能只拿到半帧，也可能三帧粘在一起，边界全部交给 FrameDecoder，上层永远看不到粘包与拆包。
+        // 上游：Pump
+        // 下游：FrameDecoder.Append、DispatchFrames、CloseWithReason
         private void ReceiveAvailable()
         {
             Socket socket = m_socket;
@@ -494,7 +535,7 @@ namespace NBC.Framework.Net.Adapter
 
                 if (!readable)
                 {
-                    return;         // 没东西可读，本帧到此为止
+                    return;
                 }
 
                 int available;
@@ -515,7 +556,6 @@ namespace NBC.Framework.Net.Adapter
 
                 if (available <= 0)
                 {
-                    // 见文件头 ③：可读但 0 字节 = 对端发了 FIN
                     CloseWithReason("对端关闭了连接（收到 0 字节）");
                     return;
                 }
@@ -554,7 +594,16 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>把拆帧器里攒够的帧一条条交出去（0 长度帧也算一条）。</summary>
+        // 功能：把拆帧器里攒够的帧逐条回调给 FrameReceived，直到取不出整帧。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 循环 TryDequeue，取不到就停；若带 error 说明协议违规，按违规关闭
+        //   2) 每交出一条先记一帧，再把事件取成本地快照后调用，回调里退订也不影响本次调用
+        //   3) 回调里可能已经关闭（例如收到踢人消息），所以每次回调后都重查状态
+        // 注意：0 长度帧也算一条，必须照常回调——protobuf 的空消息就是 0 字节，丢了等于丢空心跳。
+        // 上游：ReceiveAvailable
+        // 下游：FrameReceived、CloseWithReason
         private void DispatchFrames()
         {
             while (true)
@@ -583,19 +632,23 @@ namespace NBC.Framework.Net.Adapter
 
                 if (m_state != ETransportState.Connected)
                 {
-                    return;     // 回调里可能已经关掉了（例如收到"踢人"消息）
+                    return;
                 }
             }
         }
 
-        // ====================================================================
-        //  内部：关闭与杂项
-        // ====================================================================
-
-        /// <summary>
-        /// 关闭（带原因）。**幂等**：已经是 Closed 就直接返回，不会重复报 `Closed`。
-        /// </summary>
-        /// <param name="reason">人话原因。</param>
+        // 功能：按给定原因关闭连接，清掉未发数据并至多上报一次 Closed。
+        // 入参：reason 关闭原因（人话，会进 Description，也会作为 Closed 的参数）
+        // 返回：无
+        // 步骤：
+        //   1) 已经是 Closed 就直接返回，保证幂等、不重复报 Closed
+        //   2) 先置状态与原因、再停计时器，避免关闭过程中还有代码按旧状态动作
+        //   3) 清空待发队列与正在写的帧——留着也不会再发，只会让排查时误以为已经发过
+        //   4) 先摘掉套接字引用再关它；关闭时的报错一律忽略，连接已经废了，没有可做的动作
+        //   5) 最后按 m_closeNotified 报一次 Closed；回调里可能重入 Close，所以先置标记再取快照
+        // 注意：Closed 的契约是至多一次，重连时要靠 Connect 复位 m_closeNotified，漏了复位会让新连接的关闭原因永远报不出来。
+        // 上游：Connect、PumpConnecting、FlushPending、ReceiveAvailable、DispatchFrames、Close
+        // 下游：Closed
         private void CloseWithReason(string reason)
         {
             if (m_state == ETransportState.Closed)
@@ -607,7 +660,6 @@ namespace NBC.Framework.Net.Adapter
             m_closedReason = reason;
             m_connectTimer.Stop();
 
-            // 没发出去的消息不留着（留着也不会再发了，留着只会让排查时误以为"发过了"）
             m_pending.Clear();
             m_writing = null;
             m_writingOffset = 0;
@@ -623,7 +675,6 @@ namespace NBC.Framework.Net.Adapter
                 }
                 catch (SocketException)
                 {
-                    // 关的时候报错没有可做的动作（连接已经废了），忽略
                 }
                 catch (ObjectDisposedException)
                 {
@@ -642,9 +693,16 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>把主机名解析成地址（优先 IPv4）。</summary>
-        /// <param name="host">主机。</param>
-        /// <returns>地址。</returns>
+        // 功能：把主机名解析成地址，优先挑 IPv4。
+        // 入参：host 主机（IP 字面量或域名，不能为空）
+        // 返回：解析出的地址；域名一个地址都解析不出来时抛 SocketException(HostNotFound)
+        // 步骤：
+        //   1) 能直接解析成 IP 就原样返回，省掉一次 DNS
+        //   2) 否则查 DNS；结果为空就按 HostNotFound 抛，让上层统一转成 Closed 的原因
+        //   3) 优先返回 IPv4：局域网与本机场景更省事，日志也更好看
+        //   4) 没有 IPv4 才退回第一个地址
+        // 上游：Connect
+        // 下游：Dns.GetHostAddresses
         private static IPAddress ResolveAddress(string host)
         {
             IPAddress literal;
@@ -665,16 +723,21 @@ namespace NBC.Framework.Net.Adapter
             {
                 if (all[i].AddressFamily == AddressFamily.InterNetwork)
                 {
-                    return all[i];      // 局域网/本机场景下 IPv4 更省事（也更容易看日志）
+                    return all[i];
                 }
             }
 
             return all[0];
         }
 
-        /// <summary>读套接字的 `SO_ERROR`（0 = 没错误）。读不到就当 0。</summary>
-        /// <param name="socket">套接字。</param>
-        /// <returns>错误码。</returns>
+        // 功能：读套接字的 SO_ERROR，用来判断非阻塞连接到底成没成。
+        // 入参：socket 套接字
+        // 返回：错误码，0 = 没错误；读不到也按 0 处理
+        // 步骤：
+        //   1) 直接读 SocketOptionName.Error
+        //   2) 读取时套接字已被关或出错就返回 0，不在已经出错的路径上再抛一次
+        // 上游：PumpConnecting
+        // 下游：无
         private static int GetSocketError(Socket socket)
         {
             try
@@ -691,9 +754,13 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>这个错误码是不是"连接正在进行中"（非阻塞连接的正常表现）。</summary>
-        /// <param name="error">错误码。</param>
-        /// <returns>正在进行返回 true。</returns>
+        // 功能：判断错误码是不是「非阻塞连接正在进行中」的正常表现。
+        // 入参：error 套接字错误码
+        // 返回：true = 还在握手，交给 Pump 推进；false = 真的失败了
+        // 步骤：
+        //   1) WouldBlock、InProgress、AlreadyInProgress、TryAgain 都算进行中——各平台报的不一样，四个都要认
+        // 上游：Connect
+        // 下游：无
         private static bool IsConnectPending(SocketError error)
         {
             return error == SocketError.WouldBlock
@@ -702,9 +769,14 @@ namespace NBC.Framework.Net.Adapter
                 || error == SocketError.TryAgain;
         }
 
-        /// <summary>把套接字错误码说成人话（联机排查时这几句能省很多时间）。</summary>
-        /// <param name="error">错误码。</param>
-        /// <returns>人话。</returns>
+        // 功能：把套接字错误码翻成一句中文人话，供日志与 Closed 的原因使用。
+        // 入参：error 套接字错误码
+        // 返回：人话描述；没收录的码退回成「枚举（整数值）」，不丢信息
+        // 步骤：
+        //   1) 常见联机故障逐一映射：拒绝、超时、DNS、不可达、重置、中止、权限、端口占用
+        //   2) 没收录的码把枚举名与整数值都打出来，方便对照文档查
+        // 上游：Connect、PumpConnecting、FlushPending、ReceiveAvailable
+        // 下游：无
         private static string DescribeError(SocketError error)
         {
             switch (error)
@@ -732,13 +804,19 @@ namespace NBC.Framework.Net.Adapter
             }
         }
 
-        /// <summary>`host:port`。</summary>
+        // host:port 形式的端点文本，只用于日志与错误消息；主机为空时形如 (未知主机):7777。
         private string Endpoint
         {
             get { return (string.IsNullOrEmpty(m_host) ? "(未知主机)" : m_host) + ":" + m_port; }
         }
 
-        /// <summary>已释放还来调：直接报错（这是调用方的 bug，不该悄悄忽略）。</summary>
+        // 功能：已释放还来调时当场抛错，把调用方的 bug 暴露在调用点。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 只查 m_disposed；置上之后 Connect 与 Send 都先过这一关
+        // 上游：Connect、Send
+        // 下游：无
         private void ThrowIfDisposed()
         {
             if (m_disposed)

@@ -1,41 +1,5 @@
-// ============================================================================
-//  NBC.Framework.Asset.Adapter · 把 YooAsset v3 的句柄翻译成框架的加载操作
-//  对应需求：FW-M17（把 YooAsset 的异步句柄适配成框架接口）
-//  程序集：NBC.Framework.YooAsset（**只有这里**允许出现 YooAsset 类型）
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 写这个文件前必须知道的两件事（都实测过，别凭记忆）
-//  ---------------------------------------------------------------------------
-//  ① **装的是 YooAsset 3.0.5，是重构后的 v3 API。**
-//     v2.3 那套（`InitializeAsync` / `EditorSimulateModeParameters` / `RawFileHandle`）
-//     被 `#if YOOASSET_LEGACY_API` 包着，而**这个宏包里没定义、工程里也没定义**
-//     → 那些文件不参与编译，写了就是"找不到类型"。
-//     完整对照表见 `Docs\05-依赖清单.md` 的「一·补」。
-//
-//  ② **`AssetHandle.AssetObject` 是"原始资源"，不是实例。**
-//     证据：`AssetProvider.cs:42` 直接赋值加载产物；`AssetHandle.cs:56` 只做转发；
-//     全 Runtime 目录 `Object.Instantiate` **只**出现在 `InstantiateOperation.cs`；
-//     而 v3 把实例化做成了**显式独立步骤**（`InstantiateSync()` / `InstantiateAsync()`）。
-//
-//  ---------------------------------------------------------------------------
-//  ③ 这个适配层【不】自动实例化 GameObject —— 一处刻意不照搬原框架的地方
-//  ---------------------------------------------------------------------------
-//  原框架 `ResMgr` 有一条**隐式契约**：`Load<GameObject>` 返回的是**实例化后的对象**。
-//  审计当时提醒说"适配层必须复刻这条契约，否则 6 个调用点行为全错"（`Docs\06` §6.2）。
-//
-//  但那条提醒基于一个前提：**调用点已经存在、不能改**。而实际上——
-//  那 6 个调用点全在**原框架自己**的 `PoolMgr` / `UIManager` / `MusicMgr` 里，
-//  而这些模块我们**正在重写**（A2 已完成、A8/A9 待做）。所以没有兼容包袱。
-//
-//  于是这里选择**返回原始资源**，把"实例化"变成调用方的显式动作。理由：
-//    ① 语义清晰："加载资源"和"创建实例"是两件事，原版把它们混在一起正是麻烦的来源；
-//    ② **能和 A2 的池自然组合**：`new GameObjectPool(name, () => Instantiate(prefab), ...)`
-//       —— 池本来就通过"工厂"拿对象，正好对上；
-//    ③ 避免"资源引用计数"与"实例生命周期"两套东西纠缠在一起
-//       （实例谁销毁？和 asset 的引用计数什么关系？原版根本没回答）。
-//
-//  ⚠️ 这条是对原版行为的**有意改变**，已记录在 `Docs\06` §十四。A8/A9 写调用方时必须按新语义来。
-// ============================================================================
+// 这个文件里有：
+//   YooAssetLoadOperation（类）：把 YooAsset v3 的 AssetHandle 包成框架的 IAssetLoadOperation，并把状态枚举翻译过来
 
 using System;
 using NBC.Framework.Asset;
@@ -43,19 +7,30 @@ using YooAsset;
 
 namespace NBC.Framework.Asset.Adapter
 {
-    /// <summary>
-    /// 把 YooAsset 的资源句柄包装成框架的 <see cref="IAssetLoadOperation"/>。
-    /// </summary>
+    // 主要功能：把 YooAsset v3 的资源句柄包成框架的 IAssetLoadOperation，状态 / 进度 / 错误 / 资源都转成框架自己的形状。
+    // 主要数据成员：m_handle（底层 YooAsset 句柄）、m_disposed（Dispose 是否已执行过）。
+    // 主要外部方法：Location / Status / Progress / Error / AssetObject / IsDone / WaitForAsyncComplete / Dispose，以及给场景适配用的静态 MapStatus。
+    // 谁在用它：YooAssetProvider.LoadAsync / LoadSync 造它；AssetManager 的缓存条目 Entry 订阅 OnComplete 并负责调 Dispose。
+    // 注意：本类只给原始资源，不自动实例化 —— 实例化是调用方的显式动作，池正好用工厂拿实例，两边不纠缠引用计数。
+    // 注意：装的是 YooAsset 3.0.5 的 v3 API，v2.3 那批名字被 YOOASSET_LEGACY_API 包着且工程未定义，写了编不过。
     internal sealed class YooAssetLoadOperation : IAssetLoadOperation
     {
-        /// <summary>底层 YooAsset 句柄。</summary>
+        // 底层 YooAsset 句柄，构造时订阅它的 Completed，Dispose 之前一直有效
         private readonly AssetHandle m_handle;
 
+        // 是否已经 Dispose 过；取值 true / false，只有 Dispose 自己看它
         private bool m_disposed;
 
-        /// <summary>构造包装。</summary>
-        /// <param name="location">资源地址（YooAsset 的 location）。</param>
-        /// <param name="handle">YooAsset 返回的句柄。</param>
+        // 功能：存下资源地址与底层句柄，并订阅句柄的完成事件，把结果转成本类的 OnComplete。
+        // 入参：location 资源地址（YooAsset 的 location）；handle YooAsset 已返回的资源句柄
+        // 返回：无
+        // 步骤：
+        //   1) 先存地址与句柄，后面所有成员都读这两个字段
+        //   2) 当场订阅 Completed：这是本类唯一的完成来源，订阅不能拖到构造返回之后
+        // 上游：YooAssetProvider.LoadAsync / LoadSync（异步与同步两条路都走这个构造）
+        // 下游：m_handle.Completed
+        // 注意：句柄若在订阅前就已加载完，YooAsset 的 Completed 会当场同步回调（它的 add 访问器判到 IsDone 就直接 Invoke），
+        //   这条通知早于调用方订阅 OnComplete —— 所以判断是否完成要以 IsDone 兜底，不能只等 OnComplete。
         public YooAssetLoadOperation(string location, AssetHandle handle)
         {
             Location = location;
@@ -63,25 +38,25 @@ namespace NBC.Framework.Asset.Adapter
             m_handle.Completed += HandleCompleted;
         }
 
-        /// <summary>完成通知。</summary>
+        // 完成通知，底层句柄完成时回调一次，订阅者拿到的是本操作本身
         public event Action<IAssetLoadOperation> OnComplete;
 
-        /// <summary>资源地址。</summary>
+        // 资源地址（YooAsset 的 location），构造时传入，之后不变
         public string Location { get; private set; }
 
-        /// <summary>状态（已把 YooAsset 的枚举翻译成框架自己的枚举）。</summary>
+        // 当前状态，每次读都由 MapStatus 从 YooAsset 的 EOperationStatus 现翻译；取值 None / Loading / Succeeded / Failed
         public AssetStatus Status
         {
             get { return MapStatus(m_handle.Status); }
         }
 
-        /// <summary>进度 0..1。</summary>
+        // 加载进度，0..1 的浮点值，由 YooAsset 句柄给出
         public float Progress
         {
             get { return m_handle.Progress; }
         }
 
-        /// <summary>失败原因。</summary>
+        // 失败原因，未失败时为空串（句柄给 null 也兜成空串，调用方不用判空）
         public string Error
         {
             get
@@ -91,31 +66,34 @@ namespace NBC.Framework.Asset.Adapter
             }
         }
 
-        /// <summary>加载到的**原始资源**（不是实例，见文件头第 ③ 条）。</summary>
+        // 加载到的原始资源，不是实例；未加载完成时为 null，实例化由调用方自己调 Instantiate
         public UnityEngine.Object AssetObject
         {
             get { return m_handle.AssetObject; }
         }
 
-        /// <summary>是否已完成。</summary>
+        // 是否已完成，成功与失败都算完成
         public bool IsDone
         {
             get { return m_handle.IsDone; }
         }
 
-        /// <summary>阻塞直到完成（仅编辑器 / 工具）。</summary>
+        // 功能：把「阻塞等到加载完成」原样转给 YooAsset 句柄；只给编辑器 / 工具用，Player 里会卡住主线程。
         public void WaitForAsyncComplete()
         {
             m_handle.WaitForAsyncComplete();
         }
 
-        /// <summary>
-        /// 释放底层句柄。
-        /// <para>
-        /// ⚠️ 只调 `Dispose()`，**不**再调 `Release()` ——
-        /// `HandleBase.cs:42` 里 `Dispose()` 的实现就是 `this.Release()`，两个都调等于释放两次。
-        /// </para>
-        /// </summary>
+        // 功能：退订完成事件并释放底层 YooAsset 句柄，重复调用只生效一次。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 用 m_disposed 做幂等闸门：句柄释放与缓存条目丢弃都会调到这儿，重复调用是常态
+        //   2) 先退订 Completed 再释放：否则释放途中若发完成通知，会把已经作废的操作回调给订阅者
+        //   3) 最后只调句柄的 Dispose，不调 Release
+        // 上游：AssetManager.Entry.DisposeOperation（缓存条目被丢弃时）
+        // 下游：m_handle.Completed、m_handle.Dispose
+        // 注意：YooAsset 的 HandleBase.Dispose 内部就是调 Release，两个都调等于释放两次。
         public void Dispose()
         {
             if (m_disposed)
@@ -128,10 +106,15 @@ namespace NBC.Framework.Asset.Adapter
             m_handle.Dispose();
         }
 
-        /// <summary>
-        /// YooAsset 的状态枚举 → 框架的状态枚举。
-        /// 两个枚举**刻意不共用**：业务层不该看见 `EOperationStatus`（YOO-09）。
-        /// </summary>
+        // 功能：把 YooAsset 的 EOperationStatus 翻译成框架的 AssetStatus。
+        // 入参：status YooAsset 的操作状态，正常是 None / Processing / Succeeded / Failed 四个之一
+        // 返回：框架状态；不认识的取值一律按 None（当作还没开始），不会抛
+        // 步骤：
+        //   1) 逐个显式映射，不靠枚举数值强转：数值对得上只是巧合，YooAsset 以后插入取值就会静默错位
+        //   2) 留 default 兜底，遇到不认识的状态按 None 处理而不是抛
+        // 上游：本类 Status 属性、YooAssetSceneOperation.Status
+        // 下游：无
+        // 注意：两个枚举刻意不共用，业务层不该看见 EOperationStatus。
         internal static AssetStatus MapStatus(EOperationStatus status)
         {
             switch (status)
@@ -149,6 +132,14 @@ namespace NBC.Framework.Asset.Adapter
             }
         }
 
+        // 功能：把底层句柄的完成事件转成本类的 OnComplete 通知。
+        // 入参：handle 已完成的 YooAsset 句柄，本类只用它触发，不读内容
+        // 返回：无
+        // 步骤：
+        //   1) 先把事件复制到局部变量再判空：判空与调用之间若有订阅者被摘掉，直接读字段会空引用
+        //   2) 用 this 回调，让订阅者拿到操作本身去读结果
+        // 上游：m_handle 的 Completed
+        // 下游：OnComplete 的订阅者（AssetManager 的 Entry）
         private void HandleCompleted(AssetHandle handle)
         {
             Action<IAssetLoadOperation> handlers = OnComplete;
