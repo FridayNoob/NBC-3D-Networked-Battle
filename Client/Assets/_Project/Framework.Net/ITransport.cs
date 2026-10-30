@@ -1,101 +1,93 @@
-// ============================================================================
-//  ITransport —— 传输层的**接缝**（上层只认"能收发消息"，不认识 TCP/UDP）
-//  项目：3D联网战斗Demo   对应：M3-S2、Docs\25 §三 D1
+// 这个文件里有：
+//   ITransport（接口）：传输层的接缝，只约定连接、发送、收帧与关闭，不认 TCP 还是 UDP。
 //
-//  ---------------------------------------------------------------------------
-//  为什么是接缝，而不是"直接在业务代码里 new 一个 TcpClient"
-//  ---------------------------------------------------------------------------
-//  和 B2 的 `IAssetProvider`、E1 的 `IPerfCounterSource` 同一个套路：
-//
-//      上层（Game / 同步逻辑）  ->  ITransport  <-  TcpTransport（适配层）
-//                                                    ↑ 以后还有 UdpTransport（M4 帧同步）
-//                                                                 写测试用的 FakeTransport
-//
-//  回报有三条，都很具体：
-//    · **游戏逻辑能在 EditMode 里测**：塞一个假传输，不用开端口、不用等网络
-//    · **M4 要上 UDP 时不用改策略层**：换一个实现类即可（这正是 Q2"混合同步"要的形状）
-//    · **网络模拟器（NET-07）能插在中间**：它本身就是一个"包了一层的 `ITransport`"
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 它住在 **NBC.Framework.Net**（而不是 `NBC.Framework`）—— 一个实测过的决定
-//  ---------------------------------------------------------------------------
-//  和 `Framework\Asset\`（接缝）+ `Framework.YooAsset\`（适配）的分法同源，但**多了一条理由**：
-//  整个网络层**不许碰引擎**。于是 `NBC.Framework.Net.asmdef` 写的是
-//
-//      "references": [ "NBC.Shared" ]        ← 不引 NBC.Framework
-//      "noEngineReferences": true            ← 连 UnityEngine 都不给
-//
-//  这两行买到的是**可执行**，不是风格：
-//    · `noEngineReferences: true` 让"网络层偷偷用 UnityEngine"变成**编译错误**
-//      （否则那种代码只有 Unity 能跑，而我在沙箱里一行都跑不了）
-//    · 不引 `NBC.Framework`，于是 `Server\_condition-probe`（.NET 8）能把这份源码
-//      **直接编进去并真跑**（回环收发、粘包、对端关闭…）——
-//      这是"我改完网络代码当天就能拿到证据"的唯一办法（见 Docs\11 §四）。
-//  代价：网络层用不了框架里的日志/事件中心。目前它确实不需要
-//  （报错走 `Closed` 的人话原因，上层接到之后自己记日志）。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 它是**拉模式（Pump）**，不是"后台线程 + 回调"
-//  ---------------------------------------------------------------------------
-//  `Pump()` 由调用方**每帧调一次**，一切都在调用它的那个线程上发生：
-//    · 和 Unity 的主线程模型一致（回调里可以直接碰 Transform / UI）
-//    · 逻辑帧与网络推进**同源**，便于对账（"这一帧收到了什么"是可复现的）
-//    · 测试里可以手工 `Pump()` 到某个状态，不需要 sleep
-//  代价：网络 IO 的及时性取决于 Pump 频率（30~60Hz 完全够 M3；真要更高吞吐再谈线程）。
-//
-//  ---------------------------------------------------------------------------
-//  收发的是**载荷**，不是"原始字节流"
-//  ---------------------------------------------------------------------------
-//  分帧（长度前缀）由**实现**负责，而且两端用的是**同一份** `Shared\Net\FrameCodec`：
-//      `Send(byte[] payload)`  → 实现内部 `FrameCodec.Encode` → 写 socket
-//      `FrameReceived(byte[])` → 实现内部 `FrameDecoder` 拆好之后交出来
-//  于是上层只面对"一条条消息"，永远不用管粘包/拆包。
-// ============================================================================
+// 注意：本程序集是 noEngineReferences 且只引 NBC.Shared —— 网络层一旦碰 UnityEngine 就是编译错误；
+//       换来的是这份源码能被 .NET 8 探针直接编进去真跑，改完当天就能拿到回环收发的证据。
+// 注意：整套接口是拉模式，FrameReceived / Closed 只在 Pump 里、由调用 Pump 的那条线程触发，
+//       所以回调里可以直接碰 Transform 与 UI。
+// 注意：收发的是载荷，长度前缀分帧由实现负责，两端共用 Shared\Net\FrameCodec，
+//       上层永远不用管粘包与拆包。
 
 using System;
 
 namespace NBC.Framework.Net
 {
-    /// <summary>传输层：连、发、收、关（**上层只认这个接口**）。</summary>
+    // 主要功能：约定一条网络连接的完整生命周期——连接、发载荷、每帧推进收帧、关闭，并暴露状态、统计与人话描述。
+    // 主要数据成员：State（取值见 ETransportState）、Stats（收发字节与帧数的累计值）、Description（人话端点描述）、IsConnected（是否已连上）。
+    // 主要外部方法：Connect / Send / Pump / Close，两个事件 FrameReceived / Closed，外加继承来的 Dispose。
+    // 谁在用它：Game 的 NetSession 持有它并在自己的 Pump 里推进；RuntimeNetDriver 装的是 CountingTransport(TcpTransport)；
+    //            Editor 的 NetDebugWindow 再包一层 CountingTransport；测试里的 FakeTransport / SimulatedTransport 也实现这层契约。
+    /// <summary>传输层接缝：连、发、收、关，上层只认这个接口，不认具体是 TCP 还是 UDP。</summary>
     public interface ITransport : IDisposable
     {
-        /// <summary>当前状态。</summary>
+        /// <summary>当前连接状态；0 未连、1 正在连、2 已连、3 已关闭。</summary>
         ETransportState State { get; }
 
-        /// <summary>收发统计（网络模拟器 / 看板 / 排查用）。</summary>
+        /// <summary>收发统计：已发与已收的字节（含帧头）和帧数，供看板与排查读取。</summary>
         TransportStats Stats { get; }
 
-        /// <summary>人话描述（日志里用，例如 `tcp 127.0.0.1:7777`）。</summary>
+        /// <summary>一句人话描述，供日志使用，例如 tcp 127.0.0.1:7777；关闭后附带原因。</summary>
         string Description { get; }
 
-        /// <summary>是不是连上了（等价于 <see cref="State"/> == Connected）。</summary>
+        /// <summary>是否已连上，等价于 State 为 Connected；只有该状态才能 Send。</summary>
         bool IsConnected { get; }
 
-        /// <summary>收到**一整帧**（载荷）时回调。实现保证：只在 <see cref="Pump"/> 里被调。</summary>
+        /// <summary>收到一整帧载荷时回调；实现保证只在 Pump 里、在调用 Pump 的那条线程上触发。</summary>
         event Action<byte[]> FrameReceived;
 
-        /// <summary>断开或出错时回调（参数是一句人话原因；主动关闭时为"主动关闭"）。**至多触发一次**。</summary>
+        /// <summary>断开或出错时回调，参数是一句人话原因（主动关闭时为「主动关闭」）；至多触发一次。</summary>
         event Action<string> Closed;
 
-        /// <summary>
-        /// 发起连接（**非阻塞**：立刻返回，连上与否靠 <see cref="Pump"/> 推进）。
-        /// <para>连不上**不抛异常** —— 走 <see cref="Closed"/> 报原因（因为此刻还在异步握手中）。</para>
-        /// </summary>
-        /// <param name="host">主机（如 `127.0.0.1`）。</param>
-        /// <param name="port">端口。</param>
+        /// <summary>发起连接后立即返回，握手进度靠 Pump 推进；连不上不抛异常，改由 Closed 报原因。</summary>
+        /// <param name="host">主机，IP 或域名，不能为空。</param>
+        /// <param name="port">端口，取值 1~65535。</param>
+        // 功能：把传输层从「未连」切到「正在连」，真正的握手留给后面的 Pump。
+        // 入参：host 主机（IP 或域名，不能为空）；port 端口（1~65535）
+        // 返回：无
+        // 步骤：
+        //   1) 已在连接中或已连上就当场报错，避免一个实例背负两条连接
+        //   2) 重连前由实现清掉上一局残留的拆帧缓冲，否则上一局的半帧会被当成新连接的开头
+        //   3) 记下目标并置为 Connecting；此刻仍在异步握手中，失败只能走 Closed
+        // 上游：NetSession 的登录与重连流程
+        // 下游：Pump（推进握手）、Closed（报失败原因）
         void Connect(string host, int port);
 
-        /// <summary>
-        /// 发一条消息（**载荷**；分帧由实现做）。
-        /// <para>⚠️ 未连接时**必须明确报错**，不许静默丢 —— "偶尔丢一条"是最难查的一类 bug。</para>
-        /// </summary>
-        /// <param name="payload">载荷（可以为 null —— 那就是一条 0 长度帧）。</param>
+        /// <summary>发一条载荷，帧头与长度前缀由实现补；未连接时抛异常，不静默丢弃。</summary>
+        /// <param name="payload">载荷，允许为 null，表示一条 0 长度帧。</param>
+        // 功能：把一段载荷交给实现排队发出，调用方不用碰粘包与拆包。
+        // 入参：payload 载荷（null 表示 0 长度帧）；超过单帧上限由实现拒收
+        // 返回：无
+        // 步骤：
+        //   1) 未连上直接抛异常——静默丢会变成偶发少一条消息，是最难查的一类问题
+        //   2) 交给实现分帧后入队，长度前缀只加这一次
+        //   3) 立刻冲刷一次，免得调用方忘了 Pump 就静默不发
+        // 上游：NetSession 的握手、心跳与业务消息发送
+        // 下游：实现内的 FrameCodec.Encode 与 socket 写
         void Send(byte[] payload);
 
-        /// <summary>推进一帧：收字节 → 拆帧 → 交给 <see cref="FrameReceived"/>；顺便冲刷发送队列。</summary>
+        /// <summary>推进一帧：冲刷发送队列，收字节、拆帧并回调 FrameReceived。</summary>
+        // 功能：由调用方每帧调一次，把这一帧能收的都收完，并推进尚未完成的握手。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 正在连就先推进握手，没连上直接返回
+        //   2) 先冲刷待发队列再读取，让同一帧内的发送先于本轮新到的消息被处理
+        //   3) 读到的字节喂给拆帧器，凑满一帧才回调 FrameReceived
+        // 上游：NetSession 的每帧驱动
+        // 下游：FrameReceived、Closed
+        // 注意：回调都在调用 Pump 的这条线程上发生（通常是主线程），所以回调里可以直接碰 Transform 与 UI。
         void Pump();
 
-        /// <summary>主动关闭（**可以重复调用**；第一次之后 State 就是 Closed）。</summary>
+        /// <summary>主动关闭，可重复调用；第一次之后 State 即为 Closed。</summary>
+        // 功能：断开并回收这条连接，同时以「主动关闭」为原因上报一次 Closed。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 已经 Closed 就直接返回，重复调用不会再触发 Closed
+        //   2) 置为 Closed 并停止发送，未发出的消息随之丢弃，免得排查时误以为已经发过
+        //   3) 关掉底层 socket，最后按需回调一次 Closed
+        // 上游：NetSession 的主动断开与退出流程
+        // 下游：Closed
         void Close();
     }
 }
