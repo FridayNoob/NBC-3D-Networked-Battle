@@ -193,14 +193,17 @@ namespace NBC.Framework.Net
             }
         }
 
-        // 功能：取一次一致的全部统计，供 HUD 显示。
-        // 入参：无
-        // 返回：一次一致的全部统计
-        // 步骤：1) 先惰性推进窗口（保证数字是最新的）；2) 4 槽求和 ÷ 1 秒 = B/s；3) 打包返回
-        // 上游：NetHudPanel（每 0.25 秒一次）
-        // 下游：无
+        /// <summary>取一次一致的全部统计，供 HUD 显示。</summary>
+        /// <returns>模式、累计与每秒字节、RTT、帧号的一次快照；带宽是最近一秒的滑动窗口值。</returns>
         public static NetStatsSnapshot Snapshot()
         {
+            // 功能：先推进采样窗口，再把四个槽求和换算成带宽。
+            // 步骤：
+            //   1) Advance 让槽位与真实时间对齐（面板不调也不会卡住）
+            //   2) 4 槽求和 ÷ 1 秒 = B/s
+            //   3) 在同一把锁里打包，保证四个字段来自同一时刻
+            // 上游：NetHudPanel 每 0.25 秒一次
+            // 下游：无
             lock (Gate)
             {
                 Advance();
