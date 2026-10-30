@@ -1,66 +1,46 @@
-// ============================================================================
-//  IConditionProgressStore —— 条件进度的「存放处」接缝
-//  项目：3D联网战斗Demo   对应：M2-A1、M4（持久化）
-//
-//  ---------------------------------------------------------------------------
-//  为什么要抽这道缝
-//  ---------------------------------------------------------------------------
-//  和 M1 里那几道缝（`IAssetProvider` / `IInputSource` / `IConfigSource` /
-//  `IPerfCounterSource`）**完全同一个套路**，只是这次换成了"进度存哪"：
-//
-//      · EditMode 测试用**内存实现**，不需要数据库、不需要 Unity 资产
-//      · M4 要落库时，加一个走 MySQL 的实现，**`ConditionTracker` 一行都不用改**
-//      · 服务端（权威）与客户端（表现）可以**用同一个实现**，保证语义一致
-//
-//  ⚠️ 接口刻意只有三个方法、只用 `int`：
-//     进度是"某个键对应一个计数"，任何多余的类型都会把存储实现绑死在客户端。
-//
-//  ⚠️ **读不到必须给 0，而不是报错**：
-//     "这个条件还没进度"是**正常状态**（第一次见到它），不是异常。
-//     真正的异常（连接断了）应该由实现自己抛，不要混进语义里。
-// ============================================================================
+// 这个文件里有：
+//   IConditionProgressStore（接口）：条件进度的存放处，按条件编号读写进度与删除记录
 
-// ============================================================================
-//  ⚠️ `#nullable disable` —— 让**双端看到同一套规则**（D1 的"不许漂移"）
-// ============================================================================
-//  同一份源码在两个 nullable 设置**不同**的工程里编译：
-//      · Unity 侧（`NBC.Shared.asmdef`）      ：没开可空引用类型
-//      · 服务端（`NBC.Shared.csproj` → `Server\Directory.Build.props`）：`<Nullable>enable</Nullable>`
-//
-//  不处理的话会出现**两头都不干净**：
-//      · 服务端多出一批 CS86xx（事件没初始化、局部变量赋 null……）
-//      · 而如果为了消警告去写 `string?` / `List<T>?`，**Unity 侧**又会因为
-//        "可空注解出现在未开启可空上下文的文件里"报 **CS8632**
-//
-//  所以这里显式关掉：**两边都按"没有可空注解"这套规则编译**。
-//  这不是"为了消警告而关检查"，而是**把环境差异钉死在一处** ——
-//  否则"服务端编得过、Unity 编不过"（或反过来）正是 D1 要防的那种漂移。
-//
-//  ⚠️ 代价（如实记）：本目录里**放弃**了可空引用类型的静态检查，
-//     "可能为 null"要靠 XML 注释和运行期校验（本目录两个都做了）。
-//     若将来两端统一开启可空，把这几行删掉即可 —— 它们集中且显眼。
-// ============================================================================
-
+// 注意：文件顶部的 nullable 关闭指令让 Unity（未开可空）与服务端（已开可空）按同一套规则编译；不关掉会分别报 CS86xx / CS8632。代价是本目录放弃可空静态检查，将来两端统一开启后删掉它。
 #nullable disable
 
 namespace NBC.Shared.Condition
 {
-    /// <summary>条件进度的存放处（键 = 条件行的编号）。</summary>
+    // 主要功能：定义条件进度的存放处，按条件编号读取、写入与删除进度记录，双端共用同一份契约。
+    // 主要数据成员：无（纯接口；刻意只用 int 且不带 playerId，避免把实现绑死在某一端；服务端实现把玩家归属绑在构造上）。
+    // 主要外部方法：GetProgress / SetProgress / Remove。
+    // 谁在用它：ConditionTracker 读写进度；客户端与 EditMode 测试用 InMemoryConditionProgressStore，服务端用 CachingConditionProgressStore。
+    /// <summary>条件进度的存放处：以条件行的编号为键，读写累计数量。</summary>
     public interface IConditionProgressStore
     {
-        /// <summary>读一个条件的进度；没记录过时返回 0。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <returns>已累计的数量。</returns>
+        // 功能：读一个条件的累计进度，供条件系统判定是否达成。
+        // 入参：conditionKey 条件行的编号（配置表主键，按配置取值）。
+        // 返回：已累计的数量；没记录过时返回 0。
+        // 步骤：本方法只有声明；实现方查记录，查不到按 0 返回，避免把正常状态当异常。
+        // 上游：ConditionTracker 的登记、查询与 Notify 累加前读取。
+        // 下游：具体实现（InMemoryConditionProgressStore / CachingConditionProgressStore）。
+        // 注意：没记录是正常状态（第一次见到这个条件）；真正的异常（连接断了）由实现自己抛，不要混进返回值。
+        /// <summary>读一个条件的进度；没记录过时返回 0，没记录是正常状态而不是错误。</summary>
         int GetProgress(int conditionKey);
 
-        /// <summary>写一个条件的进度。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <param name="value">已累计的数量。</param>
+        // 功能：写一个条件的累计进度，供条件系统保存推进结果。
+        // 入参：conditionKey 条件行的编号；value 已累计的数量（绝对值，不是增量）。
+        // 返回：无
+        // 步骤：本方法只有声明；实现方用 value 覆盖旧值，避免重复写入被叠成增量。
+        // 上游：ConditionTracker 在登记清零与 Notify 累加后调用。
+        // 下游：具体实现（InMemoryConditionProgressStore / CachingConditionProgressStore）。
+        // 注意：value 是绝对值，钳位由 ConditionTracker 负责；存放处不知道需求值，越权钳位会让职责混乱。
+        /// <summary>写一个条件的进度；value 是绝对值，覆盖旧值，钳位由 ConditionTracker 负责。</summary>
         void SetProgress(int conditionKey, int value);
 
-        /// <summary>删掉一个条件的进度（重置任务/清档用）。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <returns>本来有记录、真的删掉了才返回 true。</returns>
+        // 功能：删掉一个条件的进度记录，供重置任务或清档使用。
+        // 入参：conditionKey 条件行的编号。
+        // 返回：本来有记录、真的删掉了才返回 true；本来没有记录返回 false。
+        // 步骤：本方法只有声明；实现方删除记录，并按删除前是否存在决定返回值。
+        // 上游：重置任务 / 清档流程；当前仓库内没有正式调用点。
+        // 下游：具体实现（InMemoryConditionProgressStore / CachingConditionProgressStore）。
+        // 注意：删除必须同步到持久化层（服务端用 0 标脏），否则内存删了库里还在，下次登录进度会复活。
+        /// <summary>删掉一个条件的进度；本来有记录才返回 true。</summary>
         bool Remove(int conditionKey);
     }
 }

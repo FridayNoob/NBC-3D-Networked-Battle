@@ -1,87 +1,72 @@
-// ============================================================================
-//  InMemoryConditionProgressStore —— 进度的内存实现（M2 用这个；M4 换数据库实现）
-//  项目：3D联网战斗Demo   对应：M2-A1
-//
-//  ---------------------------------------------------------------------------
-//  它的两个身份（都要说清楚，否则容易被误用）
-//  ---------------------------------------------------------------------------
-//  ① **单机/测试**：M2 的任务进度就存在这里，进程一关就没了 ——
-//     这在 M2 是**有意**的（M2 的验收是"单机一局里能完成任务"，
-//     持久化明写是 M4 的事，见 `Docs\20` §三 M4 行）。
-//  ② **将来数据库实现的"参照实现"**：语义以它为准（读不到给 0、钳位由 Tracker 负责），
-//     换实现时对着它逐条对答案，就不会出现"换库之后行为变了"。
-//
-//  ⚠️ 它**不做钳位** —— 钳位是 `ConditionTracker` 的职责（那儿才知道需求值）。
-//     存放处只管"把数存下来"，越权做业务判断是典型的职责混乱。
-// ============================================================================
+// 这个文件里有：
+//   InMemoryConditionProgressStore（类）：把条件进度放在内存字典里的存放处实现，读不到给 0、写入即生效、进程一关就丢。
 
 using System.Collections.Generic;
 
-// ============================================================================
-//  ⚠️ `#nullable disable` —— 让**双端看到同一套规则**（D1 的"不许漂移"）
-// ============================================================================
-//  同一份源码在两个 nullable 设置**不同**的工程里编译：
-//      · Unity 侧（`NBC.Shared.asmdef`）      ：没开可空引用类型
-//      · 服务端（`NBC.Shared.csproj` → `Server\Directory.Build.props`）：`<Nullable>enable</Nullable>`
-//
-//  不处理的话会出现**两头都不干净**：
-//      · 服务端多出一批 CS86xx（事件没初始化、局部变量赋 null……）
-//      · 而如果为了消警告去写 `string?` / `List<T>?`，**Unity 侧**又会因为
-//        "可空注解出现在未开启可空上下文的文件里"报 **CS8632**
-//
-//  所以这里显式关掉：**两边都按"没有可空注解"这套规则编译**。
-//  这不是"为了消警告而关检查"，而是**把环境差异钉死在一处** ——
-//  否则"服务端编得过、Unity 编不过"（或反过来）正是 D1 要防的那种漂移。
-//
-//  ⚠️ 代价（如实记）：本目录里**放弃**了可空引用类型的静态检查，
-//     "可能为 null"要靠 XML 注释和运行期校验（本目录两个都做了）。
-//     若将来两端统一开启可空，把这几行删掉即可 —— 它们集中且显眼。
-// ============================================================================
+// 注意：#nullable disable 是让双端看到同一套规则 —— Unity 侧（NBC.Shared.asmdef）没开可空引用类型，
+//     服务端（Server\Directory.Build.props）开了；不关的话服务端会多出一批 CS86xx，
+//     而为消警告去写可空注解（如 string?），Unity 侧又会报 CS8632，两头都不干净。
+// 注意：代价是本目录放弃可空静态检查，「可能为 null」靠 XML 注释与运行期校验兜住；
+//     将来两端统一开启可空，把这一行删掉即可。
 
 #nullable disable
 
 namespace NBC.Shared.Condition
 {
-    /// <summary>把条件进度放在字典里的实现（M2 默认用这个）。</summary>
+    // 主要功能：把条件进度存在内存字典里 —— 读不到给 0、写入即生效、进程一关就丢。
+    // 主要数据成员：m_progress（条件编号 → 已累计数量）。
+    // 主要外部方法：GetProgress / SetProgress / Remove（IConditionProgressStore 那三件）、Clear（清空全部）、Count（记录条数）。
+    // 谁在用它：BattleSession 与 Editor 的 NetDebugWindow 造 ConditionTracker 时传进来；EditMode 测试也直接拿它断言进度。
+    // 注意：本类不做钳位 —— 钳位是 ConditionTracker 的职责（那儿才知道需求值），存放处越权做业务判断就是职责混乱。
+    // 注意：M2 的进度就存在这个进程里，一关就没（单机验收有意如此，持久化归 M4），别拿它当持久化。
+    // 注意：换落库实现时以这里的语义逐条对答案（读不到给 0、不钳位），否则会出现「换库之后行为变了」。
+    /// <summary>把条件进度放在字典里的内存实现；读不到给 0，且不做钳位。</summary>
     public sealed class InMemoryConditionProgressStore : IConditionProgressStore
     {
-        /// <summary>条件编号 → 已累计数量。</summary>
+        // 条件编号（配置表主键）→ 已累计数量；单位随条件本身（次数 / 件数），正常值在 0..需求值，这个范围由 ConditionTracker 保证
         private readonly Dictionary<int, int> m_progress = new Dictionary<int, int>();
 
-        /// <summary>当前有多少条记录（调试/测试用）。</summary>
+        // 功能：读当前有多少条记录，等于写过多少种不同的条件（调试与测试用）。
+        /// <summary>当前记录条数：写过几种不同的条件。</summary>
         public int Count
         {
             get { return m_progress.Count; }
         }
 
-        /// <summary>读一个条件的进度；没记录过时返回 0。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <returns>已累计的数量。</returns>
+        // 功能：按条件编号取已累计数量，没有记录就给 0。
+        // 入参：conditionKey 条件编号（配置表主键）；任意 int 都合法，查不到不抛异常
+        // 返回：已累计的数量；0 既可能是「还没开始做」也可能是「存过 0」，本类不区分
+        // 步骤：
+        //   1) 一次 TryGetValue 取值，省掉「先 ContainsKey 再索引」的两次哈希
+        //   2) 查不到直接给 0 —— 没记录只是还没开始做这个条件，是正常状态，不是要掩盖错误
+        // 上游：ConditionTracker 的 Register / Notify / IsMet / TryGetProgress / MetCount / Describe；EditMode 测试直接查
+        // 下游：m_progress
+        /// <summary>读一个条件的进度；没记录过时返回 0，不是错误。</summary>
+        /// <returns>已累计的数量；0 既可能是没做过，也可能是存过 0。</returns>
         public int GetProgress(int conditionKey)
         {
             int value;
 
-            // ⚠️ 这里**不是**在掩盖错误：没记录 = 还没开始做这个条件 = 0，是正常状态
             return m_progress.TryGetValue(conditionKey, out value) ? value : 0;
         }
 
-        /// <summary>写一个条件的进度。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <param name="value">已累计的数量。</param>
+        // 功能：把一个条件的数量写进字典 —— 没记录就新建，已有就覆盖（不做钳位，越界值也照存）。
+        /// <summary>写一个条件的进度；越界值也照存，钳位不在这里做。</summary>
         public void SetProgress(int conditionKey, int value)
         {
             m_progress[conditionKey] = value;
         }
 
-        /// <summary>删掉一个条件的进度。</summary>
-        /// <param name="conditionKey">条件行的编号。</param>
-        /// <returns>本来有记录、真的删掉了才返回 true。</returns>
+        // 功能：删掉一个条件的进度，返回是否本来有记录 —— 真的删掉了才为 true。
+        /// <summary>删掉一个条件的进度（重置任务 / 清档用）。</summary>
+        /// <returns>本来有记录、真的删掉了返回 true。</returns>
         public bool Remove(int conditionKey)
         {
             return m_progress.Remove(conditionKey);
         }
 
-        /// <summary>清空全部记录（测试收尾、切账号用）。</summary>
+        // 功能：清空全部记录，让同一进程里的下一局或下一次测试从干净状态开始。
+        /// <summary>清空全部记录，供测试收尾与切账号使用。</summary>
         public void Clear()
         {
             m_progress.Clear();
