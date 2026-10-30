@@ -1,42 +1,32 @@
-// ============================================================================
-//  RuntimeQuestFollowSink —— 把"跟随权威"接到**本地任务运行时**上
-//  项目：3D联网战斗Demo   对应：`Docs\27` §二十八（本地状态机跟随权威）
-//
-//  ---------------------------------------------------------------------------
-//  一、它为什么这么小
-//  ---------------------------------------------------------------------------
-//  决策（"本地该做什么"）全在 `QuestStateReconciler` 里 —— 那是**引擎无关**的纯逻辑，
-//  所以探针能编译它、【二十】那 8 条能跑、变异能真红。
-//  这一层只做一件事：把 `FollowToState` 转发给 `QuestRuntime.FollowState`。
-//
-//  ---------------------------------------------------------------------------
-//  二、⚠️ 为什么它在**这个**方向依赖（Game\Quest → 引擎侧运行时）
-//  ---------------------------------------------------------------------------
-//  `IQuestFollowSink` 定义在纯逻辑那一侧，它**不认识** `QuestRuntime`；
-//  由这个类把两者接起来 ⇒ 纯逻辑那一侧保持引擎无关（否则它进不了探针，
-//  那一片就再也做不出"可运行的变异"了）。
-//
-//  ---------------------------------------------------------------------------
-//  三、⚠️ 只有"改状态"这一个能力（故意的）
-//  ---------------------------------------------------------------------------
-//  `IQuestFollowSink` 上**只有** `FollowToState`：本地跟随**不许**发明奖励、不许提示玩家、
-//  不许重置进度。接口上不给这些入口，比"记得别调"可靠（见 `Docs\27` §28.2）。
-// ============================================================================
+// 这个文件里有：
+//   RuntimeQuestFollowSink（类）：把跟随权威转发给本地 QuestRuntime，只改状态、不做任何本地副作用
 
 namespace NBC.Game.Quest
 {
-    /// <summary>
-    /// 把"跟随权威"施加到本地 <see cref="QuestRuntime"/> 上（只改状态，见文件头三）。
-    /// </summary>
+    // 主要功能：把 QuestStateReconciler 算出的目标状态转发给 QuestRuntime.FollowState，本类不做决策、不做幂等判断。
+    // 主要数据成员：m_runtime（本地任务运行时，构造时保证非 null）。
+    // 主要外部方法：FollowToState（跟随到目标状态，一行转发）。
+    // 谁在用它：Editor 的 NetDebugWindow 接会话时造一个交给 QuestStateReconciler.Apply；EditMode 的 QuestFollowTests 也这样用。
+    // 注意：本类故意这么薄——决策全在引擎无关的 QuestStateReconciler 里，那一侧才能进探针、跑用例、让变异真的变红。
+    // 注意：依赖方向只能是本类引用 QuestRuntime：IQuestFollowSink 定义在纯逻辑侧、不认识 QuestRuntime，反过来接会让纯逻辑不再引擎无关。
+    // 注意：跟随只许改状态，不许发明奖励、不许提示玩家、不许重置进度；接口上不给这些入口，比「记得别调」可靠。
+    /// <summary>把权威状态施加到本地任务运行时上，只改状态、不做本地副作用。</summary>
     public sealed class RuntimeQuestFollowSink : IQuestFollowSink
     {
-        /// <summary>本地任务运行时。</summary>
+        // 本地任务运行时；构造时挡掉 null，之后不可变、非 null
         private readonly QuestRuntime m_runtime;
 
-        /// <summary>造一个出口。</summary>
-        /// <param name="runtime">本地任务运行时（不能为 null）。</param>
+        /// <summary>绑定本地任务运行时，供 FollowToState 转发目标状态。</summary>
+        /// <param name="runtime">本地任务运行时，不能为 null。</param>
         public RuntimeQuestFollowSink(QuestRuntime runtime)
         {
+            // 功能：校验运行时非空后存进 m_runtime。
+            // 步骤：
+            //   1) 先判 null 抛 ArgumentNullException —— 早炸在组装处，好过每次跟随时在 FollowState 里炸、看不出是谁没传
+            //   2) 存字段，之后只读
+            // 返回：无
+            // 上游：NetDebugWindow 接会话时、QuestFollowTests 组装追随链路时
+            // 下游：无
             if (runtime == null)
             {
                 throw new System.ArgumentNullException(nameof(runtime),
@@ -46,10 +36,13 @@ namespace NBC.Game.Quest
             m_runtime = runtime;
         }
 
-        /// <summary>把某个任务在本地跟到目标状态。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <param name="state">目标状态（0=未接取 1=已接 2=已完成 3=已交付）。</param>
-        /// <remarks>⚠️ 接口返回 `void`（这一片只关心"改了没有"，次数由 `QuestStateReconciler.Apply` 统计）。</remarks>
+        // 功能：把目标状态原样转给 QuestRuntime.FollowState，本地状态的实际改写都由它完成。
+        // 入参：questId 任务编号（配置表 Quest 的主键，>= 0）；state 目标状态，取值 0..3：0=未接取 1=已接取 2=已完成 3=已交付，其余值按 0 处理
+        // 步骤：只有一行转发，本层不做决策也不做幂等判断——那些在 QuestStateReconciler 与 FollowState 里，这里再写一遍只会多一处会漂移的判断
+        // 返回：无；接口是 void，是否真的改了状态看 FollowState 的返回值 1/0，实际跟随条数由 QuestStateReconciler.Apply 统计
+        // 上游：QuestStateReconciler.Apply（NetDebugWindow 收到 quest_state 后走这条路，QuestFollowTests 也走）
+        // 下游：QuestRuntime.FollowState
+        // 注意：这里只许改状态，不许发奖、不许弹提示、不许重置进度——多做一个动作，「跟随」就变成了第二次玩家动作
         public void FollowToState(int questId, int state)
         {
             m_runtime.FollowState(questId, state);
