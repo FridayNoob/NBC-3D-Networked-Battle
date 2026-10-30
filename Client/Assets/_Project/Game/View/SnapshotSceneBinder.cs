@@ -1,40 +1,6 @@
-// ============================================================================
-//  SnapshotSceneBinder —— 「一条最小视图接管」：把 `SnapshotView` 分发到 3D 物体
-//  项目：3D联网战斗Demo   对应：`Docs\27` §三十五 的 35.5
-//
-//  ---------------------------------------------------------------------------
-//  一、它为什么长这样（**如实交代边界**）
-//  ---------------------------------------------------------------------------
-//  ⭐ 复用的是**状态同步链那一层**：`Game\Net\SnapshotView.cs`（客户端唯一的世界数据副本）。
-//     它自己就写着「**不建场景物体**：把"数据"变成"GameObject"是表现层的事」——
-//     本类就是那个"表现层的事"，**没有另起一套数据/渲染管线**，只把同一份数据搬到 Transform 上。
-//
-//  ⚠️ 本轮**不许开 Unity、不许碰 `.unity` / `.prefab` / `.meta`**（硬约束）——
-//     而"把组件挂进场景"必须改场景资产。所以这里走的是**代码接管**：
-//     组件由**运行时** `AddComponent` 建出来（调试窗里点一个按钮，只在播放模式生效），
-//     **一个 Unity 资产都没动**。
-//     ⇒ **还差的一步**：把它预置进场景（或做成 Prefab / 由启动链装配）—— 那需要改 `.unity` 资产，
-//       属于"要你来做的那一步"，写在 `Docs\27` §35.5 的「还差哪一步」里。
-//
-//  ---------------------------------------------------------------------------
-//  二、它**只做三件事**（多一件都说明它抄了逻辑层的活）
-//  ---------------------------------------------------------------------------
-//      ① 每个单位一个 Unity 自带几何体（Capsule），**按 id 复用**、不每帧 new；
-//      ② 把 `EntitySnapshot.PosXMm / PosZMm`（**毫米**）换成 Transform 的米（1/1000）；
-//      ③ 死掉的单位隐藏（`Alive == false` ⇒ `SetActive(false)`）。
-//
-//  ⚠️ **只读** `SnapshotView`：不改它的任何字段、不 `Apply`、不写回世界。
-//  ⚠️ **每帧不分配**：`Dictionary` 查表 + 复用 `Slot`；只有"第一次见到的单位"才新建物体。
-//  ⚠️ 相机（本轮修正）：场景里**一台都没有** ⇒ 自建一台；场景里**已经有主相机** ⇒
-//     **播放模式下接管它**（跟着我的英雄走 —— 否则默认场景的相机很可能根本拍不到英雄，
-//     负责人点 Play 后"什么都看不见"）。Play 里的改动**不落盘**（不改 `.unity`/`.meta`，退出即复原）；
-//     ⚠️ **非播放模式一台相机都不建、都不动**（编辑器里的相机状态是资产的一部分 ——
-//        上一版"自建"那条分支没有 `Application.isPlaying` 判据，将来把 binder 预置进场景时，
-//        编辑模式下一次 `Bind` 就会 `new GameObject` + `AddComponent<Camera>` 弄脏场景）。
-//     ⚠️ "跟不跟"**每次 `Bind` 都重算**：上一版只算一次 ⇒ 若第一次 `Bind` 发生在非播放模式，
-//        进 Play 之后 `m_cameraFollow` 永远是 false ⇒ 永不跟随（点了 Play 还是看不见人）。
-//     认人靠 `SnapshotView.FindHero(ownerPlayerId)` —— 也就是 `owner_player_id` 那个字段（M4-S1b）。
-// ============================================================================
+// 这个文件里有：
+//   SnapshotSceneBinder（类）：最小视图接管，把 SnapshotView 的实体快照分发成场景几何体，并让相机跟随我的英雄
+//   Slot（类）：一个单位在场景里的物体替身，缓存物体与 Transform，并记录最后被看到的帧号
 
 using System.Collections.Generic;
 using NBC.Game.Net;
@@ -43,73 +9,77 @@ using UnityEngine;
 
 namespace NBC.Game.View
 {
-    /// <summary>最小视图接管：`SnapshotView` ⇒ 一堆几何体（**只读数据、不碰逻辑**）。</summary>
+    // 主要功能：每帧把 SnapshotView 里的实体快照搬到场景几何体上，按实例编号复用物体、把毫米换成米、隐藏死亡单位，并让相机跟随我的英雄。
+    // 主要数据成员：m_view（只读的数据副本）、m_ownerPlayerId（我的玩家编号，用来认英雄）、m_slots（实例编号到 Slot 的复用表）、m_camera / m_cameraCreated / m_cameraFollow（相机与是否跟随）。
+    // 主要外部方法：Ensure（找到或运行时建接管组件）、Bind（换绑定并重算相机）、Describe（给调试窗的一句话）；IsBound / PushedFrames / ObjectsCreated 是只读属性。
+    // 谁在用它：Editor 的 NetDebugWindow 按钮与 Game 的 RuntimeNetDriver 进房后调用 Ensure；每帧由 Unity 调 LateUpdate，内部再用 EnsureCamera / EnsureSlot / HideGone / FollowHero。
     [DisallowMultipleComponent]
     public sealed class SnapshotSceneBinder : MonoBehaviour
     {
-        /// <summary>英雄比其它单位大多少（没有材质/贴图，只能靠大小把"我"分开）。</summary>
+        // 英雄相对普通单位的缩放倍数；1.4 表示大 40%，没有材质贴图时只能靠大小区分「我」
         private const float HeroScale = 1.4f;
 
-        /// <summary>毫米 ⇒ 米（表现层**唯一**一次单位换算；数据层全是整数毫米）。</summary>
+        // 毫米换米的系数；1 毫米 = 0.001 米，表现层唯一一次单位换算（数据层全是整数毫米）
         private const float MmToUnit = 0.001f;
 
-        /// <summary>表现层读的那一份（**只读**）。</summary>
+        // 表现层读的那一份数据；null = 还没绑定，LateUpdate 直接返回
         private SnapshotView m_view;
 
-        /// <summary>「我」的玩家编号（`owner_player_id` 靠它认人）。</summary>
+        // 我的玩家编号；0 = 未知，此时不认英雄也不跟随
         private long m_ownerPlayerId;
 
-        /// <summary>实例编号 ⇒ 物体（**复用**；不每帧 new）。</summary>
+        // 实例编号到槽位的复用表；稳态容量等于见过的单位数，不每帧 new
         private readonly Dictionary<int, Slot> m_slots = new Dictionary<int, Slot>();
 
-        /// <summary>本帧的序号（给 `Slot.SeenPush` 用：没被看到的就是"消失了"）。</summary>
+        // 本帧的帧序号，每帧加 1；与 Slot.SeenPush 比较判断单位这一帧还在不在
         private int m_pushCount;
 
-        /// <summary>一共推了多少帧（界面看得见"它到底有没有在跑"）。</summary>
+        // 累计推进的帧数；从 0 起单调增，界面靠它判断到底有没有在跑
         private int m_pushedFrames;
 
-        /// <summary>一共建过多少个物体。</summary>
+        // 累计创建过的物体数；稳态不再增长，增长说明实例编号在变
         private int m_created;
 
-        /// <summary>跟上我的那个相机（null = 还没决定用哪台）。</summary>
+        // 跟随用的相机；null = 还没决定用哪台
         private Camera m_camera;
 
-        /// <summary>相机是不是**我建的**（自建的那台当然跟着走；场景里原有的只有播放模式才接管）。</summary>
+        // 相机是否由本类自建；true = 运行时自建，false = 场景里原有的
         private bool m_cameraCreated;
 
-        /// <summary>
-        /// 这台相机**归我跟随**了吗。
-        /// <para>⚠️ 自建的那台：一直是 true。</para>
-        /// <para>⚠️ 场景里**已有**的主相机：只有**播放模式**才 true（进 Play 接管 ⇒ 跟着英雄走；
-        /// 退出 Play 一切复原，因为一个场景资产都没改）。**非播放模式一台相机都不动。**</para>
-        /// </summary>
+        // 本次是否让相机跟随；每次 Bind 都重算，自建的一直跟、场景原有的只在播放模式跟
         private bool m_cameraFollow;
 
-        /// <summary>已经接上了吗（没接上 ⇒ `LateUpdate` 什么都不做，不报错）。</summary>
+        // 是否已绑定数据；true = m_view 非空，LateUpdate 才会工作
         public bool IsBound
         {
             get { return m_view != null; }
         }
 
-        /// <summary>推过多少帧。</summary>
+        // 累计推进的帧数；从 0 起，每跑一次 LateUpdate 加 1
         public int PushedFrames
         {
             get { return m_pushedFrames; }
         }
 
-        /// <summary>建过多少个物体（稳态不再涨 —— 涨了说明 id 在变）。</summary>
+        // 累计创建过的物体数；稳态不再增长，增长说明实例编号在变
         public int ObjectsCreated
         {
             get { return m_created; }
         }
 
-        /// <summary>
-        /// 找到场景里已有的那个接管组件；没有就**在运行时建一个**（播放模式才行）。
-        /// <para>⚠️ 这就是"代码接管、不动场景资产"的落点：一个 `GameObject` + 一个组件，全在内存里。</para>
-        /// </summary>
-        /// <param name="view">表现层那份数据（`PresentationFeed.View`）。</param>
-        /// <param name="ownerPlayerId">我的玩家编号。</param>
-        /// <returns>接管组件（建不出来返回 null）。</returns>
+        /// <summary>取场景里已有的接管组件，没有则在播放模式下运行时建一个，并绑到给定数据；view 为空或建不出来时返回 null。</summary>
+        // 功能：找到或新建一个 SnapshotSceneBinder，再把它绑到 view 与 ownerPlayerId 上。
+        // 入参：view 表现层那份只读数据；ownerPlayerId 我的玩家编号（0 表示还没认出来）
+        // 返回：接管组件；view 为空、或非播放模式且场景里没有现成组件时返回 null
+        // 步骤：
+        //   1) view 为空直接返回 null，后面每一步都依赖这份数据
+        //   2) 先在场景里找现成组件，复用它才不会重复建物体
+        //   3) 没有就只在播放模式建：非播放模式建了也跑不到 LateUpdate，还会弄脏编辑器场景
+        //   4) 建一个空物体并 AddComponent，全在内存里，不碰 .unity / .prefab / .meta
+        //   5) 最后统一走 Bind，让「找到」与「新建」两条路行为一致
+        //   6) 注意：本轮没把 binder 预置进场景（那要改 .unity 资产），只在运行时查找或新建；做成 Prefab 或启动链装配也还没做
+        // 上游：NetDebugWindow 的按钮、RuntimeNetDriver 进房后
+        // 下游：Bind
         public static SnapshotSceneBinder Ensure(SnapshotView view, long ownerPlayerId)
         {
             if (view == null)
@@ -123,7 +93,7 @@ namespace NBC.Game.View
             {
                 if (!Application.isPlaying)
                 {
-                    return null;        // 编辑器里不建（建了也不会跑到 `LateUpdate`，只会让人误会）
+                    return null;
                 }
 
                 var host = new GameObject("NBC-视图接管(运行时建)");
@@ -134,34 +104,41 @@ namespace NBC.Game.View
             return binder;
         }
 
-        /// <summary>绑到一份数据上（重复调用 = 换绑定，不重复建物体）。</summary>
-        /// <param name="view">表现层那份数据（**只读**）。</param>
-        /// <param name="ownerPlayerId">我的玩家编号。</param>
+        // 功能：换一份数据与玩家编号绑定，并重算相机用哪台、跟不跟。
+        // 入参：view 表现层那份只读数据；ownerPlayerId 我的玩家编号（0 表示还没认出来）
+        // 返回：无
+        // 步骤：
+        //   1) 先记数据与玩家编号，LateUpdate 与 FollowHero 都用它
+        //   2) 每次 Bind 都重算相机：只算一次的话，首次落在非播放模式就永远不跟随
+        //   3) 注意：不清 m_slots，重复绑定沿用已建物体；旧数据留下的槽位由下一帧 HideGone 隐藏
+        // 上游：Ensure（新建与复用都会走这里）
+        // 下游：EnsureCamera
         public void Bind(SnapshotView view, long ownerPlayerId)
         {
             m_view = view;
             m_ownerPlayerId = ownerPlayerId;
 
-            // ⚠️ 相机"跟不跟"**每次 Bind 都重算**（不是只算一次）：
-            //    上一版只在第一次 Bind 时算 ⇒ 那次若在非播放模式，进 Play 之后永远不跟随。
             EnsureCamera();
         }
 
-        /// <summary>
-        /// 决定"用哪台相机、跟不跟"（**非播放模式一台都不建、都不动**）。
-        /// <para>⚠️ 两条硬约束：</para>
-        /// <list type="bullet">
-        /// <item>**非播放模式**：场景里没有相机 ⇒ **什么都不建**（`new GameObject` / `AddComponent` 会弄脏编辑器场景）。</item>
-        /// <item>**每次 Bind 都重算 `m_cameraFollow`**：自建的那台一直跟；场景里那台只在播放模式跟。</item>
-        /// </list>
-        /// </summary>
+        // 功能：定下跟随用哪台相机，并算出这次要不要跟随。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 已经定过相机就只重算 m_cameraFollow：自建的永远跟，场景原有的只在播放模式跟
+        //   2) 没定过就先找 Camera.main，找到就接管它
+        //   3) 注意：非播放模式只接管不新建、不移动，编辑器里的相机状态属于场景资产
+        //   4) 播放模式才跟随（不接管的话默认场景的相机很可能拍不到英雄）；日志点明退出 Play 一切复原，因为一个场景资产都没改
+        //   5) 没有带 MainCamera 标签的相机时，非播放模式直接放弃，等下次 Bind 在 Play 里再建
+        //   6) 播放模式才自建一台，挂在接管组件下面，运行时建、不落盘
+        // 上游：Bind（每次绑定都重算）
+        // 下游：Camera.main、Debug.Log
         private void EnsureCamera()
         {
             bool playing = Application.isPlaying;
 
             if (m_camera != null)
             {
-                // 已经定下用哪台了 ⇒ 只重算"跟不跟"（自建的永远跟；场景里原有的只在播放模式跟）
                 m_cameraFollow = m_cameraCreated || playing;
                 return;
             }
@@ -173,11 +150,6 @@ namespace NBC.Game.View
                 m_camera = existing;
                 m_cameraCreated = false;
 
-                // ⭐ 场景里**已经有**主相机 ⇒ **播放模式下接管它**（跟着我的英雄走）。
-                //    为什么这条是安全的：Play 里的改动**不落盘** —— 不改 `.unity`、不碰 `.meta`、
-                //    退出 Play 就复原；反过来，不接管的话默认场景的主相机很可能**根本看不到英雄**
-                //    （负责人点 Play 后"什么东西都没有"）。
-                //    ⚠️ **非播放模式一台相机都不动**（编辑器里的相机状态是资产的一部分）。
                 m_cameraFollow = playing;
 
                 if (m_cameraFollow)
@@ -190,11 +162,8 @@ namespace NBC.Game.View
                 return;
             }
 
-            // 场景里一台相机都没有（或用都不是 MainCamera tag）
             if (!playing)
             {
-                // ⚠️ **非播放模式不建任何东西**：编辑器里建出来的物体属于场景，会弄脏资产。
-                //    等进 Play 之后下一次 `Bind` 再建（`Bind` 每次都会走到这里）。
                 m_cameraFollow = false;
                 return;
             }
@@ -208,7 +177,18 @@ namespace NBC.Game.View
             Debug.Log("[NBC 视图接管] 场景里没有主相机 ⇒ **播放模式**下自建了一台（运行时建，不落盘）。");
         }
 
-        /// <summary>每帧把数据分发到物体（**只读** `m_view`；不 new 任何东西，除非出现新单位）。</summary>
+        // 功能：每帧把快照里的每个实体搬到对应几何体上，并驱动相机跟随。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没绑数据就什么都不做，避免空引用
+        //   2) 帧序号加 1，作为本帧「还在不在」的标记
+        //   3) 逐个实体取槽位并记 SeenPush；注意只有第一次见到某个 id 才建物体，稳态不分配
+        //   4) 按 Alive 显隐（快照与锁步两条链路共用这个字段、语义一致）：死了就藏起来并跳过位置更新
+        //   5) 活着就把毫米换成米写位置；我的英雄放大到 1.4 倍，y 取缩放的一半把胶囊抬高一些，少埋进地面
+        //   6) 收尾隐藏本帧没出现的旧物体，再让相机跟随，最后累计帧数
+        // 上游：Unity 每帧调用；只读 m_view，不写回世界
+        // 下游：EnsureSlot、HideGone、FollowHero
         private void LateUpdate()
         {
             if (m_view == null)
@@ -227,7 +207,6 @@ namespace NBC.Game.View
 
                 slot.SeenPush = m_pushCount;
 
-                // 死了就藏起来（快照/锁步两边都是 `Alive` 字段，语义一致）
                 if (slot.Go.activeSelf != e.Alive)
                 {
                     slot.Go.SetActive(e.Alive);
@@ -255,7 +234,15 @@ namespace NBC.Game.View
             m_pushedFrames++;
         }
 
-        /// <summary>这一帧没出现过的单位 ⇒ 藏起来（**不销毁**：它可能只是这一帧不在，复用更省）。</summary>
+        // 功能：把本帧没被看到的单位隐藏起来。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 遍历所有槽位，SeenPush 不等于本帧序号就是本帧没出现
+        //   2) 只给还显示着的调 SetActive(false)，避免每帧重复写
+        //   3) 注意：只隐藏不销毁，单位可能只是这一帧不在，留着下次复用更省
+        // 上游：LateUpdate 每帧末尾
+        // 下游：GameObject.SetActive
         private void HideGone()
         {
             foreach (KeyValuePair<int, Slot> pair in m_slots)
@@ -269,14 +256,23 @@ namespace NBC.Game.View
             }
         }
 
-        /// <summary>相机跟"我的英雄"（靠 `owner_player_id` 认人，见 `SnapshotView.FindHero`）。</summary>
+        // 功能：让相机每帧看向我的英雄。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 用 ownerPlayerId 找我的英雄，认人靠 owner_player_id 那个字段
+        //   2) 找不到就返回：英雄死了或还没出现，镜头保持不动，免得乱晃
+        //   3) 英雄位置从毫米换成米，y 取 0 作为注视点
+        //   4) 相机放在英雄后上方（高 6 米、后 8 米），再 LookAt 注视点
+        // 上游：LateUpdate 里 m_cameraFollow 为 true 时
+        // 下游：SnapshotView.FindHero、Transform.LookAt
         private void FollowHero()
         {
             EntitySnapshot hero = m_view.FindHero(m_ownerPlayerId);
 
             if (hero == null)
             {
-                return;     // 死了/还没我的英雄 ⇒ 镜头不动（别乱晃）
+                return;
             }
 
             Vector3 at = new Vector3(hero.PosXMm * MmToUnit, 0f, hero.PosZMm * MmToUnit);
@@ -285,9 +281,15 @@ namespace NBC.Game.View
             m_camera.transform.LookAt(at);
         }
 
-        /// <summary>按实体编号取（没有就建一个几何体 —— **只有第一次**会分配）。</summary>
-        /// <param name="entityId">实例编号。</param>
-        /// <returns>槽位。</returns>
+        // 功能：按实体编号取槽位，没有就新建一个胶囊体。
+        // 入参：entityId 实体编号（协议里的实例编号）
+        // 返回：该编号对应的槽位；已存在则直接复用
+        // 步骤：
+        //   1) 先查字典，命中就返回，稳态下这里不分配
+        //   2) 没命中才 CreatePrimitive(Capsule)，并挂到本组件下面
+        //   3) 包成 Slot 放进字典、累计创建数；只有第一次见到这个 id 才会走到这里
+        // 上游：LateUpdate 遍历实体时
+        // 下游：Slot 构造函数
         private Slot EnsureSlot(int entityId)
         {
             Slot slot;
@@ -307,21 +309,35 @@ namespace NBC.Game.View
             return slot;
         }
 
-        /// <summary>一句人话（窗口里显示"它到底接上了没有、推了几帧、建了几个物体"）。</summary>
-        /// <returns>例：`已接 4 个物体（建 4 次）、推 120 帧、相机 自建 1 台（跟随我的英雄）`。</returns>
+        /// <summary>给调试窗一句人话，报告绑定状态、物体数、帧数与相机状态。</summary>
+        // 功能：拼一句给调试窗看的状态摘要。
+        // 入参：无
+        // 返回：形如「已接 4 个物体（建 4 次）、推 120 帧、相机 …」的字符串
+        // 步骤：
+        //   1) 先按是否绑定选开头，再拼物体数、创建次数、帧数
+        //   2) 相机那一段交给 DescribeCamera，保证显示与判定同源
+        // 上游：NetDebugWindow
+        // 下游：IsBound、DescribeCamera
         public string Describe()
         {
             return (IsBound ? "已接 " : "**未绑定** ") + m_slots.Count + " 个物体（建 " + m_created +
                    " 次）、推 " + m_pushedFrames + " 帧、相机 " + DescribeCamera();
         }
 
-        /// <summary>相机那一句（⚠️ 窗口里的字就是这里的字 —— 改这里等于改字段值）。</summary>
-        /// <returns>例：`接管场景里已有那台（仅播放模式，跟随我的英雄）`。</returns>
+        // 功能：把相机状态说成一句人话。
+        // 入参：无
+        // 返回：无 / 自建 / 接管 / 沿用 四类文案之一
+        // 步骤：
+        //   1) 没有相机时，播放模式答「无」，非播放模式注明「不建相机」，否则会被当成坏了
+        //   2) 自建的相机一定跟随
+        //   3) 场景原有的相机按 m_cameraFollow 区分接管（Play）与沿用（非 Play）
+        //   4) 注意：返回的字符串直接显示在调试窗里，改字等于改窗口文案
+        // 上游：Describe
+        // 下游：Application.isPlaying
         private string DescribeCamera()
         {
             if (m_camera == null)
             {
-                // ⚠️ 非播放模式**一台都不建** —— 这一句要说清"不是坏了，是编辑器里刻意不建"
                 return Application.isPlaying ? "无" : "无（非播放模式不建相机）";
             }
 
@@ -335,20 +351,29 @@ namespace NBC.Game.View
                 : "沿用场景里已有那台（非播放模式，不动它）";
         }
 
-        /// <summary>一个单位在场景里的替身（**复用**，不每帧新建）。</summary>
+        // 主要功能：保存一个单位在场景里的物体与 Transform，并记录最后一次被看到的帧号。
+        // 主要数据成员：Go（物体）、Transform（缓存）、SeenPush（最后被看到的帧号，与本帧序号比较）
+        // 主要外部方法：构造函数 Slot(GameObject)，只缓存物体与 Transform
+        // 谁在用它：SnapshotSceneBinder 的 m_slots；只在 LateUpdate / HideGone / EnsureSlot 内部使用
         private sealed class Slot
         {
-            /// <summary>物体。</summary>
+            // 单位对应的场景物体（胶囊体），由 EnsureSlot 创建
             public readonly GameObject Go;
 
-            /// <summary>它的 Transform（每帧都要写位置 ⇒ 缓存一份，省一次组件查找）。</summary>
+            // Go 的 Transform 缓存；每帧都要写位置，缓存一份省一次组件查找
             public readonly Transform Transform;
 
-            /// <summary>最后一次被看到的帧序号（与 `m_pushCount` 比 ⇒ 判"这一帧还在不在"）。</summary>
+            // 最后一次被看到的帧序号；小于当前 m_pushCount 即本帧没出现
             public int SeenPush;
 
-            /// <summary>建一个槽位。</summary>
-            /// <param name="go">物体。</param>
+            // 功能：缓存物体与它的 Transform。
+            // 入参：go 这个单位对应的场景物体
+            // 返回：无（构造）
+            // 步骤：
+            //   1) 记下物体，隐藏与显示都靠它
+            //   2) 顺手取一次 Transform 存起来，LateUpdate 每帧都要用
+            // 上游：EnsureSlot
+            // 下游：无
             public Slot(GameObject go)
             {
                 Go = go;

@@ -1,54 +1,6 @@
-// ============================================================================
-//  SkillCaster —— 输入 → 技能：把"玩家按了某个键"翻译成"打出一发技能"
-//  项目：3D联网战斗Demo   对应：M2-B2
-//
-//  ---------------------------------------------------------------------------
-//  它在整条链上的位置
-//  ---------------------------------------------------------------------------
-//      A7 `InputManager`（采集 + 生成命令）
-//            │  InputCommand：MoveX/MoveY + **本帧新按下**的动作位 + **本帧新松开**的动作位
-//            ▼
-//      本类：动作 → 技能编号（**注册映射**）→ 调 `BattleWorld.CastSkill`
-//            ▼
-//      BattleWorld：查技能表 → 广播 SkillHit → 扣血 → （致死）广播死亡
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么不需要自己算"按下沿"（这是 A7 设计得好的一处，值得说清）
-//  ---------------------------------------------------------------------------
-//  `InputCommand.ActionBits` 的语义是"**本帧新按下**"，不是"现在按住"
-//  （`ActionReleaseBits` 是"本帧新松开"）。所以本类直接：
-//
-//      if (command.HasAction(m_action)) { 放技能 }
-//
-//  **不需要**自己存上一帧的命令去比边沿。如果哪天有人把它读成"现在按住"，
-//  现象就是"按住不放 → 每帧放一发技能"（一秒 60 发）—— 而且看起来还挺"跟手"。
-//  这类"语义读错"的 bug 只能靠**把语义写在类型/注释上**来防，本类就是靠 A7 写清了。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么"哪个键放哪个技能"要用注册映射，而不是写死
-//  ---------------------------------------------------------------------------
-//  和 M2-A 的 `ConditionEventBridge` 同一个理由：
-//  技能列表是**配置驱动**的（`Hero.skillIds`），一个英雄可能有 1~4 个技能，
-//  写死 `if (key == J) CastSkill(2001)` 会让"加一个技能"变成改代码。
-//  注册映射之后，装配处按配置**循环 Bind** 即可。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 它**不订阅**事件中心，也不持有 MonoBehaviour
-//  ---------------------------------------------------------------------------
-//  `Handle(command, target)` 是纯输入输出：喂一个命令、给一个目标，返回打了几发。
-//  于是它能在 EditMode 里用一个**手搓的 `InputCommand`** 直接测 ——
-//  不需要键盘、不需要帧循环（A7 那条"把键盘变成可传输的值"的回报）。
-//  真要接运行时，装配处订阅 `InputManager.CommandGenerated` 即可。
-//
-//  ⚠️ "这个技能属于谁"由 `BattleWorld.CasterOwnsSkill` **一处实现**，但有两个调用点
-//  ---------------------------------------------------------------------------
-//      · `Bind`（**装配期**）：绑错了当场报错 —— 别等玩家按下按钮
-//      · `CastSkill`（**结算期**）：兜底 —— 防的是"绕过 SkillCaster 直接调世界"
-//
-//  这不叫"两套规则"，叫 **fail early + fail loud**：规则只有一份实现，
-//  但值得在两个时间点各问一次。
-//  实际装配时，绑定是**按配置循环 Bind** 出来的，所以正常流程根本绑不错。
-// ============================================================================
+// 这个文件里有：
+//   SkillCaster（类）：把输入命令里「本帧新按下」的动作翻成技能释放，并累计放过几发
+//   SkillCaster.Binding（只读结构体）：一条「输入动作 → 技能编号」的绑定，只在本类内部用
 
 using System;
 using System.Collections.Generic;
@@ -58,21 +10,33 @@ using NBC.Game.Config;
 
 namespace NBC.Game.Battle
 {
-    /// <summary>把输入动作翻译成技能释放。</summary>
+    // 主要功能：把「玩家按了某个键」翻译成「打出一发技能」—— 动作进、技能编号出，结算全部交给 BattleWorld。
+    // 主要数据成员：m_world（真正的结算方）、m_casterInstanceId（施法者实例编号，正整数）、m_bindings（动作 → 技能编号的绑定表）、m_castCount（累计发数，发）。
+    // 主要外部方法：Bind / TryGetSkill / Handle / Describe，以及只读属性 BindCount / CastCount / CasterInstanceId。
+    // 谁在用它：BattleSession 装配时造它、每帧经 HandleInput 把输入转给 Handle；Boot 的 M2DemoBehaviour 经 BattleSession.Caster 给玩家技能键绑一条；EditMode 用例直接造它验证绑定与放技能。
+    // 注意：它不订阅事件中心、也不持有 MonoBehaviour：Handle 是纯输入输出，能用手搓的 InputCommand 在 EditMode 直接测；运行时由 BattleSession.HandleInput 把 InputManager 的命令喂进来。
+    // 注意：「哪个动作放哪个技能」用注册映射而不是写死：技能列表由配置驱动（Hero.skillIds，一个英雄 1~4 个技能），写死会让「加一个技能」变成改代码。
     public sealed class SkillCaster
     {
-        /// <summary>一次动作绑定。</summary>
+        // 主要功能：把「按哪个动作」与「放哪个技能编号」捆成一条，绑定表只存这个。
+        // 主要数据成员：Action（输入动作）、SkillId（技能编号，Skill 表主键，正整数）。
+        // 主要外部方法：构造函数（只在本类内部调用）。
+        // 谁在用它：SkillCaster 的绑定表 m_bindings —— Bind 往里加，Handle / TryGetSkill / Describe 读。
         private readonly struct Binding
         {
-            /// <summary>输入动作。</summary>
+            // 输入动作：InputManager 声明的动作编号，一条绑定只认一个
             public readonly InputActionId Action;
 
-            /// <summary>技能编号。</summary>
+            // 技能编号：Skill 表主键，正整数；Bind 时已校验在表里且属于施法者
             public readonly int SkillId;
 
-            /// <summary>造一条绑定。</summary>
-            /// <param name="action">输入动作。</param>
-            /// <param name="skillId">技能编号。</param>
+            // 功能：把动作与技能编号装成一条绑定。
+            // 入参：action 输入动作；skillId 技能编号（Skill 表主键，正整数）
+            // 返回：无
+            // 步骤：
+            //   1) 两个值按字段顺序原样写入 —— 校验都在 SkillCaster.Bind 做，这里不重复
+            // 上游：SkillCaster.Bind
+            // 下游：无
             public Binding(InputActionId action, int skillId)
             {
                 Action = action;
@@ -80,21 +44,28 @@ namespace NBC.Game.Battle
             }
         }
 
-        /// <summary>战斗世界（真正的结算方）。</summary>
+        // 战斗世界：技能表查询、归属校验与实际结算都在它那边
         private readonly BattleWorld m_world;
 
-        /// <summary>施法者的实例编号。</summary>
+        // 施法者的实例编号（正整数，构造时必须在场）
         private readonly int m_casterInstanceId;
 
-        /// <summary>动作 → 技能的绑定表。</summary>
+        // 动作 → 技能编号的绑定表，装配期只增不改，条数见 BindCount
         private readonly List<Binding> m_bindings = new List<Binding>();
 
-        /// <summary>累计放过几发技能（调试/UI 用）。</summary>
+        // 累计放过几发技能（发），只增不减，调试/UI 用
         private int m_castCount;
 
-        /// <summary>造一个施法器。</summary>
-        /// <param name="world">战斗世界（不能为 null）。</param>
-        /// <param name="casterInstanceId">施法者实例编号（必须在场）。</param>
+        // 功能：记下战斗世界与施法者编号，并确认这个编号在场，把装配错误拦在构造时。
+        // 入参：world 战斗世界（null 抛 ArgumentNullException）；casterInstanceId 施法者实例编号（必须是已在场的单位）
+        // 返回：无
+        // 步骤：
+        //   1) 先判 world 为 null：后面每次结算都要用它，空引用不如在这里就炸
+        //   2) 再查编号在不在场（BattleWorld.TryGetAgent）：不在场就没有技能归属与血量可谈，当场抛 InvalidOperationException
+        //   3) 两步都过了才写字段，构造出来的对象一定可用
+        // 上游：BattleSession 的构造函数（用刚 SpawnHero 出来的玩家英雄编号）；EditMode 用例
+        // 下游：BattleWorld.TryGetAgent
+        // 注意：编号要先用 SpawnHero 拿到再传进来；传错编号时这里是唯一一次能报清楚的地方。
         public SkillCaster(BattleWorld world, int casterInstanceId)
         {
             if (world == null)
@@ -114,39 +85,44 @@ namespace NBC.Game.Battle
             m_casterInstanceId = casterInstanceId;
         }
 
-        /// <summary>绑了几条动作。</summary>
+        // 功能：读绑定表里已经绑了几条动作。
         public int BindCount
         {
             get { return m_bindings.Count; }
         }
 
-        /// <summary>累计放过几发。</summary>
+        // 功能：读累计放过几发技能（发）。
         public int CastCount
         {
             get { return m_castCount; }
         }
 
-        /// <summary>施法者实例编号。</summary>
+        // 功能：读施法者的实例编号（正整数）。
         public int CasterInstanceId
         {
             get { return m_casterInstanceId; }
         }
 
-        /// <summary>
-        /// 绑一条"按这个键 → 放这个技能"。
-        /// <para>⚠️ 技能编号**当场校验**（在技能表里查一遍）：装配时就报错，
-        /// 好过等到玩家按下按钮才发现放不出来。</para>
-        /// </summary>
-        /// <param name="action">输入动作。</param>
-        /// <param name="skillId">技能编号。</param>
+        /// <summary>绑一条「按这个动作放这个技能」；技能不在表里或施法者不会，装配当场抛异常。</summary>
+        // 功能：把动作与技能绑进表里，并在装配期把「技能表里有」与「施法者会」两件事都校验掉。
+        // 入参：action 输入动作（一个动作只能绑一次）；skillId 技能编号（Skill 表主键，正整数）
+        // 返回：无
+        // 步骤：
+        //   1) 先扫绑定表，同一个动作重复绑直接抛异常 —— 静默覆盖会让「明明绑了火球，怎么放的是冰箭」变成悬案
+        //   2) 查技能表有没有这个编号：配置没导入时也走到这里，报错才会有人去点导入 TSV 菜单
+        //   3) 再查施法者的技能归属（BattleWorld.CasterOwnsSkill）：绑错英雄或怪物的技能当场炸，别等玩家按下按钮
+        //   4) 三项都过了才写进绑定表 —— 校验失败时不留半条绑定
+        // 上游：Boot 的 M2DemoBehaviour（经 BattleSession.Caster 绑玩家的技能键）；EditMode 用例
+        // 下游：BattleWorld.HasSkill / BattleWorld.CasterOwnsSkill
+        // 注意：归属这一步第一版漏了，只查了技能表有没有，于是「给法师绑了剑士的穿心箭」要等玩家按下按钮才炸。
+        // 注意：正常装配是按配置循环 Bind（Hero.skillIds / Monster.skillIds 里有几个技能绑几条），走到归属报错多半是手写死了一个不属于它的技能编号。
+        // 注意：归属规则只有 BattleWorld.CasterOwnsSkill 一份实现，这里与结算期各问一次不是两套规则，是 fail early + fail loud。
         public void Bind(InputActionId action, int skillId)
         {
             for (int i = 0; i < m_bindings.Count; i++)
             {
                 if (m_bindings[i].Action == action)
                 {
-                    // 同一个动作绑两个技能 = 按一下放两个，几乎总是 bug。
-                    // 静默覆盖会让"我明明绑了火球，怎么放的是冰箭"变成悬案。
                     throw new InvalidOperationException(
                         "[SkillCaster] 动作 " + action + " 已经绑过技能 " + m_bindings[i].SkillId + " 了。\n" +
                         "一个动作只能绑一个技能；要放两个技能请绑两个动作。");
@@ -160,11 +136,6 @@ namespace NBC.Game.Battle
                     "先确认 ConfigKit 生成过、并且点过 `Tools/NBC/配置表/导入 TSV` 菜单。");
             }
 
-            // ⚠️ 归属也要在**装配期**查（这正是"早检查"的意义）：
-            //    第一版我只查了"技能表里有没有"，没查"这个英雄会不会"，
-            //    于是"给法师绑了剑士的穿心箭"要等到**玩家按下按钮**才炸。
-            //    这条是负责人跑测试时红出来的（`Handle_TwoActionsPressed_CastsBoth`）——
-            //    红的是用例，但**暴露的是这里少了一半检查**。
             if (!m_world.CasterOwnsSkill(m_casterInstanceId, skillId))
             {
                 throw new InvalidOperationException(
@@ -178,10 +149,14 @@ namespace NBC.Game.Battle
             m_bindings.Add(new Binding(action, skillId));
         }
 
-        /// <summary>这个动作绑了哪个技能。</summary>
-        /// <param name="action">输入动作。</param>
-        /// <param name="skillId">技能编号。</param>
-        /// <returns>绑过返回 true。</returns>
+        // 功能：查这个动作绑的是哪个技能编号。
+        // 入参：action 输入动作；skillId 绑过则回填技能编号，没绑回填 0
+        // 返回：这个动作绑过返回 true 且 skillId 是技能编号；没绑过返回 false，skillId 为 0
+        // 步骤：
+        //   1) 顺序扫绑定表，命中就回填并返回 —— 同一个动作不许绑第二次（Bind 已拦），所以不会有第二条
+        //   2) 扫完没有就回填 0 并返回 false：out 参数必须赋值，也给调用方一个确定的「没有」
+        // 上游：EditMode 用例；运行时暂无调用点
+        // 下游：无
         public bool TryGetSkill(InputActionId action, out int skillId)
         {
             for (int i = 0; i < m_bindings.Count; i++)
@@ -197,13 +172,17 @@ namespace NBC.Game.Battle
             return false;
         }
 
-        /// <summary>
-        /// 处理一帧的输入命令：**本帧新按下**的动作会被释放成技能。
-        /// </summary>
-        /// <param name="command">这一帧的输入命令（`ActionBits` = 本帧新按下）。</param>
-        /// <param name="targetInstanceId">目标实例编号（M2 是单体、手动指定目标）。</param>
-        /// <param name="results">每次释放的结果会追加进来（可以为 null）。</param>
-        /// <returns>这一帧放了几发。</returns>
+        // 功能：处理一帧输入，把本帧新按下的动作逐个放成技能，返回这一帧放了几发。
+        // 入参：command 这一帧的输入命令（ActionBits = 本帧新按下，ActionReleaseBits = 本帧新松开）；targetInstanceId 目标实例编号（必须在场，这一版是单体、由调用方指定）；results 每次释放的结果追加进来（可以为 null）
+        // 返回：这一帧放了几发（0 表示这一帧没有绑定的动作被按下）
+        // 步骤：
+        //   1) 按绑定表顺序逐条看动作位是否在本帧新按下，没按就跳过 —— 不比边沿，语义由 InputManager 的 ActionBits 负责
+        //   2) 按下就调 BattleWorld.CastSkill 结算，结果在 results 非 null 时追加
+        //   3) 两个计数各加一：本帧发数与累计发数 —— 只有真的结算完才算一发
+        // 上游：BattleSession.HandleInput（Boot 的 M2DemoBehaviour 每帧把 InputManager 的命令喂进来）；EditMode 用例
+        // 下游：BattleWorld.CastSkill
+        // 注意：ActionBits 的语义是「本帧新按下」而不是「现在按住」；若哪天读成按住，现象是按住不放每帧放一发（一秒 60 发），而且看起来还挺跟手。
+        // 注意：刻意不 catch：目标不在场、技能表缺行都是程序或配置错误，吞掉会让「按了没反应」变成一类查不出来的问题。
         public int Handle(InputCommand command, int targetInstanceId, List<SkillCastOutcome> results)
         {
             int cast = 0;
@@ -212,14 +191,11 @@ namespace NBC.Game.Battle
             {
                 Binding binding = m_bindings[i];
 
-                // 语义：HasAction = **本帧新按下**（不是"现在按住"）—— 所以这边不用比边沿
                 if (!command.HasAction(binding.Action))
                 {
                     continue;
                 }
 
-                // ⚠️ 刻意**不 catch**：目标不在场 / 技能表缺行都是程序或配置错误，
-                //    吞掉它们会让"按了没反应"变成一类查不出来的问题。
                 SkillCastOutcome outcome = m_world.CastSkill(m_casterInstanceId, binding.SkillId, targetInstanceId);
 
                 cast++;
@@ -234,8 +210,15 @@ namespace NBC.Game.Battle
             return cast;
         }
 
-        /// <summary>把绑定表拼成一段文本（调试面板用）。</summary>
-        /// <returns>多行文本。</returns>
+        // 功能：把绑定表拼成多行文本，给调试面板看施法者是谁、绑了哪些动作。
+        // 入参：无
+        // 返回：多行文本；一条都没绑时只有一句「没有绑定任何动作」
+        // 步骤：
+        //   1) 空表先单独给一句话，免得面板上只有一个空表头
+        //   2) 表头写施法者实例编号与绑定条数
+        //   3) 每条绑定一行「动作 → 技能编号」，前缀用顿点，长表也能一眼扫下来
+        // 上游：调试与日志用（当前仓库内暂无调用点）
+        // 下游：无
         public string Describe()
         {
             if (m_bindings.Count == 0)
