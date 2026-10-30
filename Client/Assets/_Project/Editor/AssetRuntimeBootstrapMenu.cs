@@ -1,38 +1,7 @@
-// ============================================================================
-//  资源运行模式冒烟菜单 —— 在 Editor 里验证 EditorSimulate / Offline 两种模式
-//  项目：3D联网战斗Demo   对应：YOO-03（运行模式）
+// 这个文件里有：
+//   AssetRuntimeBootstrapMenu（静态类）：资源运行模式的编辑器冒烟菜单，装配好资源层后真加载一个地址，把这条路通不通打在 Console 上。
 //
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么需要这个菜单（它补的是一个真实缺口）
-//  ---------------------------------------------------------------------------
-//  YooAsset **3.0.5 的"运行模式"不是一个窗口开关，而是初始化时的代码参数**：
-//
-//      AssetManager.Instance.InitializeAsync(AssetRuntimeMode.EditorSimulate);
-//      AssetManager.Instance.InitializeAsync(AssetRuntimeMode.Offline);
-//      AssetManager.Instance.InitializeAsync(AssetRuntimeMode.Host);   // M5 才实现
-//
-//  而 2026-09-22 实测：**游戏里没有任何地方调用它**（只有 EditMode/PlayMode 测试在调）。
-//  也就是说"想切到 Offline 跑一次"当时**没有入口** —— 这个菜单就是那个入口。
-//
-//  ---------------------------------------------------------------------------
-//  怎么用（两步）
-//  ---------------------------------------------------------------------------
-//      ① 进**播放模式**（本菜单只在播放模式下有效，因为要初始化运行时资源系统）
-//      ② 菜单 Tools/NBC/资源/… → 选一种模式
-//
-//  它会打印：用的哪个模式、包名、以及**试着加载一个真实地址的结果** ——
-//  于是"Offline 到底通没通"当场就有答案，不用去翻代码。
-//
-//  ⚠️ 地址来自 `Docs\17` 的配置表产物：生成物里 HeroConfig 的地址是 `HeroConfig`
-//     （`AddressByFileName` 规则）；若你的收集配置改了地址规则，把下面的常量一起改。
-//
-//  ⚠️ 2026-09-22 实测记录（两个都由负责人跑出来的日志暴露）：
-//     ① 只调 `InitializeAsync` 会报"还没有装上底层加载器" —— 必须先经**组合根**装配
-//        （`NBC.Boot.AssetBootstrapper`），这一步当时的菜单漏了；
-//     ② 用 `LoadAsset<GameObject>` 取 ScriptableObject 会**静默失败**
-//        （YooAsset 打一条 LogError 然后返回 null 资产），而我的判断只看了句柄非 null
-//        → 打出"✅ 取到句柄（Asset = null）"这种**假成功**。两处都已修。
-// ============================================================================
+// 注意：运行模式是初始化时传进去的参数（不是窗口开关），换模式只能重新装配一次；这个菜单就是编辑器里手动重跑一次装配的入口。
 
 using System;
 using System.Threading.Tasks;
@@ -43,42 +12,45 @@ using UnityEngine;
 
 namespace NBC.EditorTools
 {
-    /// <summary>资源运行模式的 Editor 冒烟入口。</summary>
+    // 主要功能：给 EditorSimulate / Offline 两种资源运行模式各放一个菜单项，点一下即装配资源层、初始化并试加载一个真实地址。
+    // 主要数据成员：ProbeLocation（冒烟地址）、PackageName（YooAsset 包名）、SimulatePackageRoot（编辑器模拟清单目录）。
+    // 主要外部方法：无 public 方法；两个菜单项 InitEditorSimulate / InitOffline 由 UnityEditor 按 MenuItem 路径调用。
+    // 谁在用它：只在编辑器里由菜单 Tools/NBC/资源 触发，下游落到 NBC.Boot 的 AssetBootstrapper；没有运行时代码引用它。
     public static class AssetRuntimeBootstrapMenu
     {
-        /// <summary>冒烟用的资源地址（配置表产物；见 ConfigKit 生成的 HeroConfig.asset）。</summary>
+        // 冒烟试加载的资源地址，必须是收集配置里真实存在的地址；当前取配置表产物 HeroConfig（走 AddressByFileName 命名规则），收集配置换了地址规则这里要跟着改。
         private const string ProbeLocation = "HeroConfig";
 
-        /// <summary>YooAsset 的包名（必须与收集配置里的一致；实测当前为 `DefaultPackage`）。</summary>
+        // YooAsset 的包名，必须与收集配置里的包名一致（实测当前为 DefaultPackage，取自 AssetBootstrapper 的默认值）。
         private const string PackageName = AssetBootstrapper.DefaultPackageName;
 
-        /// <summary>
-        /// 编辑器模拟模式要用的模拟清单目录。
-        /// <para>⚠️ 只有 `EditorSimulate` 模式需要它；`Offline` 模式传空即可（读的是 StreamingAssets）。
-        /// 若你要跑 `EditorSimulate` 冒烟，把这里改成模拟构建的输出目录（B3 操作单里有说明）。</para>
-        /// </summary>
+        // 编辑器模拟模式的模拟清单目录；空串 = 没指定。只有 EditorSimulate 模式读它（Offline 读 StreamingAssets，传空即可）；要跑 EditorSimulate 冒烟就得改成模拟构建的输出目录。
         private const string SimulatePackageRoot = "";
 
-        /// <summary>用编辑器模拟模式初始化（日常开发：免打包，改资源即时生效）。</summary>
+        // 功能：用编辑器模拟模式跑一遍冒烟（日常开发：免打包，改资源即时生效）。
         [MenuItem("Tools/NBC/资源/① EditorSimulate 模式（日常开发）")]
         private static void InitEditorSimulate()
         {
             Run(AssetRuntimeMode.EditorSimulate);
         }
 
-        /// <summary>用内置（Offline）模式初始化：**读 StreamingAssets 里的内容包**。</summary>
+        // 功能：用内置（Offline）模式跑一遍冒烟，读的是 StreamingAssets 里的内容包。
         [MenuItem("Tools/NBC/资源/② Offline 模式（读内置包）")]
         private static void InitOffline()
         {
             Run(AssetRuntimeMode.Offline);
         }
 
-        /// <summary>
-        /// 初始化 + 试加载一个地址。
-        /// <para>⚠️ 必须在播放模式下点：资源系统是运行时的东西，编辑模式里初始化没有意义
-        /// （而且 `Offline` 模式依赖 StreamingAssets，只有真正跑起来才成立）。</para>
-        /// </summary>
-        /// <param name="mode">模式。</param>
+        // 功能：不在播放模式就拦下来并提示，在播放模式才把模式转给 ProbeAsync。
+        // 入参：mode 运行模式（EditorSimulate / Offline；Host 尚未实现）
+        // 返回：无
+        // 步骤：
+        //   1) 先查 Application.isPlaying —— 资源系统是运行时的东西，编辑模式里初始化没有意义
+        //   2) 不在播放模式就只打一条警告并返回，不让探针在编辑模式下给出假结论
+        //   3) 在播放模式就 fire-and-forget 交给 ProbeAsync（菜单回调不能 await）
+        // 上游：UnityEditor 的菜单系统（Tools/NBC/资源）
+        // 下游：ProbeAsync
+        // 注意：Offline 模式依赖 StreamingAssets，只有真正进了播放模式才成立。
         private static void Run(AssetRuntimeMode mode)
         {
             if (!Application.isPlaying)
@@ -93,35 +65,32 @@ namespace NBC.EditorTools
             ProbeAsync(mode);
         }
 
-        /// <summary>异步跑一遍并打日志（Editor 菜单不能 await，所以用 fire-and-forget + 日志）。</summary>
-        /// <param name="mode">模式。</param>
+        // 功能：先装配再初始化资源层，然后真加载一个地址并打日志，当场给出这条路通不通的结论。
+        // 入参：mode 运行模式（EditorSimulate 读编辑器模拟清单，Offline 读随包内容）
+        // 返回：无（async void，结果只落在 Console 日志里）
+        // 步骤：
+        //   1) 装配与初始化都走组合根 InstallAsync：AssetManager 只是门面，没人先把加载器装上去就抛还没有装上底层加载器
+        //   2) 初始化成功证明不了能取到资源，再真加载 ProbeLocation 一次
+        //   3) 泛型参数必须是 ScriptableObject：配置表产物 HeroConfig.asset 就是它
+        //   4) 句柄为 null 与资产为 null 都要判，任一成立都算失败并提前返回
+        //   5) 成功后 Dispose 句柄，把引用计数还回去
+        // 上游：Run（两个菜单项最终都到这里）
+        // 下游：AssetBootstrapper.InstallAsync、AssetManager.Instance.LoadAsset、AssetHandle.Dispose
+        // 注意：类型不匹配时 YooAsset 不抛异常，只打一条 Failed to load asset 并返回 null 资产 —— 只判句柄非 null 就会把失败报成成功。
+        // 注意：Offline 最常见的失败是还没打包、或 Build 输出没拷进 StreamingAssets，所以 catch 里直接写清该做什么，而不只丢一个堆栈。
         private static async void ProbeAsync(AssetRuntimeMode mode)
         {
             try
             {
                 Debug.Log("[资源冒烟] 开始装配 + 初始化：" + mode);
 
-                // ⚠️ 这一步**必须走组合根**（`NBC.Boot`）：
-                //    `AssetManager` 只是门面，它需要有人先把 `IAssetProvider` 装上去。
-                //    我第一版直接调 `AssetManager.InitializeAsync` —— 于是报
-                //    "还没有装上底层加载器"，而且那个报错**看起来像配置问题，其实是少了一层架构**。
                 await AssetBootstrapper.InstallAsync(mode, PackageName, SimulatePackageRoot);
 
                 Debug.Log("[资源冒烟] ✅ 装配 + 初始化成功：" + mode);
 
-                // 再走一步真加载：光"初始化成功"证明不了资源真的能取到。
-                //
-                // ⚠️ 这里**必须用 ScriptableObject**（不是 GameObject）：
-                //    配置表产物 `HeroConfig.asset` 是 ScriptableObject。
-                //    我第一版写的是 `LoadAsset<GameObject>` —— 类型不匹配时
-                //    YooAsset **不抛异常**，而是打一条 `Failed to load asset…` 并**返回 null 资产**，
-                //    于是探针打出"✅ 取到句柄（Asset = null）"这种**看起来成功的假成功**。
                 AssetHandle<ScriptableObject> handle =
                     AssetManager.Instance.LoadAsset<ScriptableObject>(ProbeLocation);
 
-                // ⚠️ **"拿到句柄"不等于"加载成功"** —— 句柄非 null 但 `Asset` 是 null 就是失败。
-                //    这条是我自己踩的：第一版只判了 handle == null，于是把失败报成了成功。
-                //    本项目一直在防的"看起来正常的假值/假成功"，这次出在我自己的探针里。
                 if (handle == null || handle.Asset == null)
                 {
                     Debug.LogError(
@@ -139,8 +108,6 @@ namespace NBC.EditorTools
             }
             catch (Exception exception)
             {
-                // ⚠️ Offline 模式最常见的失败原因是"还没打过包/没拷进 StreamingAssets"，
-                //    所以把该做什么直接写进日志，而不是只丢一个异常堆栈。
                 Debug.LogError(
                     "[资源冒烟] ❌ " + mode + " 失败：" + exception.Message + "\n" +
                     "两个常见原因：\n" +

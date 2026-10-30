@@ -1,45 +1,6 @@
-// ============================================================================
-//  ChineseFontSetupMenu —— 中文显示：把字体做成 TMP 字体资产，并接上
-//  项目：3D联网战斗Demo   对应：M2-D 后续（中文乱码修复）、Docs\24-中文字体接入.md
-//
-//  ---------------------------------------------------------------------------
-//  为什么必须有这一步（不是"记得配一下"那么简单）
-//  ---------------------------------------------------------------------------
-//  TextMeshPro 用的是**预烘焙的 SDF 字体资产**，而不是系统字体：
-//  默认那个 `LiberationSans SDF` **只有拉丁字形** —— 中文在它里面**根本不存在**，
-//  于是渲染成一排方框（俗称"豆腐块"）。这不是编码问题，也不是乱码，
-//  而是**字体里没有那个字形**。
-//
-//  解决办法两条路：
-//    · **Static（预烘焙）**：在 Font Asset Creator 里把用到的字全选出来烤进图集。
-//      缺点是"字表之外的字"照样是方框 —— 而本项目的任务名/描述来自**配置表**（策划会改），
-//      字表必然会变，所以这条路对本项目是**错的**。
-//    · **Dynamic（动态）**：给一个源字体文件，TMP **按需把字形加进图集**。
-//      ✅ 本项目选它（负责人的另一个工程 RPG2 也是这么配的，实测 `m_AtlasPopulationMode: 1`）。
-//
-//  ---------------------------------------------------------------------------
-//  两个菜单，各自解决一半问题（**这一步最容易被漏**）
-//  ---------------------------------------------------------------------------
-//     ① 生成字体资产            —— 造出 `<字体名> SDF.asset`
-//     ② 设为默认 + 加为兜底字体  —— **让已有的文字也变中文**
-//
-//  ⚠️ 为什么 ② 要做两件事：TMP 的文字组件上**存着一份字体资产的引用**。
-//     只设"默认字体"**只影响以后新建的组件**，已经摆好的那几个仍然指着 LiberationSans。
-//     把它们逐个改一遍很烦，所以顺手把我们的字体**加进 LiberationSans 的兜底列表** ——
-//     于是 TMP 遇到 LiberationSans 里没有的字形时会**自动去兜底字体里找**，
-//     已有预制体**一个字都不用动**。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 已知局限（如实记）
-//  ---------------------------------------------------------------------------
-//  · 动态模式要求**源字体文件必须在包里**（图集是按需生成的）→ 那 14.9 MB 的 .otf 会进包。
-//    要省包体的话，正解是"只保留用到的字符做子集化"，那是打包优化阶段（M5）的事
-//  · 图集 2048×2048 + 允许多图集：**字形缓存会随运行增长**（中文常用字约 3500 个）。
-//    图集满了 TMP 会再开一张（多图集），不会丢字，但显存会涨
-//  · 本脚本我**没法在 EditMode 里验证**（它调的是 TMP 的编辑器侧 API）——
-//    所以菜单里每一步都打了日志，跑完看 Console 就知道成没成；
-//    真出问题可以退回官方的 `Window → TextMeshPro → Font Asset Creator`（见 Docs\24）
-// ============================================================================
+// 这个文件里有：
+//   ChineseFontSetupMenu（静态类）：TMP 中文接入的编辑器菜单，负责生成并检查字体资产、设默认字体、加兜底
+// 背景与已知局限见 Docs\24-中文字体接入.md。
 
 using System.IO;
 using TMPro;
@@ -49,61 +10,45 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace NBC.EditorTools
 {
-    /// <summary>中文字体接入（TMP 字体资产生成与接线）。</summary>
+    // 主要功能：两个编辑器菜单，1) 检查或生成中文 TMP 动态字体资产，2) 把中文字体接成默认字体与三层兜底。
+    // 主要数据成员：SourceFontPath（源 ttf 的工程内路径）、OutputPath（字体资产路径）、SamplingPointSize / AtlasPadding / AtlasSize（图集参数，单位 px）。
+    // 主要外部方法：没有 public 方法，入口是两个 [MenuItem] 私有方法 CreateFontAsset / SetAsDefaultAndFallback。
+    // 谁在用它：只由 Unity 菜单 Tools/NBC/UI 手动触发，本程序集内没有代码调用。
     public static class ChineseFontSetupMenu
     {
-        /// <summary>
-        /// 源字体（仓库里那份；见同目录的 `README-字体来源与授权.txt`）。
-        /// <para>
-        /// ⚠️ **必须是 `.ttf`，不能用 `.otf`**（2026-09-23 实测踩到两次）：
-        /// ① 第一版用 `.otf`（14.9 MB）：字体资产建出来了、默认字体与兜底也都接上了，
-        ///    但 TMP **一个字形都没加进去**（`m_UsedGlyphRects` 一直空）→ 屏幕上是方框。
-        ///    TMP 的动态字形加载走 FreeType，**对 OTF（CFF 轮廓）支持不佳**。
-        /// ② 换成 `.ttf` 后用本脚本的 `CreateFontAsset` 生成，**图集是空的**
-        ///    （`Texture2D.m_CompleteImageSize: 0`、宽高 0）→ 屏幕上一个字都不显示。
-        ///    所以现在**不再用脚本生成**，改用一份**经验证可用**的资产（见 <see cref="OutputPath"/>）。
-        /// </para>
-        /// </summary>
-        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-Regular.ttf";
+        public const string SourceFontPath = "Assets/_Project/Art/Fonts/AlibabaPuHuiTi-3-55-Regular.ttf";   // 源字体在工程里的相对路径；注意：必须是 .ttf，换成 .otf 时 TMP 的动态字形加载不出字形，屏幕全是方框
 
-        /// <summary>生成的 TMP 字体资产放在哪。</summary>
-        public const string OutputFolder = "Assets/_Project/Art/Fonts";
+        public const string OutputFolder = "Assets/_Project/Art/Fonts";   // 字体资产输出目录，工程内相对路径，不存在时由生成流程创建
 
-        /// <summary>
-        /// TMP 字体资产路径。
-        /// <para>
-        /// ⚠️ **这份不是本脚本生成的**，而是从负责人另一个工程 RPG2
-        /// （`Assets/Fonts/AlibabaPuHuiTi-3-55-Regular/`）**整份搬过来的**，
-        /// 连 `.meta` 一起搬所以 GUID 不变、里面的源字体引用也不会断。
-        /// 它已经被验证过可用：Dynamic 模式 + 1024² 图集 + **图集里真的有数据**
-        /// （`m_CompleteImageSize: 1048576`）+ 71 个已烘焙字形。
-        /// </para>
-        /// <para>仓库里只放这一份；脚本 ① 只在"资产不存在"时才去生成。</para>
-        /// </summary>
-        public const string OutputPath = OutputFolder + "/AlibabaPuHuiTi-3-55-Regular SDF.asset";
+        public const string OutputPath = OutputFolder + "/AlibabaPuHuiTi-3-55-Regular SDF.asset";   // TMP 字体资产路径；注意：仓库里这份是从其它工程整份搬来的现成资产，不是本脚本生成的
 
-        /// <summary>TMP 自带的拉丁字体（要往它的兜底列表里塞我们的中文）。</summary>
         private const string LatinFontAssetPath =
-            "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";
+            "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";   // TMP 自带的拉丁字体资产路径，只往它的兜底列表里加中文字体
 
-        /// <summary>TMP 的设置资产（默认字体写在它里面）。</summary>
-        private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
+        private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";   // TMP 设置资产路径，默认字体与项目级兜底都存在它里面
 
-        /// <summary>采样点大小（中文建议 60~90；太大地图集装不下几个字）。</summary>
-        private const int SamplingPointSize = 64;
+        private const int SamplingPointSize = 64;   // 采样点大小，单位 px；中文建议 60~90，太大则图集装不下几个字
 
-        /// <summary>字形间距（SDF 需要留边，太小会出现描边断裂）。</summary>
-        private const int AtlasPadding = 5;
+        private const int AtlasPadding = 5;   // 字形间距，单位 px，SDF 留边用；太小会出现描边断裂
 
-        /// <summary>图集边长（2048 起步；不够 TMP 会自动再开一张）。</summary>
-        private const int AtlasSize = 2048;
+        private const int AtlasSize = 2048;   // 图集边长，单位 px；2048 起步，装满后 TMP 会自动再开一张
 
-        /// <summary>① 生成中文字体资产（Dynamic 模式）。**资产已存在时不重建**。</summary>
+        // 功能：生成 Dynamic 模式的中文字体资产写到 OutputPath，资产已存在时直接跳过。
+        // 入参：无（菜单项，路径取自 SourceFontPath / OutputFolder / OutputPath）。
+        // 返回：无；失败只打日志，不抛异常。
+        // 步骤：
+        //   1) 先看 OutputPath 有没有资产，有就直接返回 —— 本脚本的生成路径实测会产出图集为空的资产，不如用现成那份
+        //   2) 加载源字体，缺了就报错退出（多半是 Unity 还没导入完）
+        //   3) 按 Dynamic + 2048 图集 + 64 采样造资产，返回 null 就提示改用官方 Font Asset Creator
+        //   4) 先删同路径旧资产再 CreateAsset，否则会留下一个指着旧字体的资产
+        //   5) 图集与材质要作为子资产写进同一个文件，否则重开工程引用会丢，字全部不显示
+        //   6) SetDirty + SaveAssets + Refresh 落盘，并在日志里提示接着跑 ②
+        // 注意：动态模式要求源字体文件随包发布，图集显存会随字形增长（中文常用字约 3500 个）；这套生成路径在 EditMode 里没法验证，所以每步都打日志，跑完看 Console。
+        // 上游：Unity 菜单 Tools/NBC/UI/①
+        // 下游：TMP_FontAsset.CreateFontAsset、AssetDatabase 与 TMP 的编辑器侧写入
         [MenuItem("Tools/NBC/UI/① 生成中文字体资产（TMP，Dynamic）")]
         private static void CreateFontAsset()
         {
-            // ⚠️ 已经有一份可用资产时**不要重建**：仓库里那份是从 RPG2 搬来的、经验证可用；
-            //    而本脚本的生成路径实测会产出"图集为空"的资产（见 SourceFontPath 上的说明）。
             TMP_FontAsset existing = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(OutputPath);
 
             if (existing != null)
@@ -141,8 +86,6 @@ namespace NBC.EditorTools
 
             Directory.CreateDirectory(OutputFolder);
 
-            // ⚠️ 先删旧资产：同一个路径已经存在资产时，`CreateAsset` 不一定会安静覆盖
-            //    （而且换源字体必须重建 —— 否则会留下一个"指着旧字体"的资产）
             if (AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(OutputPath) != null)
             {
                 AssetDatabase.DeleteAsset(OutputPath);
@@ -150,8 +93,6 @@ namespace NBC.EditorTools
 
             AssetDatabase.CreateAsset(asset, OutputPath);
 
-            // ⚠️ 图集与材质必须**作为子资产**存进同一个文件 —— 否则重新打开工程后引用会丢，
-            //    字体资产变成"没有贴图的字体"（现象是全部不出字）。
             if (asset.atlasTextures != null && asset.atlasTextures.Length > 0 && asset.atlasTextures[0] != null)
             {
                 asset.atlasTextures[0].name = asset.name + " Atlas";
@@ -177,7 +118,18 @@ namespace NBC.EditorTools
                 "**已有的文字才会一起变中文**（资产是重建的，引用要重接）。");
         }
 
-        /// <summary>② 设为 TMP 默认字体，并加进拉丁字体的兜底列表。</summary>
+        // 功能：把中文字体接成 TMP 默认字体与三层兜底，让新建和已摆好的文字都用上中文字形。
+        // 入参：无（菜单项，路径取自 OutputPath / TmpSettingsPath / LatinFontAssetPath）。
+        // 返回：无；缺资产或字段时打警告并跳过对应那一步，不抛异常。
+        // 步骤：
+        //   1) 先确认 OutputPath 有资产，没有就报错并提示先跑 ①，后面每一步都靠它
+        //   2) 写 TMP Settings 的 m_defaultFontAsset —— 这只影响以后新建的 TMP 组件
+        //   3) 再把中文字体加进 LiberationSans 的兜底列表，已有的预制体一个字都不用动
+        //   4) 最后往 TMP Settings 的 m_fallbackFontAssets 加项目级兜底，三层齐了才不留缝
+        //   5) 只有真改过才 SaveAssets，避免无谓的资产重写
+        // 注意：某一层缺资产或字段时只跳过那一步，其它层照做；兜底里已有的会跳过，菜单可以反复点。
+        // 上游：Unity 菜单 Tools/NBC/UI/②
+        // 下游：SerializedObject 以及 TMP_Settings / TMP_FontAsset 的资产写入
         [MenuItem("Tools/NBC/UI/② 设为 TMP 默认字体 + 加为兜底字体")]
         private static void SetAsDefaultAndFallback()
         {
@@ -193,7 +145,6 @@ namespace NBC.EditorTools
 
             bool changed = false;
 
-            // -------- ① 设为 TMP 的默认字体（影响**以后新建**的 TMP 组件）--------
             Object settings = AssetDatabase.LoadAssetAtPath<Object>(TmpSettingsPath);
 
             if (settings == null)
@@ -220,7 +171,6 @@ namespace NBC.EditorTools
                 }
             }
 
-            // -------- ② 加进拉丁字体的兜底列表（影响**已经摆好**的文字）--------
             TMP_FontAsset latin = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(LatinFontAssetPath);
 
             if (latin == null)
@@ -253,9 +203,6 @@ namespace NBC.EditorTools
                 AssetDatabase.SaveAssets();
             }
 
-            // -------- ③ 项目级兜底列表（TMP Settings）--------
-            //  ⚠️ 前面那两条管的是"某个字体资产/新建组件"，而 `TMP_Settings.fallbackFontAssets`
-            //     是**项目级**兜底：任何 TMP 文字找不到字形时都会来这里找。三条一起做才不留缝。
             if (settings != null)
             {
                 SerializedObject serialized = new SerializedObject(settings);

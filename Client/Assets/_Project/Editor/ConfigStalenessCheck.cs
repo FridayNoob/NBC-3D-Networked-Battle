@@ -1,47 +1,10 @@
-// ============================================================================
-//  ConfigStalenessCheck —— 检查「配置表资产」是不是比「源表」旧
-//  项目：3D联网战斗Demo   对应：M2-C 收尾（一个**真发生过两次**的坑）
+// 这个文件里有：
+//   ConfigStalenessCheck（静态类）：把生成目录里的 .tsv 与同名 Config.asset 比修改时间，报告哪些资产需要重新导入
+//   StaleTable（私有嵌套类）：一条过期记录，装表名、状态文案、源表时间、资产时间与资产是否存在
 //
-//  ---------------------------------------------------------------------------
-//  为什么需要它（不是"想多做点工具"，是踩了两次）
-//  ---------------------------------------------------------------------------
-//  配置表的流水线是**两步、且第二步要人手点**：
-//
-//      CSV（策划改）  →【ConfigKit.Cli 生成】→  .tsv / .cs
-//                                              ↓
-//                             【Tools/NBC/配置表/导入 TSV → SO】← **人手点**
-//                                              ↓
-//                                        <表>Config.asset
-//
-//  而"忘了点第二步"**不会报任何错**：`ConfigMgr` 照样能加载资产、照样能查表，
-//  只是那份资产是**旧快照**。M2 期间这个坑踩了**两次**：
-//
-//     ① 模拟清单是快照：M2 加了 4 张表，旧的清单里没有它们 -> 加载报错
-//     ② 配置资产是快照：给 `Quest` 加了任务 3004，忘了重新导入 ->
-//        资产里根本没有 3004，运行时才报"配置表 Quest 里没有任务 3004"
-//
-//  两次的形状完全一样：**"手工步骤 + 没有提示"= 一定会在某天以别的 bug 的面目出现。**
-//  所以给它一个**能一眼看出来**的检查。
-//
-//  ---------------------------------------------------------------------------
-//  判据：比 mtime（并如实说明这条判据的边界）
-//  ---------------------------------------------------------------------------
-//  只要 `*.tsv` 比 `<表>Config.asset` 新，就提示"需要重新导入"。
-//
-//  ⚠️ **已知局限（写清楚，免得被当成精确工具）**：
-//    · mtime 是**启发式**：碰一下 TSV 但内容没变，也会被报成"过期"（假阳性 —— 无害，
-//      点一下导入就好）；反过来，**手工改过 .asset** 而 TSV 没动，这里**查不出来**
-//      （那种情况要靠"生成物与资产都入库 + Git diff"来看）
-//    · 它只比时间，**不做内容对比**。真要做内容对比，得把 TSV 解析一遍再和资产比 ——
-//      那是 CFG-06（增量导出）该干的事，M2 不做
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么新开一个菜单，而不是改 `ConfigImporter`
-//  ---------------------------------------------------------------------------
-//  `ConfigImporter` 是 M1-C3 已收关的模块（W10：尽量避免改已收关的代码，优先"新增"）。
-//  它已经把两个目录路径开成了 `public const`，所以本文件**直接复用**，
-//  一行都不用动它。
-// ============================================================================
+// 注意：配置表流水线是两步，第二步「导入 TSV → SO」要人手点；忘了点不会报任何错，ConfigMgr 照样能查表，只是查到的是旧快照（模拟清单缺 4 张表、Quest 加了任务 3004 没重导，都出自这个坑）。
+// 注意：判据只比文件修改时间，是启发式：碰一下 TSV 但内容没变会被报成过期（假阳性，导入一次即可）；反过来手工改过 .asset 而 TSV 没动，这里查不出来，要看 Git diff。
+// 注意：本文件不去改 ConfigImporter（它已收关），只复用它的两个 public const 目录路径，因此是纯新增代码。
 
 using System;
 using System.Collections.Generic;
@@ -52,29 +15,45 @@ using UnityEngine;
 
 namespace NBC.EditorTools
 {
-    /// <summary>配置表资产与源表的"新鲜度"检查（只报告，不改任何东西）。</summary>
+    // 主要功能：把生成目录里的 .tsv 与资产目录里同名资产（表名 + Config.asset）逐个比修改时间，汇报缺资产与源表更新的表。
+    // 主要数据成员：无实例字段，只有局部量（表名、两侧文件时间、计数）。
+    // 主要外部方法：Check（菜单入口）。
+    // 谁在用它：只由 Unity 菜单 Tools/NBC/配置表/检查资产是否过期（只报告）触发。
     public static class ConfigStalenessCheck
     {
-        /// <summary>过期（源表比资产新）的表。</summary>
+        // 主要功能：一条过期记录，纯粹给 Render 拼报告用。
+        // 主要数据成员：Table（表名）、Status（状态文案）、SourceTime 与 AssetTime（文件修改时间，本地时区）、AssetExists（资产存在吗）。
+        // 主要外部方法：无，纯数据容器。
+        // 谁在用它：Check 逐表填充，Render 读取。
         private sealed class StaleTable
         {
-            /// <summary>表名。</summary>
+            // 表名：.tsv 的文件名去掉扩展名，非空
             public string Table;
 
-            /// <summary>状态描述。</summary>
+            // 状态文案：只取 Check 里赋的两种值——资产不存在、源表比资产新
             public string Status;
 
-            /// <summary>源表时间。</summary>
+            // 源表 .tsv 的最后修改时间：本地时区，来自 File.GetLastWriteTime
             public DateTime SourceTime;
 
-            /// <summary>资产时间（资产不存在时为默认值）。</summary>
+            // 资产 .asset 的最后修改时间：本地时区；资产不存在时保持默认值（DateTime.MinValue）
             public DateTime AssetTime;
 
-            /// <summary>资产存在吗。</summary>
+            // 资产文件存在吗：true 表示已导入过、时间可比；false 表示缺资产
             public bool AssetExists;
         }
 
-        /// <summary>检查全部表的资产是否过期（菜单入口）。</summary>
+        // 功能：扫生成目录里的每个 .tsv，与同名资产比修改时间，拼出「哪些表要重新导入」的报告打到 Console。
+        // 入参：无（菜单无参入口，两个目录取自 ConfigImporter 的 public const）
+        // 返回：无
+        // 步骤：
+        //   1) 先把两个 Assets 相对路径转成绝对路径，后面只用绝对路径，不再依赖当前工作目录
+        //   2) 生成目录不存在、或里面没有 .tsv，就直接报错 / 警告退出——没有源表时比时间没有意义
+        //   3) 先把 .tsv 文件列表排序，让报告顺序稳定、两次运行可比
+        //   4) 逐表查资产：缺资产单独计数，源表时间更晚记为过期，其余计入最新
+        //   5) 全部收集完只渲染一次并输出，避免一张表一行日志刷屏
+        // 上游：Unity 菜单 Tools/NBC/配置表/检查资产是否过期（只报告）
+        // 下游：ToAbsolute（转路径）、Render（拼报告）
         [MenuItem("Tools/NBC/配置表/检查资产是否过期（只报告）")]
         private static void Check()
         {
@@ -143,12 +122,16 @@ namespace NBC.EditorTools
             Debug.Log(Render(stale, missing, ok, tsvFiles.Length));
         }
 
-        /// <summary>拼报告。</summary>
-        /// <param name="stale">过期的表。</param>
-        /// <param name="missing">资产不存在的表数。</param>
-        /// <param name="ok">最新的表数。</param>
-        /// <param name="total">总表数。</param>
-        /// <returns>报告文本。</returns>
+        // 功能：把过期清单拼成一段给人看的报告文本，含顶部统计、逐表时间与末尾处理办法。
+        // 入参：stale 过期与缺资产的表（可为空）；missing 其中缺资产的数量；ok 最新的表数；total 总表数
+        // 返回：报告全文；stale 为空时是一句「全部最新」的结论
+        // 步骤：
+        //   1) 先写表头与两个目录，出问题时能一眼看出查的是哪份配置
+        //   2) 接着写统计行，stale 为空就直接提前返回，省掉后面的明细
+        //   3) 有明细时逐表输出；资产不存在的不打印资产时间，免得看到默认时间误解
+        //   4) 末尾补上处理办法与判据说明，让看日志的人不用再翻代码——判据只比修改时间，手工改过 .asset 而源表没动的情况查不出来，要看 Git diff
+        // 上游：Check 最后一次性调用
+        // 下游：无
         private static string Render(List<StaleTable> stale, int missing, int ok, int total)
         {
             StringBuilder builder = new StringBuilder();
@@ -190,9 +173,14 @@ namespace NBC.EditorTools
             return builder.ToString();
         }
 
-        /// <summary>把 "Assets/..." 换成绝对路径（`Application.dataPath` 去掉末尾的 /Assets）。</summary>
-        /// <param name="assetRelativePath">以 Assets/ 开头的路径。</param>
-        /// <returns>绝对路径。</returns>
+        // 功能：把以 Assets/ 开头的工程相对路径换成绝对路径。
+        // 入参：assetRelativePath 以 Assets/ 开头的工程内路径，如 Assets/_Project/Config
+        // 返回：绝对路径，分隔符统一成正斜杠
+        // 步骤：
+        //   1) Application.dataPath 结尾就是 /Assets，截掉这一段得到工程根目录，避免依赖当前工作目录
+        //   2) 拼上相对路径，再把反斜杠换成斜杠，免得同一路径在日志里出现两种写法
+        // 上游：Check 开头转两个目录
+        // 下游：无
         private static string ToAbsolute(string assetRelativePath)
         {
             string projectRoot = Application.dataPath.Substring(
