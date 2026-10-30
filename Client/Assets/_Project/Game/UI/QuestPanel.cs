@@ -1,45 +1,6 @@
-// ============================================================================
-//  QuestPanel —— 任务面板（**只负责"摆"**，算什么在 `QuestPanelModel`）
-//  项目：3D联网战斗Demo   对应：M2-D（任务 UI，V6）
-//
-//  ---------------------------------------------------------------------------
-//  它遵守 A9 定的那套面板规矩（一条都不新发明）
-//  ---------------------------------------------------------------------------
-//  · **控件按名字索引**（`RequireControl<T>("Title")`）：A9 的 `BasePanel` 会一次性收集
-//    子物体上的所有 `UIBehaviour`，按 GameObject 名字建索引。
-//    名字找不到时 `RequireControl` **抛带指引的异常** —— 这正是 A9 那句
-//    "目标不是检测到错误，而是**让错误自己说出来**"。
-//  · **不写 `Awake`**（A9 的硬约定：`BasePanel` 用公开的 `Initialize()` 做初始化，
-//    因为 **EditMode 下 Unity 根本不调用 `Awake`**，依赖它的话面板一条都测不了）。
-//  · `OnClick(按钮名)` 里**只做转发**：真正的动作与文案在模型那一层。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 动态生成的按钮必须**自己接线**（一个容易踩的点）
-//  ---------------------------------------------------------------------------
-//  `BasePanel.CollectControls()` 是在 `Initialize()` 时**扫一次**，而且它是
-//  `button.onClick.AddListener(() => OnClick(那个 GameObject 的名字))` ——
-//  **名字是收集那一刻的**。所以我这里 `Instantiate` 出来的行按钮：
-//      · 名字要设成 `Accept_3004` 这种（模型给的契约名）
-//      · **监听要自己 Add**（克隆体不会带上模板的监听）
-//  漏了第二件，表现是"按钮点下去没反应"，而且不报错。
-//
-//  ---------------------------------------------------------------------------
-//  预制体要摆哪些东西（摆一次，清单见 Docs\22 D 组）
-//  ---------------------------------------------------------------------------
-//      QuestPanel            （挂本脚本 + 一个 Image 之类的底）
-//      ├─ Title              Text          —— 标题
-//      ├─ Message            Text          —— "上一次操作的结果"（失败原因会显示在这儿）
-//      ├─ OfferList          VerticalLayoutGroup —— 可接任务的容器
-//      ├─ TrackingList       VerticalLayoutGroup —— 已接任务的容器
-//      └─ RowTemplate        Button（**不勾选激活**）+ 一个子 Text
-//
-//  ⚠️ 容器的类型特意选 `VerticalLayoutGroup`：它**继承自 UIBehaviour**，所以会被
-//     `CollectControls` 收集到（空 GameObject 不会被收集）；而且"列表容器本来就该有
-//     竖排布局"，不是为了能收集才硬加的组件。
-//
-//  ⚠️ 行里的文字用 `GetComponentInChildren<Text>()` 取，**不按名字 Find**：
-//     子物体叫什么名字是搭预制体的人随手决定的，代码不该依赖它（FW-10 的同一类问题）。
-// ============================================================================
+// 这个文件里有：
+//   QuestPanel（类）：任务面板，把模型给的可接 / 已接任务铺成按钮行，点击只转发给模型
+//   LabelRef（类）：文字控件的极薄适配，同一套接口同时支持 UGUI Text 与 TextMeshProUGUI
 
 using System;
 using System.Collections.Generic;
@@ -52,128 +13,121 @@ using UnityEngine.UI;
 
 namespace NBC.Game.UI
 {
-    /// <summary>任务面板：接取列表 + 追踪列表 + 交付按钮。</summary>
+    /// <summary>任务面板：把模型给的任务铺成按钮行，点按钮转发给模型，由 Boot 装配并绑定。</summary>
+    // 主要功能：把 QuestPanelModel 的可接 / 已接任务铺成按钮行，点按钮时把按钮名交给模型处理再重画。
+    // 主要数据成员：五个控件名常量与可改的序列化字段、m_panelFont（TMP 字体资产，可空）、两份 QuestRow 缓冲。
+    // 主要外部方法：Bind（绑定模型）、Refresh（重画）、SpawnedRowCount 与 Model（只读状态）。
+    // 谁在用它：Boot 的 M2DemoBehaviour 装配并调用 Bind；EditMode 的 QuestPanelTests 验按钮名与刷新。
     public sealed class QuestPanel : BasePanel
     {
-        // ⚠️ 控件名遵循 `Docs\00` 的 **W12 场景物体命名规范**：`类型_物体名`（例 `button_开始`）。
-        //    这些常量只是**默认值**；Inspector 上每个名字都能改（见下面那组序列化字段），
-        //    所以预制体用别的命名也不会把面板卡死。
 
-        /// <summary>标题控件的默认名字。</summary>
+        // 标题控件的默认物体名，遵循「类型_物体名」命名；只是默认值，Inspector 上可改
         public const string TitleControl = "Text_Title";
 
-        /// <summary>消息控件的默认名字。</summary>
+        // 消息控件默认名，显示上一次操作的结果（失败原因也在这里）
         public const string MessageControl = "Text_Message";
 
-        /// <summary>可接列表容器的默认名字。</summary>
+        // 可接列表容器默认名，物体上要挂 VerticalLayoutGroup
         public const string OfferListControl = "Layout_OfferList";
 
-        /// <summary>已接列表容器的默认名字。</summary>
+        // 已接列表容器默认名，物体上要挂 VerticalLayoutGroup
         public const string TrackingListControl = "Layout_TrackingList";
 
-        /// <summary>行模板的默认名字。</summary>
+        // 行模板按钮默认名，每一行都由它克隆出来
         public const string RowTemplateControl = "Button_RowTemplate";
 
-        /// <summary>标题控件名（可改）。</summary>
+        // 标题控件的物体名；默认 TitleControl，可在 Inspector 覆盖
         [Tooltip("标题的物体名（规范：Text_XXX）")]
         [SerializeField] private string m_titleControl = TitleControl;
 
-        /// <summary>消息控件名（可改）。</summary>
+        // 消息控件的物体名；默认 MessageControl，可在 Inspector 覆盖
         [Tooltip("消息行的物体名（规范：Text_XXX）")]
         [SerializeField] private string m_messageControl = MessageControl;
 
-        /// <summary>可接列表容器名（可改）。</summary>
+        // 可接列表容器的物体名；默认 OfferListControl，可在 Inspector 覆盖
         [Tooltip("可接列表容器的物体名（规范：Layout_XXX）")]
         [SerializeField] private string m_offerListControl = OfferListControl;
 
-        /// <summary>已接列表容器名（可改）。</summary>
+        // 已接列表容器的物体名；默认 TrackingListControl，可在 Inspector 覆盖
         [Tooltip("已接列表容器的物体名（规范：Layout_XXX）")]
         [SerializeField] private string m_trackingListControl = TrackingListControl;
 
-        /// <summary>行模板名（可改）。</summary>
+        // 行模板按钮的物体名；默认 RowTemplateControl，可在 Inspector 覆盖
         [Tooltip("行模板的物体名（规范：Button_XXX）")]
         [SerializeField] private string m_rowTemplateControl = RowTemplateControl;
 
-        /// <summary>
-        /// 可选：这个面板里**所有文字**用哪个 TMP 字体资产。
-        /// <para>
-        /// ⚠️ 为什么要有这个字段（2026-09-23 实测踩到）：中文一开始是方框。
-        /// 那时我们靠的是"**兜底链**"（TMP 默认字体 → LiberationSans 的兜底列表 → 项目级兜底），
-        /// 任何一环没接上、或者已摆好的组件没参与兜底，就是方框，**而且不给任何提示**。
-        /// 这个字段把"字体"变成**显式指定**，一次解决：它会把字体**直接写给**面板上的每个文字
-        /// （含运行时克隆出来的行）。
-        /// </para>
-        /// <para>
-        /// 留空时退到 **TMP 的默认字体**（`TMP_Settings.defaultFontAsset`）——
-        /// 于是"跑过一次中文字体菜单"的工程不用再拖；两者都没有才用组件自己的字体。
-        /// </para>
-        /// </summary>
+        // 面板所有文字用的 TMP 字体资产；null = 用 TMP 默认字体，两者都空才用组件自带字体（显式 = null 可免 CS0649）
         [Tooltip("可选：面板文字用的 TMP 字体（留空 = 用 TMP 默认字体）。中文方框就把它设上")]
-        // 显式 `= null`：序列化字段由 Unity 赋值，代码里从不赋值会让编译器报 CS0649（闸门要求 0 警告）
         [SerializeField] private TMP_FontAsset m_panelFont = null;
 
-        /// <summary>标题（可能是 UGUI `Text`，也可能是 `TextMeshProUGUI`）。</summary>
+        // 标题文字引用；可能是 UGUI Text 或 TextMeshProUGUI，OnInit 里取
         private LabelRef m_title;
 
-        /// <summary>消息控件（两种文字组件都支持）。</summary>
+        // 消息文字引用；两种文字组件都支持，OnInit 里取
         private LabelRef m_message;
 
-        /// <summary>可接列表的父节点。</summary>
+        // 可接列表的父节点；取 VerticalLayoutGroup 所在物体的 RectTransform
         private RectTransform m_offerList;
 
-        /// <summary>已接列表的父节点。</summary>
+        // 已接列表的父节点；取 VerticalLayoutGroup 所在物体的 RectTransform
         private RectTransform m_trackingList;
 
-        /// <summary>行模板。</summary>
+        // 行模板按钮；本体隐藏，只用来 Instantiate 克隆行
         private Button m_rowTemplate;
 
-        /// <summary>行模板里的文字（克隆出来的行都用它）。</summary>
+        // 模板行里的文字引用；克隆行的文字都写在同一位置
         private LabelRef m_rowTemplateLabel;
 
-        /// <summary>视图模型（`Bind` 之后才有）。</summary>
+        // 视图模型；Bind 之前为 null
         private QuestPanelModel m_model;
 
-        /// <summary>复用的可接行缓冲。</summary>
+        // 可接行的复用缓冲；每次 Refresh 由模型覆盖，元素数 = 可接任务数
         private readonly List<QuestRow> m_offerRows = new List<QuestRow>();
 
-        /// <summary>复用的已接行缓冲。</summary>
+        // 已接行的复用缓冲；每次 Refresh 由模型覆盖，元素数 = 已接任务数
         private readonly List<QuestRow> m_trackingRows = new List<QuestRow>();
 
-        /// <summary>已经生成出来的行数（**最近一次刷新**的合计；测试/调试用）。</summary>
+        // 最近一次刷新生成的行数（两份列表合计，>= 0），测试用它断言
         private int m_spawnedRowCount;
 
-        /// <summary>订阅过任务事件没有（退订要用）。</summary>
+        // 是否已订阅任务事件；用于让订阅与退订成对
         private bool m_subscribed;
 
-        /// <summary>字体日志打过没有（只打一次，免得每帧刷屏）。</summary>
+        // 字体日志是否已打；只打一次，免得每帧刷屏
         private bool m_fontLogged;
 
-        /// <summary>没字体时的警告打过没有。</summary>
+        // 无字体警告是否已打；只打一次
         private bool m_fontWarned;
 
-        /// <summary>最近一次刷新生成了几行（两份列表合计）。</summary>
+        // 最近一次刷新生成的行数（两份列表合计），>= 0
         public int SpawnedRowCount
         {
             get { return m_spawnedRowCount; }
         }
 
-        /// <summary>拿到的模型（没绑时为 null）。</summary>
+        // 当前绑定的视图模型；未 Bind 时为 null
         public QuestPanelModel Model
         {
             get { return m_model; }
         }
 
-        // ====================================================================
-        //  BasePanel 的钩子
-        // ====================================================================
 
-        /// <summary>初始化：把控件按名字取出来（取不到就**当场报清楚**）。</summary>
+        // 功能：按物体名取出标题、消息、两个列表容器与行模板，模板隐藏并套上字体。
+        // 入参：无（控件名取自 Inspector 上的五个序列化字段）
+        // 返回：无
+        // 步骤：
+        //   1) 两个文字控件走 ResolveLabel，取不到时抛出带修法的异常
+        //   2) 两个容器按 VerticalLayoutGroup 取，再取它的 transform 当 RectTransform
+        //   3) 行模板取 Button，并在它下面找文字组件
+        //   4) 找不到文字只报错不抛，模板搭错时标题与消息还能显示
+        //   5) 模板本体隐藏后套字体，否则克隆出来的行照样是方框
+        // 上游：BasePanel.Initialize（Boot 与 EditMode 测试都从这里进来）
+        // 下游：ResolveLabel、RequireControl、LabelRef.FindIn、ApplyFont
+        // 注意：不写 Awake：EditMode 下 Unity 不调用 Awake，初始化必须走公开的 Initialize，否则面板一条都测不了。
+        // 注意：容器特意选 VerticalLayoutGroup：它继承 UIBehaviour 才会被 CollectControls 收集（空物体收不到），列表本来也该竖排。
+        // 注意：文字控件按 Graphic 基类取，两种文字组件都是它的子类；只认 Text 会报找不到标题。
         protected override void OnInit()
         {
-            // ⚠️ 这里取的是 `Graphic` 而不是 `Text`：因为**两种文字组件都支持** ——
-            //    `UnityEngine.UI.Text` 与 `TextMeshProUGUI` 都继承自 `Graphic`，
-            //    而 `BasePanel.GetControl<T>` 是 `bucket[i] as T`，所以用基类取能同时命中两者。
-            //    （负责人用的是 TMP，我第一版硬要 `Text`，于是报"找不到 Title" —— 见类头说明。）
             m_title = ResolveLabel(m_titleControl, "标题");
             m_message = ResolveLabel(m_messageControl, "消息行");
 
@@ -185,7 +139,6 @@ namespace NBC.Game.UI
 
             if (m_rowTemplateLabel == null)
             {
-                // 这是**预制体搭错了**，不是运行期数据问题 —— 说清怎么修
                 Debug.LogError(
                     "[QuestPanel] 行模板「" + m_rowTemplateControl + "」下面没有文字组件。\n" +
                     "请给模板按钮加一个子物体，挂 `Text` 或 `TextMeshProUGUI` 都行" +
@@ -193,21 +146,25 @@ namespace NBC.Game.UI
                     "（代码按组件找，不按子物体名字找 —— 名字由搭预制体的人定。）");
             }
 
-            // 模板只是用来克隆的，本体不能显示、也不能被点到
             m_rowTemplate.gameObject.SetActive(false);
 
-            // ⚠️ **行模板上的文字也要应用字体**：行是**克隆模板**出来的，
-            //    字体跟着模板走 —— 模板没应用的话，克隆出来的行照样是方框。
             ApplyFont(m_rowTemplateLabel);
         }
 
-        /// <summary>按钮点击：只做转发（动作与文案都在模型里）。</summary>
-        /// <param name="buttonName">按钮名（模板名会被忽略）。</param>
+        // 功能：把按钮名转给模型执行动作，然后重画。
+        // 入参：buttonName 按钮名，即行按钮的 ActionName（如 Accept_3004）；等于模板名时忽略
+        // 返回：无
+        // 步骤：
+        //   1) 先挡模板名：模板本体正常点不到，这是双保险
+        //   2) 没绑模型只警告不改状态，避免空引用
+        //   3) 交给 QuestPanelModel.HandleAction，再 Refresh 让界面跟上
+        // 上游：BasePanel 按物体名接的按钮监听、行按钮自己 Add 的监听
+        // 下游：QuestPanelModel.HandleAction、Refresh
         protected override void OnClick(string buttonName)
         {
             if (buttonName == m_rowTemplateControl)
             {
-                return;   // 模板本体（正常情况点不到，双保险）
+                return;
             }
 
             if (m_model == null)
@@ -220,22 +177,23 @@ namespace NBC.Game.UI
             Refresh();
         }
 
-        /// <summary>面板被销毁时退订（**订阅不退订是 A4/A8 反复踩的坑**）。</summary>
+        // 功能：面板销毁时退订任务事件，免得事件回调打到已销毁的物体上。
         private void OnDestroy()
         {
             Unsubscribe();
         }
 
-        // ====================================================================
-        //  绑定与刷新
-        // ====================================================================
 
-        /// <summary>
-        /// 绑定视图模型并刷新一次。
-        /// <para>绑定后本面板会**自己订阅任务事件**（接取/进度变化/完成/交付），
-        /// 于是进度涨了界面会自己更新，不需要调用方每次手动刷新。</para>
-        /// </summary>
-        /// <param name="model">视图模型（不能为 null）。</param>
+        /// <summary>绑定视图模型并立刻重画一次，之后任务事件由面板自己订阅刷新。</summary>
+        // 功能：记下模型、订阅四个任务事件，然后重画一次。
+        // 入参：model 视图模型，不能为 null（null 直接抛 ArgumentNullException）
+        // 返回：无
+        // 步骤：
+        //   1) 先校验 null，避免把空模型记进去以后处处判空
+        //   2) 先订阅再刷新，刷新过程中发生的事件不会漏
+        // 上游：Boot 的 M2DemoBehaviour.BindQuestPanel；EditMode 的 QuestPanelTests
+        // 下游：Subscribe、Refresh
+        // 注意：重复 Bind 只是重复订阅（有标志挡着）再重画一次，不会叠出多份监听。
         public void Bind(QuestPanelModel model)
         {
             if (model == null)
@@ -249,12 +207,21 @@ namespace NBC.Game.UI
             Refresh();
         }
 
-        /// <summary>按当前模型重画两份列表（可以随时手动调）。</summary>
+        // 功能：按当前模型重画标题、消息与两份任务列表。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没初始化直接返回：控件还没收集，谈重画没有意义
+        //   2) 标题固定写「任务」，消息写模型的上一次操作结果
+        //   3) 没模型就到此为止，列表保持原样
+        //   4) 先把两份行数据拷进缓冲，再各自铺到对应容器
+        //   5) 计数在铺之前归零，两份列表累加才是 SpawnedRowCount
+        // 上游：Bind、OnClick、OnQuestChanged，也可由外部随时手动调
+        // 下游：QuestPanelModel.CopyOfferRows 与 CopyTrackingRows、RebuildRows
         public void Refresh()
         {
             if (!IsInitialized)
             {
-                // 还没初始化就谈"重画"没有意义（控件都还没收集）
                 return;
             }
 
@@ -276,27 +243,28 @@ namespace NBC.Game.UI
             m_model.CopyOfferRows(m_offerRows);
             m_model.CopyTrackingRows(m_trackingRows);
 
-            // ⚠️ 计数在**刷新开始**时归零：两份列表加起来才是"SpawnedRowCount"
             m_spawnedRowCount = 0;
 
             RebuildRows(m_offerRows, m_offerList);
             RebuildRows(m_trackingRows, m_trackingList);
         }
 
-        // ====================================================================
-        //  内部
-        // ====================================================================
 
-        /// <summary>
-        /// 把一份行数据铺到某个容器里。
-        /// <para>
-        /// ⚠️ **只清这个容器里的行**（第一版我清的是"全局生成列表"，
-        /// 于是第二次调用会把第一份列表刚生成的行也清掉 —— 那份列表就空了，
-        /// 而且看起来像"可接任务没显示"这种玄学问题）。
-        /// </para>
-        /// </summary>
-        /// <param name="rows">行数据。</param>
-        /// <param name="parent">容器（**行模板不能放在它下面**，否则会被当行清掉）。</param>
+        // 功能：清掉容器里现有的行，再按数据逐条克隆模板并接上点击。
+        // 入参：rows 行数据（顺序即显示顺序）；parent 容器（行模板不能放在它下面，否则会被当行清掉）
+        // 返回：无
+        // 步骤：
+        //   1) 模板或容器缺失直接返回，不抛
+        //   2) 先清空本容器，再逐条克隆
+        //   3) 克隆体名字设成 ActionName，行按钮名因此与任务一一对应
+        //   4) 按模板上的文字组件写标题 + 详情 + 动作名三行
+        //   5) 用局部变量 actionName 捕获，别把循环变量带进闭包
+        //   6) 每生成一行计数加一
+        // 上游：Refresh
+        // 下游：ClearRowsIn、LabelRef.FindIn、OnClick
+        // 注意：克隆体不会带上模板的点击监听，必须自己 Add；漏了表现为按钮点下去没反应，而且不报错。
+        // 注意：只清本容器里的行：改清全局生成列表的话，第二次调用会把另一份列表刚生成的行也清掉，看着像可接任务没显示。
+        // 注意：行里的文字按组件找（GetComponentInChildren），不按子物体名字 Find，名字由搭预制体的人随手定。
         private void RebuildRows(List<QuestRow> rows, RectTransform parent)
         {
             if (parent == null || m_rowTemplate == null)
@@ -312,8 +280,6 @@ namespace NBC.Game.UI
 
                 Button button = Instantiate(m_rowTemplate, parent);
 
-                // 名字就是**按钮名**（契约：Accept_3004 / Submit_3004）——
-                // 于是"哪个按钮对应哪个任务"在结构上就不可能错位
                 button.name = row.ActionName;
                 button.gameObject.SetActive(true);
                 button.interactable = row.ActionEnabled;
@@ -328,19 +294,25 @@ namespace NBC.Game.UI
                     }
                 }
 
-                // ⚠️ 克隆体**不会带上模板的点击监听**，必须自己接（见文件头说明）
-                string actionName = row.ActionName;   // 捕获局部变量，别捕获循环变量
+                string actionName = row.ActionName;
                 button.onClick.AddListener(() => OnClick(actionName));
 
                 m_spawnedRowCount++;
             }
         }
 
-        /// <summary>清掉某个容器里现有的行（**编辑器里要用 DestroyImmediate**，否则测试里它们还在）。</summary>
-        /// <param name="parent">容器。</param>
+        // 功能：删掉某个容器下现有的所有行。
+        // 入参：parent 容器（调用方已判过非空）
+        // 返回：无
+        // 步骤：
+        //   1) 从后往前删，正着删会让下标错位
+        //   2) 运行期用 Destroy，交给 Unity 在帧末回收
+        //   3) 非运行期用 DestroyImmediate：EditMode 下 Destroy 要等一帧，而测试里那一帧不会来
+        // 上游：RebuildRows
+        // 下游：UnityEngine.Object.Destroy 与 DestroyImmediate
+        // 注意：编辑器与测试里必须 DestroyImmediate，否则旧行还在，下一次断言会看到多出来的行。
         private static void ClearRowsIn(RectTransform parent)
         {
-            // 从后往前删：正着删会让下标错位
             for (int i = parent.childCount - 1; i >= 0; i--)
             {
                 GameObject child = parent.GetChild(i).gameObject;
@@ -351,13 +323,21 @@ namespace NBC.Game.UI
                 }
                 else
                 {
-                    // EditMode 下 `Destroy` 是**延迟**的（要等一帧），而测试里那一帧不会来
                     DestroyImmediate(child);
                 }
             }
         }
 
-        /// <summary>订阅任务事件（重复调用无害）。</summary>
+        // 功能：订阅四个任务事件，重复调用不会重复订阅。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 已订阅就直接返回
+        //   2) 先置位，再逐个挂四个事件
+        //   3) 四个事件共用 OnQuestChanged，载荷都是 int 任务编号
+        // 上游：Bind
+        // 下游：EventCenter.AddEventListener、OnQuestChanged
+        // 注意：挂上就必须有对应的退订（见 Unsubscribe），否则面板销毁后回调照样进来。
         private void Subscribe()
         {
             if (m_subscribed)
@@ -373,7 +353,15 @@ namespace NBC.Game.UI
             EventCenter.Instance.AddEventListener<int>(QuestEvents.Submitted, OnQuestChanged);
         }
 
-        /// <summary>退订任务事件（重复调用无害）。</summary>
+        // 功能：退掉 Subscribe 挂的四个任务事件，重复调用不会多退。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没订阅就直接返回
+        //   2) 先清标志，再逐个移除四个事件
+        // 上游：OnDestroy
+        // 下游：EventCenter.RemoveEventListener
+        // 注意：必须与 Subscribe 一一对应，漏掉一个就会在销毁后继续收到回调。
         private void Unsubscribe()
         {
             if (!m_subscribed)
@@ -389,26 +377,25 @@ namespace NBC.Game.UI
             EventCenter.Instance.RemoveEventListener<int>(QuestEvents.Submitted, OnQuestChanged);
         }
 
-        /// <summary>
-        /// 按名字取一个**文字**控件（UGUI `Text` 或 `TextMeshProUGUI` 都认）。
-        /// <para>
-        /// ⚠️ 取的时候用基类 `Graphic`：两种文字组件都是它的子类，
-        /// 而 `BasePanel.GetControl&lt;T&gt;` 是 `bucket[i] as T` —— 用基类才能同时命中。
-        /// </para>
-        /// </summary>
-        /// <param name="controlName">控件名。</param>
-        /// <param name="what">这是什么（报错里说人话用）。</param>
-        /// <returns>引用（一定不是 null）。</returns>
+        // 功能：按名字取一个文字控件，取不到就抛带修法说明的异常。
+        // 入参：controlName 控件物体名；what 这是什么（拼进报错，给人看）
+        // 返回：文字控件的引用，一定不是 null
+        // 步骤：
+        //   1) 先按 Graphic 基类取：名字不对时 RequireControl 自己抛，并列出现有控件名
+        //   2) 在那个物体上找文字组件，两种都认
+        //   3) 名字对却没有文字组件属于另一种错，单列一条消息说清该挂什么
+        //   4) 取到后先套字体再返回
+        // 上游：OnInit
+        // 下游：RequireControl、LabelRef.FindIn、ApplyFont
+        // 注意：报错要带物体名与修法：目标不是检测到错误，而是让错误自己说出来。
         private LabelRef ResolveLabel(string controlName, string what)
         {
-            // 名字不对 -> 这里抛，消息里会列出"现有这些控件"（A9 的报错风格）
             Graphic graphic = RequireControl<Graphic>(controlName);
 
             LabelRef label = LabelRef.FindIn(graphic.gameObject);
 
             if (label == null)
             {
-                // 名字对了、但那个物体上没有文字组件 —— 这是**另一种错**，要分开说
                 throw new InvalidOperationException(
                     "[QuestPanel] 名字 «" + controlName + "» 找到了，但" + what +
                     "那个物体上挂的是 " + graphic.GetType().Name +
@@ -420,18 +407,17 @@ namespace NBC.Game.UI
             return label;
         }
 
-        /// <summary>
-        /// 把一个字体**直接写给**一个文字控件（**不再依赖 TMP 的兜底链**）。
-        /// <para>
-        /// 取值顺序：① Inspector 上拖的 `m_panelFont` → ② TMP 的默认字体（`TMP_Settings.defaultFontAsset`）→
-        /// ③ 什么都不做（用组件自己的字体）。
-        /// </para>
-        /// <para>
-        /// ⚠️ 第一次成功解析时打一条日志（**带字体名与模式**）—— 中文方框这类问题，
-        /// 有这一行就能立刻判断"是没接上字体"还是"字体本身没字形"。
-        /// </para>
-        /// </summary>
-        /// <param name="label">文字控件（可以为 null）。</param>
+        // 功能：把一个 TMP 字体直接写给文字控件，不走 TMP 的兜底链。
+        // 入参：label 文字控件，可以为 null（null 直接返回）
+        // 返回：无
+        // 步骤：
+        //   1) 取值顺序：Inspector 上的 m_panelFont，其次 TMP 默认字体，最后什么都不做
+        //   2) 都没有时只警告一次，并给出两条修法
+        //   3) 有字体就写进组件，并只打一次日志（字体名、模式、源字体）
+        // 上游：OnInit（标题、消息、模板行）、ResolveLabel
+        // 下游：LabelRef.SetFont
+        // 注意：中文一开始显示成方框，是兜底链任何一环没接上都会静默失败；显式指定后一次解决，克隆出来的行也跟着走。
+        // 注意：日志里若图集的 m_UsedGlyphRects 一直是空的，那是字体文件或模式的问题，不是接线问题。
         private void ApplyFont(LabelRef label)
         {
             if (label == null)
@@ -468,52 +454,47 @@ namespace NBC.Game.UI
             }
         }
 
-        /// <summary>任务有任何变化就重画。</summary>
-        /// <param name="questId">任务编号（这里用不到，只为对上事件签名）。</param>
+        // 功能：收到任一任务事件就整页重画（事件载荷的任务编号用不到）。
         private void OnQuestChanged(int questId)
         {
             Refresh();
         }
 
-        // ====================================================================
-        //  LabelRef —— "能设文字的东西"的极薄适配（**UGUI Text 与 TMP 都支持**）
-        // ====================================================================
 
-        /// <summary>
-        /// 一个文字控件的引用：里面装的是 `Text` 或 `TMP_Text`，对外只暴露"设文字"。
-        /// <para>
-        /// ⚠️ **为什么需要这一层**：项目里两种文字组件都有 ——
-        /// 框架的既有面板（`LoadingMaskPanel` / `PerfHudPanel`）用的是 UGUI `Text`，
-        /// 而新搭的界面（负责人这次）用的是 **`TextMeshProUGUI`**（TMP 是 Unity 现在的默认推荐）。
-        /// 我第一版硬邦邦地要 `Text`，于是 TMP 的预制体直接报"找不到控件"。
-        /// </para>
-        /// <para>
-        /// ⚠️ 两个实现细节值得记：
-        /// ① 取组件时**不能写 `a ?? b`** —— Unity 的"假 null"（对象已销毁但托管引用还在）
-        ///    会让 `??` 判断失效，必须显式 `if (x == null)`（Unity 重载了 `==`，`??` 不走它）。
-        /// ② 用 `GetComponentInChildren<T>(true)`：`true` = **包含未激活的子物体** ——
-        ///    行模板正好是"未激活"的，不传这个参数一行都取不到。
-        /// </para>
-        /// </summary>
+        // 主要功能：包住一个 UGUI Text 或 TMP_Text，对外只暴露设文字与设字体。
+        // 主要数据成员：m_legacy（UGUI 文字）、m_tmp（TMP 文字），两者二选一。
+        // 主要外部方法：FindIn（在物体里找）、Set（写文字）、SetFont（只对 TMP 生效）。
+        // 谁在用它：QuestPanel 的 OnInit、Refresh、RebuildRows、ResolveLabel；私有嵌套，不跨程序集。
+        // 注意：项目里两种文字组件都有，硬要 Text 时 TMP 的预制体会直接报找不到控件。
         private sealed class LabelRef
         {
-            /// <summary>UGUI 文字（二选一）。</summary>
+            // UGUI 文字组件；与 m_tmp 二选一，另一个为 null
             private readonly Text m_legacy;
 
-            /// <summary>TMP 文字（二选一）。</summary>
+            // TMP 文字组件；与 m_legacy 二选一，另一个为 null
             private readonly TMP_Text m_tmp;
 
-            /// <summary>造一个引用（两个都为 null 时**不要**造，用 `FindIn`/`Require`）。</summary>
-            /// <param name="legacy">UGUI 文字。</param>
-            /// <param name="tmp">TMP 文字。</param>
+            // 功能：造一个引用，两个参数最多一个非空。
+            // 入参：legacy UGUI 文字；tmp TMP 文字（两个都为 null 请走 FindIn）
+            // 返回：无
+            // 步骤：只做赋值，不校验，二选一由调用方保证
+            // 上游：FindIn
+            // 下游：无
             private LabelRef(Text legacy, TMP_Text tmp)
             {
                 m_legacy = legacy;
                 m_tmp = tmp;
             }
 
-            /// <summary>把一段文字写进去。</summary>
-            /// <param name="text">文字。</param>
+            // 功能：把一段文字写进底层组件，TMP 优先。
+            // 入参：text 要显示的文字
+            // 返回：无
+            // 步骤：
+            //   1) 有 TMP 就写它并返回
+            //   2) 否则写 UGUI Text
+            //   3) 两个都空就什么都不做
+            // 上游：Refresh（标题与消息）、RebuildRows（行文字）
+            // 下游：TMP_Text.text 与 Text.text
             public void Set(string text)
             {
                 if (m_tmp != null)
@@ -528,11 +509,13 @@ namespace NBC.Game.UI
                 }
             }
 
-            /// <summary>
-            /// 指定字体（**只对 TMP 有效**；UGUI 的 `Text` 用的是 `Font`，两套不通用 —— 这里刻意不管它）。
-            /// <para>⚠️ 只能改 TMP 组件的**字体资产**；它自己在 prefab 上的材质会跟着字体走。</para>
-            /// </summary>
-            /// <param name="font">TMP 字体资产。</param>
+            // 功能：把 TMP 字体资产写给组件；UGUI 的 Text 刻意不管。
+            // 入参：font TMP 字体资产，null 时什么都不做
+            // 返回：无
+            // 步骤：只有 m_tmp 与 font 都非空才写，避免用空值盖掉组件自带的字体
+            // 上游：ApplyFont
+            // 下游：TMP_Text.font
+            // 注意：UGUI Text 用的是 Font，两套不通用；这里只改字体资产，prefab 上的材质会跟着字体走。
             public void SetFont(TMP_FontAsset font)
             {
                 if (m_tmp != null && font != null)
@@ -541,9 +524,17 @@ namespace NBC.Game.UI
                 }
             }
 
-            /// <summary>在一个物体（含未激活子物体）里找文字组件；找不到返回 null。</summary>
-            /// <param name="owner">物体。</param>
-            /// <returns>引用；没有文字组件时 null。</returns>
+            // 功能：在一个物体及其子物体里找文字组件，TMP 优先。
+            // 入参：owner 物体，null 直接返回 null
+            // 返回：找到的引用；两种文字组件都没有时返回 null
+            // 步骤：
+            //   1) 先找 TMP_Text，命中就包装返回
+            //   2) 再找 UGUI Text
+            //   3) 都没有返回 null
+            // 上游：OnInit（模板行）、RebuildRows（克隆行）、ResolveLabel
+            // 下游：GetComponentInChildren
+            // 注意：必须传 includeInactive = true：行模板本身是未激活的，不传这个参数一行都取不到。
+            // 注意：判空只能写 if (x == null)，不能写 a ?? b：Unity 的假 null 不走 ?? 的重载。
             public static LabelRef FindIn(GameObject owner)
             {
                 if (owner == null)
