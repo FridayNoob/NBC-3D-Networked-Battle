@@ -1,126 +1,87 @@
-// ============================================================================
-//  EConditionEvent —— 「条件事件」的类型（配置表 QuestCondition.eventType 用）
-//  项目：3D联网战斗Demo   对应：M2-A1（条件系统）、Docs\20 §四
-//
-//  ---------------------------------------------------------------------------
-//  它是什么
-//  ---------------------------------------------------------------------------
-//  "条件系统"要回答一个问题：**"玩家做到了某件事"这个事实，怎么变成进度？**
-//
-//  做法是：游戏里发生的一切**先被归一成"条件事件"**，条件系统只认这一种东西。
-//  例如：
-//      战斗里打死了怪   -> KillMonster, targetId = 怪物编号
-//      背包里进了一件物品 -> CollectItem, targetId = 物品编号
-//      玩家走进某块区域  -> ReachArea,  targetId = 区域编号
-//
-//  于是"击杀 3 只野狼"就是一条**数据**（`KillMonster` + 6001 + 3），不是代码。
-//  加一个新任务**不用改一行 C#** —— 这是整个任务系统能被策划自己维护的前提。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么它住在「共享层」（`Shared\`）而不是客户端
-//  ---------------------------------------------------------------------------
-//  任务进度在 M4 要**由服务端校验**（客户端说自己打完了不算数）。
-//  `Shared\` 是**一份源码、双端都编**的地方（D1 的规矩），
-//  所以条件系统的核心放这里，服务端拿到的是**同一份逻辑**，不会漂移。
-//  这也是为什么本文件里**一个 `UnityEngine` 都没有**（服务端没有 Unity）。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 枚举是「手写」的，不由配置表工具生成
-//  ---------------------------------------------------------------------------
-//  规范（`Docs\17` §二）写死了：`enum:类型名` 的语义是"**表里写成员名，值由 C# 决定**"。
-//  工具不认识业务语义（谁是 KillMonster 是游戏设计），所以枚举**只有这一处权威来源**。
-//  ⚠️ 已知局限（`Docs\17` 如实记过）：表里写错成员名（`KillMonsterr`）工具查不出来，
-//     要到运行时 `Enum.Parse` 才炸。想提前查，把成员填进 `ConfigPolicy.KnownEnumMembers`。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 新增成员只能**往后加**，不许改已有成员的值
-//  ---------------------------------------------------------------------------
-//  枚举值会被写进**配置表**和（M4 起的）**进度表**。
-//  改动已有成员的值 = 让历史上所有存档的含义悄悄变了 —— 典型的静默数据损坏。
-// ============================================================================
+// 这个文件里有：
+//   EConditionEvent（枚举）：条件事件的类型，也就是条件的主语；配置表 QuestCondition.eventType 填它的成员名，不填数字
+//   ConditionEvents（静态类）：条件事件的名字解析、合法性校验、稳定字符串键与报错文案
 
-// ============================================================================
-//  ⚠️ `#nullable disable` —— 让**双端看到同一套规则**（D1 的"不许漂移"）
-// ============================================================================
-//  同一份源码在两个 nullable 设置**不同**的工程里编译：
-//      · Unity 侧（`NBC.Shared.asmdef`）      ：没开可空引用类型
-//      · 服务端（`NBC.Shared.csproj` → `Server\Directory.Build.props`）：`<Nullable>enable</Nullable>`
-//
-//  不处理的话会出现**两头都不干净**：
-//      · 服务端多出一批 CS86xx（事件没初始化、局部变量赋 null……）
-//      · 而如果为了消警告去写 `string?` / `List<T>?`，**Unity 侧**又会因为
-//        "可空注解出现在未开启可空上下文的文件里"报 **CS8632**
-//
-//  所以这里显式关掉：**两边都按"没有可空注解"这套规则编译**。
-//  这不是"为了消警告而关检查"，而是**把环境差异钉死在一处** ——
-//  否则"服务端编得过、Unity 编不过"（或反过来）正是 D1 要防的那种漂移。
-//
-//  ⚠️ 代价（如实记）：本目录里**放弃**了可空引用类型的静态检查，
-//     "可能为 null"要靠 XML 注释和运行期校验（本目录两个都做了）。
-//     若将来两端统一开启可空，把这几行删掉即可 —— 它们集中且显眼。
-// ============================================================================
+// 注意：顶部关掉 nullable 是让双端看到同一套规则 —— Unity 侧（NBC.Shared.asmdef）没开可空引用类型，
+//     服务端（NBC.Shared.csproj → Server\Directory.Build.props）开了；不关的话服务端会多出一批 CS86xx，
+//     而为了消警告去写可空注解，Unity 侧又会报 CS8632，两头都不干净。
+// 注意：代价是本目录放弃可空静态检查，「可能为 null」靠运行期校验兜住；将来两端统一开启可空，删掉这条指令即可。
+// 注意：本文件不引用 UnityEngine（服务端没有 Unity），也不得引用 NBC.Protocol —— 它被客户端与服务端同一份源码编译。
+// 注意：targetId 是配置编号（正整数，0 表示任意），不是坐标；本文件只处理事件类型与编号，没有长度或时间量，不涉及毫米 / 米或 tick / 秒。
 
 #nullable disable
 
 namespace NBC.Shared.Condition
 {
-    /// <summary>条件事件的类型。条件的"主语"就是它。</summary>
+    // 主要功能：把「玩家做到了某件事」归一成一个枚举值，条件系统只认这一种输入，任务与成就因此能靠配置表表达而不改代码。
+    // 主要数据成员：KillMonster / CollectItem / ReachArea / UseSkill / TalkToNpc 五个成员，值固定为 0..4，顺序不能动。
+    // 主要外部方法：无（名字解析、校验与显示都在 ConditionEvents 里）。
+    // 谁在用它：客户端 ConditionEventBridge 绑定事件、ConditionTracker 与任务 / 成就运行时计数；服务端 QuestTables 解析配置、ProgressFact 与 DungeonBattle 产生条件事实；Editor 调试窗口与联调探针也直接引用；两端编同一份源码。
+    // 注意：新增成员只能往后加，不许改已有成员的值 —— 值会写进配置表和服务端进度表，改值等于悄悄改变历史存档的含义。
+    // 注意：枚举是唯一权威来源，表里写成员名、值由 C# 决定；表里写错名字工具查不出，要到运行期解析才报错，想提前查可把成员登记进 ConfigPolicy.KnownEnumMembers。
+    /// <summary>条件事件的类型，条件的主语就是它；配置表 QuestCondition.eventType 填成员名。</summary>
     public enum EConditionEvent
     {
-        /// <summary>击杀了一个怪（<c>targetId</c> = 怪物编号，0 = 任意怪）。</summary>
+        /// <summary>击杀了一个怪；targetId 填怪物编号（0 表示任意怪）；成员值固定为 0。</summary>
         KillMonster = 0,
 
-        /// <summary>获得了物品（<c>targetId</c> = 物品编号，0 = 任意物品）。</summary>
+        /// <summary>获得了物品；targetId 填物品编号（0 表示任意物品）；成员值固定为 1。</summary>
         CollectItem = 1,
 
-        /// <summary>到达了区域（<c>targetId</c> = 区域编号，0 = 任意区域）。</summary>
+        /// <summary>到达了区域；targetId 填区域编号（0 表示任意区域）；成员值固定为 2。</summary>
         ReachArea = 2,
 
-        /// <summary>用技能命中（<c>targetId</c> = 技能编号，0 = 任意技能）。</summary>
+        /// <summary>用技能命中；targetId 填技能编号（0 表示任意技能）；成员值固定为 3。</summary>
         UseSkill = 3,
 
-        /// <summary>和 NPC 对话（<c>targetId</c> = NPC 编号，0 = 任意 NPC）。</summary>
+        /// <summary>和 NPC 对话；targetId 填 NPC 编号（0 表示任意 NPC）；成员值固定为 4。</summary>
         TalkToNpc = 4
     }
 
-    /// <summary>`EConditionEvent` 的辅助方法。</summary>
+    // 主要功能：给 EConditionEvent 提供名字与值的互相翻译、合法性校验、稳定字符串键和报错文案。
+    // 主要数据成员：Count（合法成员个数，值 5，必须与枚举成员数一致）。
+    // 主要外部方法：IsDefined / TryParse / NameOf / DescribeAllNames / Describe / KeyOf。
+    // 谁在用它：客户端 ConditionEventBridge 绑定事件时校验、ConditionTracker 入口拦假值；服务端 QuestTables 读表解析、ProgressFact 打日志；Editor 调试窗口间接触发。
+    // 注意：名字映射手写在 NameOf 里，新增枚举成员必须同时加 Count 与 NameOf，否则新成员会被当成未知值。
+    /// <summary>EConditionEvent 的名字解析、合法性校验与显示辅助。</summary>
     public static class ConditionEvents
     {
-        /// <summary>本枚举的**合法成员个数**（用于校验"表里填了个不存在的值"）。</summary>
+        // 合法成员个数，无单位；值 5，必须等于枚举成员数，新增成员时 +1（IsDefined 的范围判断与 DescribeAllNames 的遍历都靠它）
         public const int Count = 5;
 
-        /// <summary>
-        /// 这个值是不是一个**真实存在**的成员。
-        /// <para>
-        /// ⚠️ 为什么要专门检查：`(EConditionEvent)99` 在 C# 里**完全合法**（不报错、不抛异常），
-        /// 它会安静地待在变量里，然后**匹配不到任何条件** —— 于是任务永远做不完。
-        /// 这是典型的"看起来正常的假值"，必须在入口拦掉。
-        /// </para>
-        /// </summary>
-        /// <param name="value">待检查的值。</param>
-        /// <returns>是合法成员返回 true。</returns>
+        /// <summary>判断一个值是不是枚举里真实存在的成员，把强转出来的假值挡在系统入口。</summary>
+        /// <param name="value">待检查的事件类型；可能由任意 int 强转而来，不保证合法。</param>
+        /// <returns>落在 0..Count-1 内返回 true，否则 false。</returns>
+        // 功能：判断一个值是不是枚举里真实存在的成员，把强转出来的假值挡在系统入口。
+        // 入参：value 待检查的事件类型；可能是任意 int 强转来的值，不保证合法
+        // 返回：true 表示能匹配到真实成员；false 表示是假值，调用方必须拒绝
+        // 步骤：
+        //   1) 先转成 int 再做范围判断，不逐个成员比较
+        //   2) 成员值从 0 连续排列，落在 0..Count-1 内就等价于成员存在
+        // 上游：ConditionDef.Validate、ConditionTracker.Notify（同程序集），客户端 ConditionEventBridge.Bind
+        // 下游：无
+        // 注意：(EConditionEvent)99 在 C# 里完全合法，不报错也不抛异常；放过去会匹配不到任何条件，表现为任务永远做不完。
         public static bool IsDefined(EConditionEvent value)
         {
             int raw = (int)value;
             return raw >= 0 && raw < Count;
         }
 
-        /// <summary>
-        /// 把**配置表里写的名字**解析成枚举（`"KillMonster"` → <see cref="EConditionEvent.KillMonster"/>）。
-        ///
-        /// <para>
-        /// ⚠️ 为什么放在**共享层**而不是各写一份：`QuestCondition.csv` 里填的是名字，
-        /// 而**两端都要读同一张表**（客户端读生成的 TSV、服务端直接读 CSV，见 M4-S3 服务端权威化）。
-        /// 各写一份解析 = 迟早有一边多认一个名字 ⇒ "客户端认为条件成立、服务端认为配置有错"。
-        /// </para>
-        /// <para>
-        /// ⚠️ **大小写敏感**（按名字逐字符比）：表里就写 `KillMonster`，
-        /// 宽松匹配只会让 `killmonster` 这种拼错**静默生效**。
-        /// </para>
-        /// </summary>
-        /// <param name="name">名字（不带 `条件.` 前缀）。</param>
-        /// <param name="value">解析结果（失败时是 default）。</param>
-        /// <returns>解析成功返回 true。</returns>
+        /// <summary>把配置表里写的名字解析成枚举值，大小写敏感、按序数逐字符比较。</summary>
+        /// <param name="name">表里填的名字，不带「条件.」前缀；null 或空串一律解析失败。</param>
+        /// <param name="value">解析结果；失败时是 default，即 0（KillMonster）。</param>
+        /// <returns>名字是已知成员返回 true，否则 false。</returns>
+        // 功能：把配置表里的成员名解析成枚举值，名字必须逐字符完全一致。
+        // 入参：name 表里填的名字（不带「条件.」前缀，null 或空串按不认识处理）；value 解析结果，失败时写 default
+        // 返回：true 表示名字是已知成员；false 表示不认识，value 已置为 0
+        // 步骤：
+        //   1) 从 0 到 Count-1 遍历成员，不另维护名字表，避免两处对不上
+        //   2) 用 Ordinal 比较名字，大小写不同即失败，不让 killmonster 这类拼错静默生效
+        //   3) 全不命中才写 default，保证失败时 value 不是上一次的残留
+        // 上游：服务端 QuestTables 读 CSV；客户端读生成的 TSV 走生成代码里的 Enum.Parse，不经过这里
+        // 下游：NameOf
+        // 注意：本方法大小写敏感，客户端生成的表加载器却忽略大小写；拼错的名字可能客户端能过、服务端报错，改表时别依赖客户端的宽松。
+        // 注意：解析放共享层是为了两端认同一套名字；各写一份实现，迟早一边多认一个名字，出现客户端认为条件成立、服务端认为配置有错的漂移。
         public static bool TryParse(string name, out EConditionEvent value)
         {
             for (int i = 0; i < Count; i++)
@@ -138,9 +99,18 @@ namespace NBC.Shared.Condition
             return false;
         }
 
-        /// <summary>枚举成员名（与配置表里填的名字一致；和 <see cref="KeyOf"/> 的 `条件.` 前缀无关）。</summary>
-        /// <param name="value">事件类型。</param>
-        /// <returns>名字。</returns>
+        /// <summary>把枚举值翻成配置表里使用的成员名；不认识的值返回带数字的未知文案，不抛异常。</summary>
+        /// <param name="value">事件类型，允许是任意 int 强转来的值。</param>
+        /// <returns>成员名；未知值时形如「未知(99)」，数字便于报错定位。</returns>
+        // 功能：把枚举值翻成配置表里使用的成员名，未知值也不抛异常。
+        // 入参：value 事件类型；允许是任意 int 强转来的值
+        // 返回：成员名；不认识的值返回「未知(n)」，n 是它的整数值
+        // 步骤：
+        //   1) 逐个成员 switch 直接返回字面名字，与表里的填法完全一致
+        //   2) 兜底返回带数值的未知文案，让上层自己决定怎么报错
+        // 上游：TryParse、DescribeAllNames、KeyOf（同程序集），服务端 ProgressFact 的文本，ConditionDef 的显示
+        // 下游：无
+        // 注意：这张映射是手写的唯一权威，新增枚举成员必须在这里补一行，否则该成员会被当成未知值。
         public static string NameOf(EConditionEvent value)
         {
             switch (value)
@@ -154,8 +124,17 @@ namespace NBC.Shared.Condition
             }
         }
 
-        /// <summary>所有合法名字，拼成一句人话（报错时告诉人"能填什么"）。</summary>
-        /// <returns>例：`KillMonster / CollectItem / …`。</returns>
+        /// <summary>把所有合法名字拼成一句人话，配置报错时告诉填表人能填什么。</summary>
+        /// <returns>形如「KillMonster / CollectItem / ...」的字符串，顺序与枚举值一致。</returns>
+        // 功能：把所有合法名字拼成一句人话，报错时直接告诉填表人能填什么。
+        // 入参：无
+        // 返回：名字按枚举值顺序用「 / 」分隔；至少有一个名字，不会为空
+        // 步骤：
+        //   1) 从 0 遍历到 Count-1，顺序稳定，不依赖字典或反射
+        //   2) 除第一个外先补分隔符，避免结尾多一个「 / 」
+        //   3) 名字统一走 NameOf，和解析共用同一套拼法
+        // 上游：服务端 QuestTables 的配置报错
+        // 下游：NameOf
         public static string DescribeAllNames()
         {
             string text = string.Empty;
@@ -173,25 +152,21 @@ namespace NBC.Shared.Condition
             return text;
         }
 
-        /// <summary>
-        /// 稳定的**字符串键**（日志、事件注册、外部协议里用它）。
-        /// <para>约定形状：`条件.<成员名>`，例如 `条件.KillMonster`。</para>
-        /// <para>
-        /// ⚠️ 拿它当**事件中心**的 key 时要注意：客户端用的是强类型 `EventId`
-        /// （A3 的 FW-06 修法），这里的字符串只是"两边都认的同一句话"，
-        /// 由客户端侧的桥把它翻译成 `EventId` —— 不要在业务代码里裸传这个字符串。
-        /// </para>
-        /// </summary>
-        /// <param name="value">事件类型。</param>
-        /// <returns>字符串键。</returns>
+        // 功能：拼出稳定的字符串键「条件.成员名」，供日志、事件注册与外部协议使用；客户端事件中心用的是强类型 EventId，这个字符串只作两端共识，须经桥翻译，不要在业务代码里裸传。
         public static string KeyOf(EConditionEvent value)
         {
             return "条件." + NameOf(value);
         }
 
-        /// <summary>转成一句人话（报错消息里用）。</summary>
-        /// <param name="value">事件类型。</param>
-        /// <returns>中文描述。</returns>
+        // 功能：把事件类型转成一句中文，供条件描述与报错文案使用。
+        // 入参：value 事件类型；允许是任意 int 强转来的值
+        // 返回：中文名；不认识的值返回「未知事件（n）」，n 是它的整数值
+        // 步骤：
+        //   1) 逐个成员 switch 直接返回中文名，保证界面与日志用词统一
+        //   2) 兜底返回带数值的未知文案，不抛异常
+        // 上游：ConditionDef.Describe（同程序集），目前没有跨程序集直接调用
+        // 下游：无
+        // 注意：中文名与 NameOf 的成员名是两套文案，新增成员时两边都要补。
         public static string Describe(EConditionEvent value)
         {
             switch (value)

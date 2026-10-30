@@ -1,85 +1,90 @@
-// ============================================================================
-//  MatchRules / LockstepTeams / MatchVerdict —— 2v2 的**队伍与胜负**（M4-S4 S4-d）
-//  项目：3D联网战斗Demo   对应：`Docs\27` §三十四
+// 这个文件里有：
+//   EMatchOutcome（枚举）：一局 2v2 的判定结果，未结束 / A 胜 / B 胜 / 平局，编号即协议数字。
+//   LockstepTeams（静态类）：按成员名单推 2v2 的两队，规则是 player_id 升序后交替分。
+//   MatchRules（静态类）：2v2 的胜负规则常量与判定，全是纯函数。
+//   EntityTeam（接口）：实体编号到队号的查询，给数击杀的纯函数用。
+//   SortedTeamMap（类）：从成员名单一次算好队号映射，双端共用同一个实现。
 //
-//  ---------------------------------------------------------------------------
-//  一、⚠️ 为什么全放共享层纯函数、而且**优先不加协议**
-//  ---------------------------------------------------------------------------
-//  ① **队伍分配不加协议**：两端都能拿到 `RoomState` 的成员名单 ⇒ 只要**用同一个纯函数**
-//     推导队伍，就不需要在协议里再传一份"谁在哪队" —— **少一个字段就少一处会不一致的地方**。
-//     （这一条就是 §33.5 那条判据的应用：能靠"同一份纯逻辑"对齐的，就别靠额外字段。）
-//  ② **胜负判定也不加协议之外的东西**：判定吃"世界状态 + 队伍映射"⇒ 纯函数。
-//     ⚠️ **别读时钟、别读全局**（那样两端会因为"什么时候调"不同而算出不同结果）。
-//  ③ 只要放 `Shared\Sim\`，就**不许出现 protobuf 类型**（W22：本目录通配进 `NBC.Shared`，
-//     而 `NBC.Shared` 不认协议 —— 上次撞过，整个仓库编不过）。
-//
-//  ---------------------------------------------------------------------------
-//  二、⚠️ 队伍分配必须**与入房顺序无关**（§29.2 判据②在这一刀的落点）
-//  ---------------------------------------------------------------------------
-//  做法：**先把成员按 `player_id` 升序排序**，再**交替**分两队（0,1,0,1…）。
-//  · 交替而不是"前一半 A 后一半 B"：人数不满时交替仍然均衡（3 人 ⇒ A 2 / B 1），
-//    而"切一半"在 3 人时会给出 A 2 / B 1 也一样，但 5 人以上交替更稳。
-//  · ⚠️ **去重 + 跳过非正数**（游客/未登录没有实体），理由同 `LockstepRoster`。
-//  ---------------------------------------------------------------------------
-//  三、规则（**谁先满足**写死在这里，别在调用方各写一份）
-//  ---------------------------------------------------------------------------
-//      ① 任一队**击杀 ≥ `KillsToWin`** ⇒ 该队**立即**获胜（同一 tick 两队都达到 ⇒ 比击杀数，多者胜；相等 ⇒ 平）；
-//      ② 否则跑满 `MaxTicks` ⇒ **击杀多者胜**；相等 ⇒ **平**；
-//      ③ 都不满足 ⇒ **未结束**。
-//  "击杀"的定义：**对方队伍里 `Hp <= 0` 的实体数**（本片不做助攻/复活）。
-// ============================================================================
+// 注意：本文件在 Shared\Sim 下，随目录通配进 NBC.Shared；而 NBC.Shared 不引用 NBC.Protocol，这里不许出现任何 protobuf 类型，否则整个仓库编不过。
+// 注意：队伍分配与胜负判定都写死成纯函数，不读时钟、不读全局 —— 两端调用时机不同，一读就会各算一套结果；谁先满足哪条规则也只在这里写一次。
+// 注意：单位按锁步世界这一套 —— 时间是 tick（30Hz 逻辑帧，1800 tick = 60 秒）；本文件没有长度量（该层长度单位是米），人数与击杀数的单位是人。
+// 规则与理由详见 Docs\27 §三十四。
 
 using System.Collections.Generic;
 
 namespace NBC.Shared.Sim
 {
-    /// <summary>一局的判定结果。</summary>
+    // 主要功能：表示一局 2v2 走完之后的判定结果，只有未结束、A 胜、B 胜、平局四种。
+    // 主要数据成员：Undecided / TeamA / TeamB / Draw 四个成员，取值 0 / 1 / 2 / 3。
+    // 主要外部方法：无；到协议数字的转换走 MatchRules.FromNumber / ToNumber，文案走 Describe。
+    // 谁在用它：服务端 LockstepService 判胜负、客户端 LockstepClient 复算对账、NetSession 转对外结果，联调探针也拿它断言。
+    /// <summary>一局的判定结果；枚举值与协议数字一一对应（0 未结束、1 A 胜、2 B 胜、3 平局）。</summary>
     public enum EMatchOutcome
     {
-        /// <summary>还没结束。</summary>
+        /// <summary>还没结束；编号 0。</summary>
         Undecided = 0,
 
-        /// <summary>A 队（队伍号 0）胜。</summary>
+        /// <summary>A 队（队伍号 0）获胜；编号 1。</summary>
         TeamA = 1,
 
-        /// <summary>B 队（队伍号 1）胜。</summary>
+        /// <summary>B 队（队伍号 1）获胜；编号 2。</summary>
         TeamB = 2,
 
-        /// <summary>平局。</summary>
+        /// <summary>平局；编号 3。</summary>
         Draw = 3
     }
 
-    /// <summary>2v2 的队伍分配（**纯函数**、与入房顺序无关）。</summary>
+    // 主要功能：把一份成员名单分成 2v2 的两队，规则固定为 player_id 升序后按序号交替分。
+    // 主要数据成员：TeamSize（每队人数上限，人）。
+    // 主要外部方法：BuildTeamIndex（一次算出全员队号）、TeamOf（查单个人）。
+    // 谁在用它：SortedTeamMap 构造时调 BuildTeamIndex；服务端、客户端与探针都只用 SortedTeamMap，TeamOf 目前没有调用点。
+    // 注意：结果必须与入房顺序无关 —— 两端拿到的成员顺序可能不同，按原序分队会分出两套队伍，胜负判定当场错开。
+    /// <summary>按 player_id 升序再交替分 2v2 两队；与入房顺序无关，双端必须得到同一份结果。</summary>
     public static class LockstepTeams
     {
-        /// <summary>每队人数上限（2v2）。</summary>
+        /// <summary>每队人数上限，单位人；2v2 固定为 2。</summary>
         public const int TeamSize = 2;
 
-        /// <summary>
-        /// 按成员名单推导"某人在哪一队"。
-        /// <para>⚠️ **按 `player_id` 升序 + 交替**（见文件头二）—— 与入房顺序无关。</para>
-        /// </summary>
-        /// <param name="members">成员编号（顺序无所谓；非正数跳过、重号去重）。</param>
-        /// <returns>函数：`playerId` → 队号（0 或 1）；**不在名单里的返回 −1**。</returns>
+        /// <summary>按成员名单推出全员队号，并把规范化后的名单从 orderedIds 交出。</summary>
+        /// <param name="members">成员编号（player id，顺序无所谓；非正数跳过、重号去重由 LockstepRoster.SortIds 负责）。</param>
+        /// <param name="orderedIds">出参，去重并按 id 升序后的成员编号。</param>
+        /// <returns>与 orderedIds 同序的队号表，0 = A 队、1 = B 队。</returns>
+        // 功能：把成员名单去重排序，再按序号交替分到 0 / 1 两队，同时交出排序后的名单。
+        // 入参：members 成员编号（player id，无单位；顺序无所谓，非正数与重号由 SortIds 丢掉）；orderedIds 出参，规范化后的成员编号。
+        // 返回：与 orderedIds 同序的队号表，0 = A 队、1 = B 队；名单为空或全是不合法编号时返回空表。
+        // 步骤：
+        //   1) 先走 LockstepRoster.SortIds：非正数跳过、重号去重、按 id 升序 —— 队伍结果才能与入房顺序无关
+        //   2) 再按序号 i % 2 交替分队：人数不满时也均衡（3 人 ⇒ 2 / 1），不会一边倒
+        // 注意：不许依赖调用方传进来的顺序，也别在这里另写排序 —— 实体表用的也是 SortIds，两处顺序一错开，第 0 帧哈希就分歧。
+        // 上游：SortedTeamMap 构造函数、联调探针
+        // 下游：LockstepRoster.SortIds
         public static List<int> BuildTeamIndex(IReadOnlyList<long> members, out List<long> orderedIds)
         {
-            // ⚠️ 先按 id 升序（**不许依赖调用方给的顺序**）
             orderedIds = LockstepRoster.SortIds(members);
 
             var teamOf = new List<int>(orderedIds.Count);
 
             for (int i = 0; i < orderedIds.Count; i++)
             {
-                teamOf.Add(i % 2);      // 交替：0,1,0,1…
+                teamOf.Add(i % 2);
             }
 
             return teamOf;
         }
 
-        /// <summary>查某人在哪一队（不在名单里 ⇒ −1）。</summary>
-        /// <param name="members">成员编号（同 `BuildTeamIndex`）。</param>
-        /// <param name="playerId">要查的玩家。</param>
-        /// <returns>队号（0/1）；不在名单里返回 −1。</returns>
+        /// <summary>查某个玩家分到哪一队。</summary>
+        /// <param name="members">成员编号（player id，顺序无所谓）。</param>
+        /// <param name="playerId">要查的玩家编号。</param>
+        /// <returns>队号 0 或 1；不在名单里返回 −1。</returns>
+        // 功能：在成员名单里查某个玩家属于哪一队。
+        // 入参：members 成员编号（player id，顺序无所谓）；playerId 要查的玩家编号。
+        // 返回：队号 0 或 1；不在名单里返回 −1（含非正数与被去重掉的编号）。
+        // 步骤：
+        //   1) 直接复用 BuildTeamIndex 拿排序后的名单与队号，分队规则只留一处
+        //   2) 顺序扫一遍找 playerId，命中就回同下标的队号
+        // 注意：每次调用都会重建整份映射（含一次排序），只适合零星查询；热点循环里应当先建一个 SortedTeamMap 反复查。
+        // 上游：暂无调用点
+        // 下游：BuildTeamIndex
         public static int TeamOf(IReadOnlyList<long> members, long playerId)
         {
             List<long> ordered;
@@ -97,45 +102,43 @@ namespace NBC.Shared.Sim
         }
     }
 
-    /// <summary>2v2 的规则常量与判定（**纯函数**：不读时钟、不读全局）。</summary>
+    // 主要功能：给出 2v2 一局的胜负常量与判定，全部在共享层用纯函数算，双端得同一结果。
+    // 主要数据成员：KillsToWin（击杀门槛，人）、MaxTicks（限时上限，tick）。
+    // 主要外部方法：Decide（判结果）、CountKills（数两队击杀）、FromNumber / ToNumber（协议数字互转）、Describe（一句人话）。
+    // 谁在用它：服务端 LockstepService 判胜负；客户端 LockstepClient 复算对账；NetSession 收发结果；联调探针验规则。
+    // 注意：判定不许读时钟、读全局，也不许把规则在调用方各写一份 —— 两端调用时机不同，一读就会算出不同结果。
+    /// <summary>2v2 的胜负规则常量与纯函数判定：不读时钟、不读全局，双端必得同一结果。</summary>
     public static class MatchRules
     {
-        /// <summary>
-        /// 击杀数达标（先到这个数的队赢）。
-        /// <para>⚠️ **必须 ≤ `LockstepTeams.TeamSize`** —— 否则这条规则**在真实 2v2 里不可达**
-        /// （每队只有 2 个敌人，且本片没有复活），就成了**死分支**。
-        /// 第一版我写了 5 ⇒ 规则①永远触发不了、只剩限时能决出胜负；由 W25 的"可达性"检查守着
-        /// （探针里有 `KillsToWin &lt;= TeamSize` 那条）。</para>
-        /// </summary>
-        public const int KillsToWin = 2;      // 2v2 = 团灭对方（与 TeamSize 相等）
+        /// <summary>任一队击杀到这个数就立即获胜，单位人（击杀数）；必须小于等于 LockstepTeams.TeamSize，否则规则在真实 2v2 里不可达（每队只有 2 个敌人、本 Demo 不做复活），成了死分支。</summary>
+        public const int KillsToWin = 2;
 
-        /// <summary>
-        /// 限时（tick）—— 跑满就按击杀多者判。
-        /// <para>⚠️ 它的角色是**僵局上限**（stalemate cap），不是主要取胜路径：主路径是"团灭对方"（2 击杀）。
-        /// 60 秒 @30Hz：本 Demo 伤害固定 25、血量 100 ⇒ 四下打死一个人，正常对局远用不到 60 秒；
-        /// 这个值只在"双方都不打"时兜底（那时 0/0 ⇒ 平局，是**有意义的**结果而不是挂死）。
-        /// 保持 1800 <b>不变</b>：调小会让正常对局被"时间到"打断，调大只是让僵局多耗一会儿。</para>
-        /// </summary>
-        public const int MaxTicks = 1800;      // 30Hz ⇒ 60 秒
+        /// <summary>限时上限，单位 tick（30Hz 逻辑帧，1800 tick = 60 秒）；跑满就按击杀多者判。</summary>
+        // 注意：它是僵局兜底，不是主要取胜路径（主路径是团灭对方，即 2 击杀）。按当前 WorldStep.AttackDamage = 25、SpawnLayout.SpawnHp = 100 算，四下打死一个人，正常对局远用不到 60 秒；只有双方都不打时才靠它收场，那时 0/0 ⇒ 平局，是有意义的结果。
+        // 注意：保持 1800 不变 —— 调小会让正常对局被「时间到」打断，调大只是让僵局多耗一会儿。
+        public const int MaxTicks = 1800;
 
-        /// <summary>
-        /// 判定一局的结果。
-        ///
-        /// <para>⚠️ **纯函数**：只看传进来的世界与 tick；**不看时钟、不看全局**（见文件头一②）。</para>
-        /// <para>规则见文件头三（"谁先满足"写死在这里）。</para>
-        /// </summary>
-        /// <param name="world">世界（只读它的实体表）。</param>
-        /// <param name="teamOf">实体编号 → 队号（0/1；−1 = 不在对局里，忽略）。</param>
-        /// <param name="killsA">累计到目前 A 队击杀数（调用方维护；本片就是"对方死的人数"）。</param>
-        /// <param name="killsB">累计到目前 B 队击杀数。</param>
-        /// <param name="tick">已经跑过的 tick 数。</param>
-        /// <returns>判定。</returns>
+        /// <summary>判一局结束了没有、谁赢。</summary>
+        /// <param name="killsA">A 队累计击杀数，单位人（调用方维护）。</param>
+        /// <param name="killsB">B 队累计击杀数，单位人。</param>
+        /// <param name="tick">已经跑过的 tick 数（锁步世界时间，30Hz 逻辑帧；1800 tick = 60 秒，与 MaxTicks 同单位）。</param>
+        /// <returns>TeamA / TeamB / Draw；条件都没满足时返回 Undecided。</returns>
+        // 功能：按「先看击杀门槛、再看限时、最后比击杀数」的顺序判一局有没有结束。
+        // 入参：killsA / killsB 两队累计击杀数（人，调用方维护）；tick 已跑过的 tick 数（30Hz 逻辑帧，与 MaxTicks 同单位）。
+        // 返回：TeamA 或 TeamB 表示该队获胜；Draw 表示平局；Undecided 表示还没结束。
+        // 步骤：
+        //   1) 先看任一队是否到 KillsToWin：到了就立即分胜负，不让已经团灭对方的局被限时提前掐断
+        //   2) 两队同时达标就比击杀数，多者胜、相等判平 —— 同一 tick 双杀时也不会随意偏袒某一队
+        //   3) 没人到门槛再看 tick 是否跑满 MaxTicks：跑满按击杀多者胜、相等判平
+        //   4) 以上都不满足才回未结束
+        // 注意：不许读时钟或全局状态 —— 两端调用时机不同，读了就会各算一份结果；这正是它放在共享层的原因。
+        // 上游：服务端 LockstepService 判胜负、客户端 LockstepClient 复算对账、联调探针
+        // 下游：无
         public static EMatchOutcome Decide(int killsA, int killsB, int tick)
         {
             bool aReached = killsA >= KillsToWin;
             bool bReached = killsB >= KillsToWin;
 
-            // ① 任一队达标 ⇒ **立即**分胜负
             if (aReached || bReached)
             {
                 if (killsA > killsB)
@@ -151,7 +154,6 @@ namespace NBC.Shared.Sim
                 return EMatchOutcome.Draw;
             }
 
-            // ② 跑满限时 ⇒ 击杀多者胜、相等则平
             if (tick >= MaxTicks)
             {
                 if (killsA > killsB)
@@ -167,18 +169,27 @@ namespace NBC.Shared.Sim
                 return EMatchOutcome.Draw;
             }
 
-            // ③ 都还没满足
             return EMatchOutcome.Undecided;
         }
 
-        /// <summary>
-        /// 从**世界状态**数出两队各自的击杀数（"对方死的人数"）。
-        /// <para>⚠️ 遍历走 `SnapshotSorted()`（按 Id 升序）⇒ 与登记顺序无关。</para>
-        /// </summary>
-        /// <param name="world">世界。</param>
-        /// <param name="teamOf">实体编号 → 队号（−1 = 忽略）。</param>
-        /// <param name="killsA">A 队击杀数。</param>
-        /// <param name="killsB">B 队击杀数。</param>
+        /// <summary>数出两队各自拿了多少击杀，口径是对方队伍里血量为 0 的实体数。</summary>
+        /// <param name="world">世界状态，只读它的实体表；null 时两队击杀都按 0 返回。</param>
+        /// <param name="teamOf">实体编号到队号的映射；null 时两队击杀都按 0 返回，队号 −1 的实体不计入任何一方。</param>
+        /// <param name="killsA">出参，A 队击杀数，单位人。</param>
+        /// <param name="killsB">出参，B 队击杀数，单位人。</param>
+        // 功能：遍历世界里的实体，按「对方死的人数」反推两队各自的击杀数。
+        // 入参：world 世界状态（可为 null）；teamOf 实体编号到队号的映射（可为 null，队号 −1 表示不在对局里）；killsA / killsB 两个出参。
+        // 返回：无；结果走 killsA / killsB 两个出参，world 或 teamOf 为 null 时两者都是 0。
+        // 步骤：
+        //   1) 先把两个出参清零：调用方不必预先置 0，提前 return 也不会留下旧值
+        //   2) world 或 teamOf 为 null 就直接回 0，判空不散落到下面的循环里
+        //   3) 用 SnapshotSorted 取按 Id 升序的快照 —— 结果与实体登记顺序无关
+        //   4) 血量为正的跳过，只数死掉的
+        //   5) A 队的人死了给 B 队记一分，B 队的人死了给 A 队记一分；队号 −1 的人两边都不算
+        // 注意：口径是「对方死的人数」而不是击杀事件，本 Demo 不做助攻与复活，所以死亡只增不减；一旦加复活，这个口径会把复活过的人也数进去。
+        // 注意：必须走 SnapshotSorted，直接遍历内部表会随登记顺序变化，两端可能数出不同结果。
+        // 上游：客户端 LockstepClient 复算对账、服务端 LockstepService 判胜负、联调探针
+        // 下游：WorldState.SnapshotSorted、EntityTeam.TeamOf
         public static void CountKills(WorldState world, EntityTeam teamOf, out int killsA, out int killsB)
         {
             killsA = 0;
@@ -193,7 +204,6 @@ namespace NBC.Shared.Sim
 
             for (int i = 0; i < snapshot.Length; i++)
             {
-                // 只数**死掉的**：他属于哪队，就算**对方**一次击杀
                 if (snapshot[i].Hp > 0)
                 {
                     continue;
@@ -203,7 +213,7 @@ namespace NBC.Shared.Sim
 
                 if (team == 0)
                 {
-                    killsB++;       // A 队的人死了 ⇒ B 队得一分
+                    killsB++;
                 }
                 else if (team == 1)
                 {
@@ -212,12 +222,18 @@ namespace NBC.Shared.Sim
             }
         }
 
-        /// <summary>
-        /// wire 上的数字 → 判定（`1=A / 2=B / 3=平 / 其它=未结束`）。
-        /// <para>⚠️ 写成函数而不是在两端各写一遍 `switch`：**一处规则**。</para>
-        /// </summary>
-        /// <param name="number">协议里的数字。</param>
-        /// <returns>判定。</returns>
+        /// <summary>协议数字转判定：1 = A 队胜、2 = B 队胜、3 = 平、其它 = 未结束。</summary>
+        /// <param name="number">协议里的判定数字（整数，约定取值 1 / 2 / 3）。</param>
+        /// <returns>对应判定；不认识的值一律按未结束返回，不抛异常。</returns>
+        // 功能：把协议里的判定数字翻成枚举。
+        // 入参：number 协议字段里的整数，1 = A 胜、2 = B 胜、3 = 平。
+        // 返回：对应判定；0 与任何未知值都返回未结束。
+        // 步骤：
+        //   1) 逐个 case 直译协议约定
+        //   2) 默认分支把未知值收成未结束，与 ToNumber 的默认 0 对称
+        // 注意：这是双端唯一的翻译处，别在收发两端各写一份 switch，否则迟早对不上；数字含义属协议，改它等于改协议。
+        // 上游：NetSession 收到胜负结果、客户端 LockstepClient 对账
+        // 下游：无
         public static EMatchOutcome FromNumber(int number)
         {
             switch (number)
@@ -229,9 +245,17 @@ namespace NBC.Shared.Sim
             }
         }
 
-        /// <summary>判定 → wire 上的数字（与 `FromNumber` **互为逆**）。</summary>
-        /// <param name="outcome">判定。</param>
-        /// <returns>数字。</returns>
+        /// <summary>判定转协议数字：A 胜 1、B 胜 2、平 3、未结束 0，与 FromNumber 互为逆。</summary>
+        /// <param name="outcome">判定值。</param>
+        /// <returns>协议数字，取值 0..3。</returns>
+        // 功能：把判定翻回协议里的整数。
+        // 入参：outcome 判定值。
+        // 返回：A 胜 1、B 胜 2、平 3、未结束 0（默认分支）。
+        // 步骤：
+        //   1) 逐个 case 直译协议约定，默认回 0 —— 与 FromNumber 的默认分支对称，往返不丢信息
+        // 注意：这些数字是与服务端约定的协议值，改动等于改协议，两端必须同时上线。
+        // 上游：服务端 LockstepService 宣告胜负、联调探针
+        // 下游：无
         public static int ToNumber(EMatchOutcome outcome)
         {
             switch (outcome)
@@ -243,9 +267,16 @@ namespace NBC.Shared.Sim
             }
         }
 
-        /// <summary>一条人话（日志/统计用）。</summary>
-        /// <param name="outcome">判定。</param>
-        /// <returns>文案。</returns>
+        /// <summary>把判定翻成一句中文，供日志与界面直接显示。</summary>
+        /// <param name="outcome">判定值。</param>
+        /// <returns>「A 队胜」「B 队胜」「平局」「未结束」之一；未知值按未结束处理。</returns>
+        // 功能：把判定翻成可以直接写进日志的中文。
+        // 入参：outcome 判定值。
+        // 返回：固定四选一的文案，未知值兜底成未结束。
+        // 步骤：
+        //   1) 逐个 case 给文案，默认分支兜底成未结束，日志里不会出现空串
+        // 上游：客户端 LockstepClient 的分歧报告、NetSession 的结果日志、服务端 LockstepService 的日志
+        // 下游：无
         public static string Describe(EMatchOutcome outcome)
         {
             switch (outcome)
@@ -258,39 +289,65 @@ namespace NBC.Shared.Sim
         }
     }
 
-    /// <summary>实体编号 → 队号的查询（用小接口而不是 `Func`，免得在共享层引入委托分配）。</summary>
+    // 主要功能：把「实体编号 → 队号」抽象成一个查询，供数击杀的纯函数调用。
+    // 主要数据成员：无（纯接口）。
+    // 主要外部方法：TeamOf（查队号）。
+    // 谁在用它：MatchRules.CountKills 的入参类型；实现是 SortedTeamMap，客户端 LockstepClient 只持有这个接口，联调探针另有一个自己的实现。
+    // 注意：用接口而不是 Func / 委托 —— 共享层每次查询都不产生闭包分配。
+    /// <summary>实体编号到队号的查询；用接口而不是委托，避免共享层每次查询都分配闭包。</summary>
     public interface EntityTeam
     {
-        /// <summary>查队号。</summary>
-        /// <param name="entityId">实体编号。</param>
-        /// <returns>队号（0/1）；不在对局里返回 −1。</returns>
+        /// <summary>查实体在哪一队。</summary>
+        /// <param name="entityId">实体编号（玩家 id）。</param>
+        /// <returns>队号 0 或 1；不在对局里返回 −1。</returns>
         int TeamOf(int entityId);
     }
 
-    /// <summary>
-    /// 从成员名单推导出来的队伍映射（**服务端与客户端共用同一个实现**）。
-    /// <para>⚠️ 只此一份：两端各写一份映射就是两处会不一致的地方（而它直接决定谁赢）。</para>
-    /// </summary>
+    // 主要功能：构造时按成员名单算好队号映射并缓存，之后按实体编号查队。
+    // 主要数据成员：m_ordered（去重升序后的成员编号，player id）。
+    // 主要外部方法：TeamOf（查队号）、Count（名单人数）。
+    // 谁在用它：NetSession.SyncLockstepTeams 建房后 new 一份交给 LockstepClient.SetTeams；服务端 LockstepService 用它判胜负；联调探针也 new 它。
+    // 注意：只此一份实现 —— 两端各写一份映射就是两处会不一致的地方，而它直接决定谁赢。
+    /// <summary>从成员名单推出来的队伍映射，服务端与客户端共用同一个实现。</summary>
     public sealed class SortedTeamMap : EntityTeam
     {
-        /// <summary>规范化后的成员编号（升序）。</summary>
+        // 去重升序后的成员编号（player id，正整数，无单位）；下标即分队序号，队号 = 下标 % 2。
         private readonly List<long> m_ordered;
 
-        /// <summary>按成员名单建映射（内部走 `LockstepTeams`，所以"升序 + 交替"只有一份实现）。</summary>
-        /// <param name="members">成员编号（顺序无所谓）。</param>
+        /// <summary>按成员名单建映射；分队规则只走 LockstepTeams.BuildTeamIndex，这里不复制第二份。</summary>
+        /// <param name="members">成员编号（player id，顺序无所谓；非正数跳过、重号去重）。</param>
+        // 功能：按成员名单算出并缓存「成员编号 → 队号」的映射。
+        // 入参：members 成员编号（player id，顺序无所谓；非正数与重号由 LockstepRoster.SortIds 丢掉）。
+        // 返回：无（构造）。
+        // 步骤：
+        //   1) 调 LockstepTeams.BuildTeamIndex 拿规范化后的名单，顺便让它把队号算好
+        //   2) 查队号时用下标 % 2 现算，分队规则仍然只有 BuildTeamIndex 一处
+        //   3) 两个表长度对不上就清空名单：宁可全查不到，也不能按下标越界
+        // 注意：这里刻意不保存 BuildTeamIndex 返回的 teamOf（它按序号存）—— 存下来就多一份可能和规则漂移的副本。
+        // 上游：NetSession.SyncLockstepTeams、服务端 LockstepService、联调探针
+        // 下游：LockstepTeams.BuildTeamIndex
         public SortedTeamMap(IReadOnlyList<long> members)
         {
             List<int> teamOf = LockstepTeams.BuildTeamIndex(members, out m_ordered);
 
-            // ⚠️ 这里刻意不用 `teamOf`（它按序号存）—— 查的时候用序号取模是同一个规则，
-            //    但**只保留一处**：`LockstepTeams.BuildTeamIndex` 是唯一决定"谁在哪队"的地方。
             if (teamOf.Count != m_ordered.Count)
             {
-                m_ordered = new List<long>();      // 理论上到不了；防御一下免得越界
+                m_ordered = new List<long>();
             }
         }
 
-        /// <inheritdoc/>
+        /// <summary>查实体在哪一队；不在名单里返回 −1。</summary>
+        /// <param name="entityId">实体编号（玩家 id）。</param>
+        /// <returns>队号 0 或 1；名单里没有该编号时返回 −1。</returns>
+        // 功能：在缓存的名单里查实体编号，返回它所在的队伍。
+        // 入参：entityId 实体编号（玩家 id，无单位）。
+        // 返回：队号 0 或 1；名单里没有这个编号时返回 −1。
+        // 步骤：
+        //   1) 顺序扫 m_ordered 找编号：2v2 最多几个人，不必为它建字典
+        //   2) 命中后按下标 % 2 算队号，与 LockstepTeams 的交替规则一致
+        // 注意：队号只能按下标现算；另存一份队号表就多一处会与分队规则对不上的地方。
+        // 上游：MatchRules.CountKills
+        // 下游：无
         public int TeamOf(int entityId)
         {
             for (int i = 0; i < m_ordered.Count; i++)
@@ -304,7 +361,7 @@ namespace NBC.Shared.Sim
             return -1;
         }
 
-        /// <summary>名单里有几个人（排查用）。</summary>
+        /// <summary>名单里有几个成员，单位人；排查用。</summary>
         public int Count
         {
             get { return m_ordered.Count; }

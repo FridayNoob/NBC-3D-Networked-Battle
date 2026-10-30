@@ -1,48 +1,10 @@
-// ============================================================================
-//  PasswordDigest —— 密码摘要**配方**（唯一实现，双端共享）
-//  项目：3D联网战斗Demo   对应：M4-S3 / SRV-06「真正的登录」，见 `Docs\27` §十九
+// 这个文件里有：
+//   PasswordDigest（静态类）：密码摘要配方的双端唯一实现 —— 客户端把明文算成线上摘要，服务端叠 salt 得到入库值，并提供恒定时间比较。
 //
-//  ---------------------------------------------------------------------------
-//  为什么配方要住在**共享层**（而不是各写一份）
-//  ---------------------------------------------------------------------------
-//  登录能成功的前提是**两端算出同一个字符串**：
-//      客户端：digest = SHA256(明文密码)                    ← 发给服务端
-//      服务端：stored = SHA256(salt + digest)               ← 与库里的 password_hash 比
-//
-//  "同一个字符串"这种事**最怕两份实现** —— 只要有一边多写一个 UTF-8 BOM、
-//  大小写不同、或者拼接顺序颠倒，就会得到"密码明明是对的，就是登不上"，
-//  而且**两端都不会报错**（服务端只会说"密码不对"）。
-//
-//  所以这里遵守本项目的老规矩：**能共享的逻辑只留一份源码**
-//  （`NBC.Shared` 这份文件同时被 Unity 的 `NBC.Shared.asmdef` 和
-//   服务端的 `Server\NBC.Shared\NBC.Shared.csproj` 编译，见那个 csproj 的文件头）。
-//
-//  ⚠️ 库里的 `account.password_hash` 存的是 **SHA256(salt + 客户端摘要)**，
-//     不是 `SHA256(salt + 明文)`。这条配方写在 `Docs\08`（种子数据）里 ——
-//     **改这里的任何一步，都必须同步重算种子数据**，否则 4 个测试账号全部登不上。
-//     `Server\_db-probe` 里有一条**阳性对照**专门盯这件事（配方对不上它必须红）。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 这不是"安全"，只是"比明文强"（如实记录，别自我感觉良好）
-//  ---------------------------------------------------------------------------
-//  做到了：① 线上**不出现明文密码**（日志/抓包都拿不到用户真正在别处复用的那个密码）
-//          ② 库里**不存**能直接登录的凭据本身（还叠了每账号独立的 salt）
-//          ③ 比较用**恒定时间**，避免用"比较耗时"去逐字节猜摘要
-//  没做到：① 本项目**没有 TLS** ⇒ 抓到这个摘要就能**重放**（等于临时密码）
-//          ② 客户端摘要**没有加盐** ⇒ 弱密码仍可能被彩虹表反查（因为它就是 SHA256(password)）
-//          ③ 没有失败次数限制 / 没有验证码
-//  真正的做法：TLS + 服务端慢哈希（PBKDF2/Argon2/bcrypt）+ 挑战应答（nonce）。
-//  **本切片刻意不做** —— 它的目标是"player_id 属于账号，而不是属于第几个连接"，
-//  不是"做一套能上线的账号系统"。理由与取舍见 `Docs\27` §19.2。
-//
-//  ---------------------------------------------------------------------------
-//  为什么自己写十六进制转换（不用 `Convert.ToHexString`）
-//  ---------------------------------------------------------------------------
-//  `Convert.ToHexString` 是 **.NET 5+** 才有的 API，而本程序集是
-//  **netstandard2.1**（Unity 2022.3 能引用的上限）。
-//  在这里用它 = 服务端编得过、Unity 编不过 —— 正是 `NBC.Shared.csproj`
-//  把 `LangVersion` 钉成 9.0 要防的那一类事故（同族，见那个 csproj 的文件头）。
-// ============================================================================
+// 注意：配方固定为 SHA256(salt + 客户端摘要)，salt 在前；库里的 password_hash 是按这条配方预先算好的，改任何一步都要同步重算 Docs\08 的种子数据，否则 4 个测试账号全部登不上。
+// 注意：摘要形如 64 个小写十六进制字符，这个形状是协议字段与服务端判据的一部分，改动等于改协议，必须双端同版本一起升。
+// 注意：这只是「比明文强」，不是安全 —— 项目没有 TLS，抓到摘要就能重放；客户端摘要不加盐，弱密码仍可被彩虹表反查。取舍见 Docs\27。
+// 注意：本程序集是 netstandard2.1（Unity 2022.3 的上限），不能用 Convert.ToHexString 这类 .NET 5+ API —— 否则服务端编得过、Unity 编不过，所以十六进制转换自己写。
 
 using System;
 using System.Security.Cryptography;
@@ -50,34 +12,31 @@ using System.Text;
 
 namespace NBC.Shared.Auth
 {
-    /// <summary>
-    /// 密码摘要配方（**双端唯一实现**）。
-    ///
-    /// <para>
-    /// 两步：客户端 <see cref="FromPassword"/> 算出线上摘要，
-    /// 服务端再用 <see cref="StoredHash"/> 叠上 salt 得到入库值。
-    /// </para>
-    /// </summary>
+    /// <summary>密码摘要配方：双端共享的唯一实现，客户端出摘要、服务端叠 salt 入库，并做恒定时间校验。</summary>
+    // 主要功能：给出登录用的摘要配方 —— 客户端把明文算成线上摘要，服务端把摘要叠上 salt 得到入库值，再以恒定时间比较两份摘要。
+    // 主要数据成员：HexLength（摘要字符数，固定 64）、Recipe（配方的文字描述，仅日志用）。
+    // 主要外部方法：FromPassword / StoredHash / Verify / LooksLikeDigest / FixedTimeEquals（全是静态方法）。
+    // 谁在用它：客户端 Game 层 NetSession 登录时算摘要；服务端 ServerMessageRouter 校验摘要形状，AccountDirectory 与 DevAccountStore 校验摘要本身；服务端探针 _db-probe / _net-probe 拿它核对种子数据。
     public static class PasswordDigest
     {
-        /// <summary>十六进制摘要的字符数（SHA256 = 32 字节 = 64 个十六进制字符）。</summary>
+        /// <summary>十六进制摘要的字符数，固定 64（SHA256 的 32 字节 × 每字节 2 个字符）；服务端按它校验形状，属于协议口径。</summary>
         public const int HexLength = 64;
 
-        /// <summary>配方的人话描述（写日志用，**不要**把摘要本身写进日志）。</summary>
+        /// <summary>配方的文字描述，取值固定为这一条字符串；只给日志与诊断看，不要把摘要本身写进日志。</summary>
         public const string Recipe = "SHA256(salt + SHA256(password))";
 
-        /// <summary>
-        /// <b>客户端侧</b>：明文密码 → 线上摘要（小写十六进制）。
-        ///
-        /// <para>
-        /// ⚠️ 这一步**不加盐**（客户端也不知道 salt）：它只保证"明文不上线"，
-        /// 不等于"抓不到就能防重放"。见本文件头部的取舍。
-        /// </para>
-        /// </summary>
-        /// <param name="password">明文密码（不能是 null；允许空串，但空串摘要一样是"合法输入"，
-        /// 空密码该由**调用方**拒绝，而不是让这里静默变成别的意思）。</param>
-        /// <returns>64 个小写十六进制字符。</returns>
-        /// <exception cref="ArgumentNullException">密码是 null。</exception>
+        /// <summary>客户端侧：把明文密码（不能是 null，空串照算）变成线上摘要，发给服务端登录。</summary>
+        /// <returns>64 个小写十六进制字符；同一密码在客户端与服务端必定算出同一串。</returns>
+        // 功能：把明文按 UTF-8 编成字节算 SHA256，再转成 64 个小写十六进制字符。
+        // 入参：password 明文密码；null 抛 ArgumentNullException，空串照算（空密码是否允许由调用方决定）
+        // 返回：64 个小写十六进制字符，长度恒为 HexLength
+        // 步骤：
+        //   1) 先判 null 并抛异常 —— 不把 null 静默当空串，免得「没传密码」被算成一个合法摘要
+        //   2) 显式按 UTF-8 编码再哈希 —— 编码写死，双端才不会因为默认编码不同算出两串
+        //   3) 用本类的 Hex 转小写十六进制（不用 Convert.ToHexString，原因见文件头）
+        // 上游：客户端 Game 层 NetSession 登录时调用；服务端 DevAccountStore 与服务端探针对照用
+        // 下游：Sha256、Hex
+        // 注意：这一步不加盐（客户端也拿不到 salt），只保证明文不上线，防不了摘要重放
         public static string FromPassword(string password)
         {
             if (password == null)
@@ -88,19 +47,18 @@ namespace NBC.Shared.Auth
             return Hex(Sha256(Encoding.UTF8.GetBytes(password)));
         }
 
-        /// <summary>
-        /// <b>服务端侧</b>：把客户端摘要叠上 salt，得到与 `account.password_hash` 比较的值。
-        ///
-        /// <para>
-        /// ⚠️ 拼接顺序是 `salt + digest`，**与 `Docs\08` 的种子数据一致**。
-        /// 改顺序不会报错，只会让所有账号登不上 —— 所以 `_db-probe` 有阳性对照盯着。
-        /// </para>
-        /// </summary>
-        /// <param name="salt">该账号独立的盐值（不能为空）。</param>
-        /// <param name="clientDigest">客户端发来的摘要。</param>
-        /// <returns>64 个小写十六进制字符。</returns>
-        /// <exception cref="ArgumentNullException">参数是 null。</exception>
-        /// <exception cref="ArgumentException">salt 是空串。</exception>
+        /// <summary>服务端侧：把客户端摘要叠上该账号的 salt（非空、非 null）再哈希，得到与库里 password_hash 比较的值。</summary>
+        /// <returns>64 个小写十六进制字符，与 Docs\08 种子数据里的 password_hash 同口径。</returns>
+        // 功能：按「salt 在前、客户端摘要在后」拼接后做 SHA256，整体再转小写十六进制。
+        // 入参：salt 账号盐值（null 抛 ArgumentNullException、空串抛 ArgumentException）；clientDigest 客户端摘要（null 抛 ArgumentNullException）
+        // 返回：64 个小写十六进制字符
+        // 步骤：
+        //   1) 三个判空放在最前，报错信息点明坏的是哪一端
+        //   2) 按 salt + clientDigest 的顺序拼接 —— 顺序写死在这里，与种子数据一致
+        //   3) 按 UTF-8 编码后 SHA256，最后转小写十六进制
+        // 上游：本类 Verify；服务端探针 _db-probe 与 _net-probe 核对种子数据
+        // 下游：Sha256、Hex
+        // 注意：拼接顺序颠倒不会报错，只会让所有账号登不上 —— 别凭直觉改成 digest + salt
         public static string StoredHash(string salt, string clientDigest)
         {
             if (salt == null)
@@ -121,20 +79,17 @@ namespace NBC.Shared.Auth
             return Hex(Sha256(Encoding.UTF8.GetBytes(salt + clientDigest)));
         }
 
-        /// <summary>
-        /// 校验一个客户端摘要对不对（**恒定时间比较**）。
-        ///
-        /// <para>
-        /// ⚠️ 为什么不用 `string.Equals` / `==`：普通字符串比较**发现不同就立刻返回**，
-        /// 于是"比较花了多久"会泄漏"前几个字符猜对了" —— 攻击者可以逐字节试出来。
-        /// 这里从头到尾走满、把差异 XOR 累加，最后只看结果是不是 0。
-        /// （代价是每次比较都走完 64 个字符，可以忽略。）
-        /// </para>
-        /// </summary>
-        /// <param name="salt">库里的盐值。</param>
-        /// <param name="storedHash">库里的 `password_hash`。</param>
-        /// <param name="clientDigest">客户端发来的摘要。</param>
-        /// <returns>对得上为 true。</returns>
+        /// <summary>校验客户端摘要对不对：用同一配方重算期望值，再与库里的 password_hash 做恒定时间比较。</summary>
+        /// <returns>true 表示与库里记录一致、可以放行；false 涵盖密码错、账号数据缺失与摘要形状不对，不区分原因。</returns>
+        // 功能：先用 StoredHash 重算期望值，再用 FixedTimeEquals 与库里的 hash 恒时比对。
+        // 入参：salt 与 storedHash 为空串、clientDigest 为 null 都直接判否，不抛异常
+        // 返回：对得上为 true；false 不告诉调用方具体错在哪（避免把账号数据状态泄漏给登录接口）
+        // 步骤：
+        //   1) 先挡空参数 —— 登录失败要给玩家一句人话，不该因为库里少个 salt 就抛异常
+        //   2) 用同一配方重算 expected，保证校验与入库永远走同一条路径
+        //   3) 交给 FixedTimeEquals 比较，不用 ==（理由见该方法的注意）
+        // 上游：服务端 NBC.Server.Data 的 AccountDirectory 登录校验
+        // 下游：StoredHash、FixedTimeEquals
         public static bool Verify(string salt, string storedHash, string clientDigest)
         {
             if (string.IsNullOrEmpty(salt) || string.IsNullOrEmpty(storedHash) || clientDigest == null)
@@ -147,9 +102,17 @@ namespace NBC.Shared.Auth
             return FixedTimeEquals(expected, storedHash);
         }
 
-        /// <summary>是不是"看起来像"一个摘要（长度 64、全是十六进制字符）。</summary>
-        /// <param name="text">待检查的文本。</param>
-        /// <returns>像则为 true。</returns>
+        /// <summary>判断一段文本是不是「看起来像」摘要：长度 64 且全是十六进制字符（大小写都认），null 返回 false。</summary>
+        /// <returns>true 只表示形状合法，不保证内容正确，也不保证是小写。</returns>
+        // 功能：只查形状 —— 长度等于 HexLength，且每个字符都在 0-9 / a-f / A-F 里。
+        // 入参：text 待检查文本（null 直接判否）
+        // 返回：形状对为 true；大小写都算合法
+        // 步骤：
+        //   1) 先比长度，长度不对就不必逐字符走
+        //   2) 再逐字符查字符集，遇到第一个非法字符立刻判否
+        // 上游：服务端 ServerMessageRouter 握手时的形状校验；AccountDirectory 与 DevAccountStore 登录前过滤
+        // 下游：无
+        // 注意：这里放行大写，但 StoredHash 与 FixedTimeEquals 都区分大小写 —— 大写摘要能过形状检查，却一定校验不过
         public static bool LooksLikeDigest(string text)
         {
             if (text == null || text.Length != HexLength)
@@ -172,10 +135,18 @@ namespace NBC.Shared.Auth
             return true;
         }
 
-        /// <summary>恒定时间比较两个等长（或不等长）字符串。</summary>
-        /// <param name="a">第一个。</param>
-        /// <param name="b">第二个。</param>
-        /// <returns>完全相同为 true。</returns>
+        /// <summary>恒定时间比较两个字符串：差异用 XOR 累加，比较耗时与「前几个字符对上了」无关。</summary>
+        /// <returns>长度相同且逐字符相同为 true；任一侧为 null 或长度不同为 false。</returns>
+        // 功能：把两个字符串逐字符 XOR 累加到一个整数里，最后只看结果是不是 0。
+        // 入参：a / b 待比较文本，任一为 null 直接判否
+        // 返回：完全相同为 true；长度不同、内容不同、任一为 null 都为 false
+        // 步骤：
+        //   1) 先挡 null
+        //   2) 长度不同立刻返回 false —— 长度不是秘密（摘要恒为 64），不必为此走满全串
+        //   3) 走满整个字符串累加差异，中途绝不提前 return
+        // 上游：本类 Verify；服务端 DevAccountStore；服务端探针 _db-probe
+        // 下游：无
+        // 注意：不要换成 string.Equals 或 ==：普通比较发现不同就提前返回，比较耗时会泄漏「前几位猜对了」，攻击者可逐字节试出摘要
         public static bool FixedTimeEquals(string a, string b)
         {
             if (a == null || b == null)
@@ -199,9 +170,13 @@ namespace NBC.Shared.Auth
             return diff == 0;
         }
 
-        /// <summary>算 SHA256。</summary>
-        /// <param name="data">字节。</param>
-        /// <returns>32 字节。</returns>
+        // 功能：新建一个 SHA256 实例，算出入参字节的 32 字节摘要。
+        // 入参：data 待哈希的字节，UTF-8 编码由调用方负责
+        // 返回：32 字节定长摘要，转文本交给 Hex
+        // 步骤：
+        //   1) 每次调用新建实例，用完由 using 释放 —— 不共享实例，避开线程安全问题
+        // 上游：FromPassword、StoredHash
+        // 下游：无
         private static byte[] Sha256(byte[] data)
         {
             using (SHA256 sha = SHA256.Create())
@@ -210,9 +185,15 @@ namespace NBC.Shared.Auth
             }
         }
 
-        /// <summary>字节 → 小写十六进制字符串（自己写，理由见文件头）。</summary>
-        /// <param name="bytes">字节。</param>
-        /// <returns>2 倍长度的十六进制文本。</returns>
+        // 功能：把字节数组转成小写十六进制字符串，每个字节固定两位。
+        // 入参：bytes 待转换字节，长度不定，非 null 由调用方保证
+        // 返回：长度是入参字节数的 2 倍，字符全在 0-9 / a-f 里
+        // 步骤：
+        //   1) 先开 2 倍长度的字符数组，定长写满，不边拼边扩容
+        //   2) 每字节拆高 4 位与低 4 位，各自查 digits 表 —— 顺序固定为高位在前
+        // 上游：FromPassword、StoredHash
+        // 下游：无
+        // 注意：不用 Convert.ToHexString —— 那是 .NET 5+ API，本程序集是 netstandard2.1，服务端编得过而 Unity 编不过
         private static string Hex(byte[] bytes)
         {
             const string digits = "0123456789abcdef";
