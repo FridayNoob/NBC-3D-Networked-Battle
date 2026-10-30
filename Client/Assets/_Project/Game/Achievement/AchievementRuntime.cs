@@ -1,61 +1,5 @@
-// ============================================================================
-//  AchievementRuntime —— 成就运行时：登记 → 累加 → 解锁 → 发奖
-//  项目：3D联网战斗Demo   对应：M4-S2、Docs\20 §四「任务与成就共用一套条件系统」
-//
-//  ---------------------------------------------------------------------------
-//  一句话：它是 `QuestRuntime` 的**弟弟**，三处不同，其余全部一样
-//  ---------------------------------------------------------------------------
-//                      任务（QuestRuntime）          成就（本类）
-//      登记时机        玩家点「接取」时               **构造时全部登记**
-//      resetProgress   true（接了才开始算）           **false（一直生效）**
-//      结束方式        玩家点「交付」才发奖           **条件一齐当场解锁发奖**
-//
-//  ⇒ 所以本类**没有 Accept / Submit**，也就**没有 `EAchievementState`**（只有锁 / 解锁两态）。
-//    这不是"少写了"，而是这三件事在成就上**不存在**。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 本片最容易写错的一处：**登记顺序**（一个"看起来像玄学"的 bug）
-//  ---------------------------------------------------------------------------
-//  `ConditionTracker` 的语义②说得很清楚：`resetProgress: false` 时，
-//  **如果注册的那一刻就已经达成，当场回调一次**。这条是**故意**的 ——
-//  "上次已经打了 10 只、这次登录就该解锁"，否则玩家得**再打一只**才解锁。
-//
-//  但"当场回调"意味着：**构造函数里的 `Register` 会重入到 `OnConditionMet`**。
-//  于是有一个真实会踩的顺序坑：
-//
-//      ❌ 写成"登记一条 → 记一条归属"：
-//          `Register(4009, ..., false)` 当场回调 → 回调里查 `m_ownerOfCondition[4009]`
-//          → **还没记进去** → 认不出这是自己的条件 → `return`（静默）
-//          ⇒ 成就**永远不会在登录时解锁**，而且**一行日志都没有**。
-//
-//      ✅ 写成三段（本类的做法）：
-//          ① 先把**全部归属**记好
-//          ② 再**逐条登记**（此刻重入回调已经认得出来）
-//          ③ 全部登记完再**统一评一遍**（兜住"多条条件、后登记的那条才凑齐"的情况）
-//
-//  第 ③ 步不是冗余：`AreAllConditionsMet` 走的是 `m_tracker.IsMet`，
-//  而**还没登记的条件 `IsMet` 恒为 false** —— 所以"两条都早已达成"的成就，
-//  在②的循环里**每条单独触发时都凑不齐**，只能靠③收尾。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 配置错误为什么是**抛异常**（而任务那边是返回值 + 原因）
-//  ---------------------------------------------------------------------------
-//  项目的规矩是：**玩家能触发的失败 → 返回值 + 一句人话；程序/配置错误 → 抛异常。**
-//  成就**没有玩家的那一下点击**（构造时就自动跑），所以"返回值给谁看"这件事不成立 ——
-//  只能抛，而且消息里必须点名**是哪个成就、哪条条件、哪个奖励**。
-//  这也是与 `ConfigKit` 的 CFG0023 配成**两道闸门**：配置表那道在导出时拦，
-//  这道在运行期拦（万一有人绕过流水线手改 SO）。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 与任务**共用同一个 `ConditionTracker`**（`Docs\20` §四 的核心复用）
-//  ---------------------------------------------------------------------------
-//  于是两边的回调都会收到**对方的**条件编号。本类和 `QuestRuntime` 一样，
-//  认不出来时**安静忽略**（绝不抛"未知条件"）—— 这是"通用层 + 多个消费者"必须守住的边界。
-//  真正保证"不会串"的是 **CFG0023**：一条条件只允许一个持有者，所以编号天然不重叠。
-//
-//  ⚠️ 那如果"任务与成就抢同一条条件"呢？`ConditionTracker.Register` 会**当场抛异常**
-//     （它故意不静默覆盖）。CFG0023 就是**为了在配置阶段抓住这件事**才存在的。
-// ============================================================================
+// 这个文件里有：
+//   AchievementRuntime（类）：成就运行时 —— 构造时登记全部成就条件，条件一齐当场解锁并发奖，进度跨局保留
 
 using System;
 using System.Collections.Generic;
@@ -67,73 +11,66 @@ using NBC.Shared.Reward;
 
 namespace NBC.Game.Achievement
 {
-    /// <summary>成就运行时（**一直生效**、条件一齐当场解锁发奖）。</summary>
+    // 主要功能：构造时把全部成就的条件登记进与任务共用的条件系统，某成就的条件凑齐就当场解锁并发奖；没有接取与交付，只有锁着 / 解锁两态。
+    // 主要数据成员：m_achievements / m_conditions / m_rewards（成就、条件、奖励三张表）、m_tracker（与任务共用的条件系统）、m_ledger（已发奖励台账）、m_unlocked / m_unlockedOrder（已解锁编号与顺序）、m_ownerOfCondition（条件到成就的归属）。
+    // 主要外部方法：Authority（权威进度来源）、AchievementCount / UnlockedCount / LastProblem（只读属性）、IsUnlocked、CopyUnlockedIds、TryGetTracking、CopyTrackings、Describe、Dispose。
+    // 谁在用它：BattleSession 装配一局时创建并持有；Editor 的 NetDebugWindow 成就页读已解锁数与追踪视图；EditMode 的 AchievementRuntimeTests 用假表断言闭环。
+    // 注意：成就是 QuestRuntime 的弟弟，只有三处不同 —— 构造时全部登记、resetProgress 传 false（进度不清零、已达成时登记当场回调）、条件一齐当场解锁发奖；所以没有 Accept / Submit，也没有 EAchievementState。
+    // 注意：与任务共用同一个 ConditionTracker，两边的回调都会收到对方条件编号；本类认不出来时静默忽略，绝不抛未知条件。一条条件只允许一个持有者（ConfigKit 的 CFG0023 保证），抢同一条会被 Register 当场抛异常。
+    // 注意：项目规矩是玩家能触发的失败走返回值 + 一句人话、程序 / 配置错误抛异常；成就没有玩家的那一下点击，返回值没人看，只能抛，消息必须点名哪个成就、哪条条件、哪个奖励 —— 运行期这道闸门与 CFG0023 的导出期闸门互补（防有人绕过流水线手改 SO）。
+    // 注意：构造里的登记有副作用且会重入回调，顺序必须是「先记全部归属 → 再逐条登记 → 最后统一评一遍」，详见构造函数。
+    /// <summary>成就运行时：构造时登记全部成就条件，条件凑齐当场解锁并发奖，进度跨局保留；用完必须 Dispose。</summary>
     public sealed class AchievementRuntime : IDisposable
     {
-        /// <summary>成就表。</summary>
+        // 成就表：几行就是几个成就，0 行合法（这个项目可以不做成就）；构造时非 null
         private readonly AchievementConfig m_achievements;
 
-        /// <summary>条件表（与任务共用同一张）。</summary>
+        // 条件表：与任务共用同一张；构造时非 null
         private readonly QuestConditionConfig m_conditions;
 
-        /// <summary>奖励表。</summary>
+        // 奖励表：构造时非 null；某成就的 rewardId 缺行会在构造时抛异常
         private readonly RewardConfig m_rewards;
 
-        /// <summary>
-        /// **权威进度**的来源（`Docs\27` §二十四）。**可以事后设置**（`null` = 还没接）。
-        /// <para>⚠️ 用可写属性而不是构造参数：调用点都是"先建运行时、连上会话后再接权威"，
-        /// 塞进构造函数会逼着所有既有调用点（含用例）改签名。</para>
-        /// <para>它只影响 `BuildTracking` 造出来的**显示值**，不参与任何判定 ——
-        /// 判定永远在服务端（D3）。</para>
-        /// </summary>
+        // 权威进度来源：默认 null（还没连会话），可事后设置；只盖 BuildTracking 的显示值、不参与判定（判定在服务端）；做成可写属性是为了不逼既有调用点（含用例）改签名
         public IQuestProgressAuthority Authority { get; set; }
 
-        /// <summary>条件系统（**与任务共用同一个实例**）。</summary>
+        // 条件系统：与任务共用同一个实例（由 BattleSession 传入），两边进度都在这份里
         private readonly ConditionTracker m_tracker;
 
-        /// <summary>
-        /// 已发奖励台账（**必填**，见下面那条"为什么必填"）。
-        /// <para>⚠️ 它防的是"重启后把已完成的成就再发一遍奖"（`Docs\27` §11.5）。
-        /// 做成**必填**而不是给默认值，是为了让"我没接台账"变成**编译期就看得见**的决定 ——
-        /// 给个 `InMemoryRewardLedger` 默认值看起来更友好，但那会让"服务端重启重复发奖"
-        /// 这个 bug **静默地**留在代码里（而它只在重启时才出现）。</para>
-        /// </summary>
+        // 已发奖励台账：必填，防「重启后把已完成的成就再发一遍奖」；刻意不给默认内存台账，否则重启重复发奖会静默留在代码里
         private readonly IRewardLedger m_ledger;
 
-        /// <summary>
-        /// 发奖的地方。
-        /// <para>⚠️ 类型名叫 `IQuestRewardSink`（历史遗留，见那个文件头）：它本质是一道
-        /// **通用的"奖励接缝"**，成就是第二个使用者。这里刻意**不新建一个同形状的接口** ——
-        /// 两道一模一样的缝只会让"以后奖励要挪到服务端"变成要改两处。</para>
-        /// </summary>
+        // 发奖接缝：类型名 IQuestRewardSink 是历史遗留，本质通用；刻意不另造同形状接口，否则以后奖励挪服务端要改两处
         private readonly IQuestRewardSink m_rewardSink;
 
-        /// <summary>已解锁的成就编号。</summary>
+        // 已解锁的成就编号：判断是否解锁、是否该重复发奖都查它
         private readonly HashSet<int> m_unlocked = new HashSet<int>();
 
-        /// <summary>按解锁顺序记（UI 想显示"最近解锁"时不用再排）。</summary>
+        // 已解锁的成就编号按解锁顺序记：UI 想显示「最近解锁」时不用再排
         private readonly List<int> m_unlockedOrder = new List<int>();
 
-        /// <summary>条件编号 → 它属于哪个成就（用于把达成通知路由回来）。</summary>
+        // 条件编号 → 所属成就编号：把条件通知路由回成就；构造时先填满它再登记，重入回调才认得出自己的条件
         private readonly Dictionary<int, int> m_ownerOfCondition = new Dictionary<int, int>();
 
-        /// <summary>最近一次解锁失败的原因（调试面板显示用；没问题时是 null）。</summary>
+        // 最近一次解锁失败的原因，调试面板显示用；没有问题时是 null
         private string m_lastProblem;
 
-        /// <summary>Dispose 过没有（重复 Dispose 要无害）。</summary>
+        // Dispose 过没有；重复 Dispose 要无害，所以先查它再动手
         private bool m_disposed;
 
-        /// <summary>
-        /// 造一个成就运行时：**构造即登记全部成就**。
-        /// </summary>
-        /// <param name="achievements">成就表（不能为 null）。</param>
-        /// <param name="conditions">条件表（不能为 null）。</param>
-        /// <param name="rewards">奖励表（不能为 null）。</param>
-        /// <param name="tracker">条件系统（不能为 null；**应当与任务用的是同一个**）。</param>
-        /// <param name="rewardSink">发奖的地方（不能为 null）。</param>
-        /// <param name="ledger">已发奖励台账（不能为 null；见字段上那条"为什么必填"）。</param>
-        /// <exception cref="ArgumentNullException">有参数为 null。</exception>
-        /// <exception cref="InvalidOperationException">配置有错（缺条件行 / 条件解析失败 / 缺奖励行 / 两个成就抢同一条条件）。</exception>
+        // 功能：接好三张表、共用条件系统、发奖接缝与台账，订阅通知，校验全部配置后登记全部成就并统一评一遍 —— 构造即生效。
+        // 入参：achievements 成就表；conditions 条件表；rewards 奖励表；tracker 条件系统（必须与任务同一个）；rewardSink 发奖接缝；ledger 已发奖励台账。六者都不能为 null，否则抛 ArgumentNullException。
+        // 返回：无（构造函数）；配置有错抛 InvalidOperationException，调用方拿不到半成品。
+        // 步骤：
+        //   1) 逐个判 null 并给出能照着修的消息 —— 台账为什么必填见字段注释
+        //   2) 先订阅 ProgressChanged / ConditionMet 再登记：resetProgress 为 false 的登记会当场回调，订阅晚了就漏掉
+        //   3) ValidateAll 先走完全部配置：登记有副作用，边校验边登记会在中途失败时留下「看不见却在后台涨进度」的半成品
+        //   4) RegisterAll 记归属并登记，最后 EvaluateAll 收尾，兜住多条条件后登记才凑齐的情况
+        // 上游：BattleSession 的构造函数；EditMode 的 AchievementRuntimeTests 用假表直接调它。
+        // 下游：ValidateAll、RegisterAll、EvaluateAll；ConditionTracker.ProgressChanged / ConditionMet。
+        // 注意：登记顺序是本片最容易写错的地方 —— 若「登记一条 → 记一条归属」，登记当场回调时归属表还没写，认不出自己的条件就静默 return，表现是登录后永不解锁且一行日志都没有。
+        // 注意：第 4 步的收尾不是冗余 —— 还没登记的条件 IsMet 恒为 false，多条条件的成就在登记循环里每条单独触发都凑不齐。
+        // 注意：两个成就抢同一条条件时 ConditionTracker.Register 会当场抛异常（它故意不静默覆盖），这里提前查出来才能点名是哪两个成就。
         public AchievementRuntime(AchievementConfig achievements, QuestConditionConfig conditions,
                                   RewardConfig rewards, ConditionTracker tracker, IQuestRewardSink rewardSink,
                                   IRewardLedger ledger)
@@ -167,47 +104,47 @@ namespace NBC.Game.Achievement
             m_rewardSink = rewardSink;
             m_ledger = ledger;
 
-            // 订阅必须在登记**之前** —— 因为 `resetProgress: false` 的登记会当场回调（见类头）。
             m_tracker.ProgressChanged += OnConditionProgressChanged;
             m_tracker.ConditionMet += OnConditionMet;
 
             ValidateAll();
 
-            // ① 先记全部归属（重入回调要查得到）
-            // ② 再逐条登记（`resetProgress: false` = 成就与任务的**唯一**差别）
-            // ③ 全部登记完统一评一遍（收尾，见类头）
             RegisterAll();
             EvaluateAll();
         }
 
-        /// <summary>一共几个成就（配置表里有几行就是几）。</summary>
+        /// <summary>成就总数：配置表里有几行就是几，表未加载时 0。</summary>
         public int AchievementCount
         {
             get { return m_achievements.rows == null ? 0 : m_achievements.rows.Count; }
         }
 
-        /// <summary>已经解锁了几个。</summary>
+        /// <summary>已经解锁的成就数。</summary>
         public int UnlockedCount
         {
             get { return m_unlocked.Count; }
         }
 
-        /// <summary>最近一次解锁失败的原因（没有问题时是 null）。</summary>
+        /// <summary>最近一次解锁失败的原因；没有问题时是 null。</summary>
         public string LastProblem
         {
             get { return m_lastProblem; }
         }
 
-        /// <summary>这个成就解锁了没有。</summary>
-        /// <param name="achievementId">成就编号。</param>
-        /// <returns>解锁了返回 true。</returns>
+        // 功能：查内存里的已解锁集合，判断这个成就解锁了没有。
         public bool IsUnlocked(int achievementId)
         {
             return m_unlocked.Contains(achievementId);
         }
 
-        /// <summary>按解锁顺序复制已解锁的成就编号。</summary>
-        /// <param name="buffer">目标列表（会先 Clear）。</param>
+        // 功能：按解锁顺序把已解锁的成就编号复制进调用方的列表。
+        // 入参：buffer 目标列表，不能为 null（否则抛 ArgumentNullException）；会先被 Clear。
+        // 返回：无。
+        // 步骤：
+        //   1) 先判 null：宁可抛，也不让调用方以为复制成功
+        //   2) Clear 后再逐条 Add，顺序与 m_unlockedOrder 一致
+        // 上游：目前没有调用点，预留给成就界面一次取走全部编号。
+        // 下游：m_unlockedOrder。
         public void CopyUnlockedIds(List<int> buffer)
         {
             if (buffer == null)
@@ -223,14 +160,16 @@ namespace NBC.Game.Achievement
             }
         }
 
-        // ====================================================================
-        //  追踪视图（给 UI / 调试面板）
-        // ====================================================================
+        // 追踪视图：给 UI 与调试面板看，不参与解锁判定。
 
-        /// <summary>取一个成就的追踪视图。</summary>
-        /// <param name="achievementId">成就编号。</param>
-        /// <param name="tracking">视图（**每次调用新建**，所以别在每帧里调）。</param>
-        /// <returns>配置表里有这个成就就返回 true。</returns>
+        // 功能：按编号取一个成就的追踪视图；配置表里没有这个成就时返回 false。
+        // 入参：achievementId 成就编号；tracking 取到的视图，每次调用都新建（别在每帧里调）。
+        // 返回：true 表示配置里有这个成就且 tracking 非 null；false 表示编号不存在，tracking 为 null。
+        // 步骤：
+        //   1) 先在成就表里 TryGet，查不到就返回 false（不抛）
+        //   2) 查到就 BuildTracking 造视图
+        // 上游：EditMode 的 AchievementRuntimeTests；成就界面将来可用。
+        // 下游：BuildTracking。
         public bool TryGetTracking(int achievementId, out AchievementTracking tracking)
         {
             Config_Achievement row;
@@ -245,8 +184,16 @@ namespace NBC.Game.Achievement
             return true;
         }
 
-        /// <summary>把**全部**成就（解锁的与没解锁的都算）复制进一个列表。</summary>
-        /// <param name="buffer">目标列表（会先 Clear；里面的对象是新建的）。</param>
+        /// <summary>把全部成就（含未解锁）复制进列表，元素是新造的追踪视图；列表先 Clear。</summary>
+        // 功能：把配置表里每一个成就都造一份追踪视图，按表内顺序放进调用方列表。
+        // 入参：buffer 目标列表，不能为 null（否则抛 ArgumentNullException）；会先被 Clear。
+        // 返回：无；成就表没加载时列表为空。
+        // 步骤：
+        //   1) 判 null、Clear，保证调用方拿到的是完整一批而不是叠加
+        //   2) 取 rows；为 null 直接返回（没有成就不是错误）
+        //   3) 逐行 BuildTracking —— 视图是新建的，调用方可以放心持有
+        // 上游：Editor 的 NetDebugWindow 成就页；本类 Describe。
+        // 下游：BuildTracking。
         public void CopyTrackings(List<AchievementTracking> buffer)
         {
             if (buffer == null)
@@ -269,8 +216,16 @@ namespace NBC.Game.Achievement
             }
         }
 
-        /// <summary>把全部成就拼成一段文本（控制台 / 调试面板用）。</summary>
-        /// <returns>多行文本。</returns>
+        // 功能：把全部成就拼成一段多行人话（总数、每个成就与逐条条件、最近的失败原因），供控制台与调试面板直接输出。
+        // 入参：无。
+        // 返回：多行文本；一个成就都没有时返回一句提示。
+        // 步骤：
+        //   1) 先 CopyTrackings 拿一份当前视图
+        //   2) 空表直接给一句提示，避免输出只有标题
+        //   3) 首行拼「已解锁 / 总数」，再逐行追加成就
+        //   4) 有 m_lastProblem 才追加，没失败就不写
+        // 上游：BattleSession.Describe；EditMode 的 AchievementRuntimeTests 断言文本。
+        // 下游：CopyTrackings、AchievementTracking.ToString。
         public string Describe()
         {
             var trackings = new List<AchievementTracking>();
@@ -298,60 +253,72 @@ namespace NBC.Game.Achievement
             return builder.ToString();
         }
 
-        // ====================================================================
-        //  条件系统的通知
-        // ====================================================================
+        // 条件系统的通知：订阅 ConditionTracker，只认自己的条件编号。
 
-        /// <summary>某条条件进度变了（**可能是任务的**，认不出来就静默忽略）。</summary>
-        /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">新进度。</param>
+        // 功能：条件进度变化时，把属于本类的条件翻译成成就进度事件广播出去；不是本类的条件静默忽略。
+        // 入参：conditionKey 条件编号；progress 新进度（本方法只确认事件来自条件系统，不读其内容）。
+        // 返回：无。
+        // 步骤：
+        //   1) 查 m_ownerOfCondition，查不到说明是任务的条件（两边共用 tracker），直接返回
+        //   2) 查到就广播 AchievementEvents.ProgressChanged，载荷是成就编号
+        // 上游：ConditionTracker.ProgressChanged（构造时订阅）。
+        // 下游：EventCenter、AchievementEvents.ProgressChanged。
+        // 注意：绝不能对未知条件抛异常 —— 共用 tracker 意味着回调一定会收到对方编号，这里只是「通用层 + 多个消费者」的边界。
         private void OnConditionProgressChanged(int conditionKey, ConditionProgress progress)
         {
             int achievementId;
 
             if (!m_ownerOfCondition.TryGetValue(conditionKey, out achievementId))
             {
-                return;   // 不是本类的（例如任务的条件）—— 安静忽略
+                return;
             }
 
             EventCenter.Instance.Trigger(AchievementEvents.ProgressChanged, achievementId);
         }
 
-        /// <summary>某条条件**达成**了：若该成就全部条件都满，就解锁并发奖。</summary>
-        /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">达成时的进度。</param>
+        // 功能：某条条件达成时，若它属于某个成就就评该成就是否该解锁。
+        // 入参：conditionKey 条件编号；progress 达成时的进度（本方法不读，判定统一走 tracker）。
+        // 返回：无。
+        // 步骤：
+        //   1) 查归属，查不到是任务的条件，静默返回
+        //   2) 查到就 Evaluate 该成就，是否全达成、是否已解锁都由 Evaluate 判断
+        // 上游：ConditionTracker.ConditionMet（构造时订阅）。
+        // 下游：Evaluate。
         private void OnConditionMet(int conditionKey, ConditionProgress progress)
         {
             int achievementId;
 
             if (!m_ownerOfCondition.TryGetValue(conditionKey, out achievementId))
             {
-                return;   // 不是本类的（例如任务的条件）—— 安静忽略
+                return;
             }
 
             Evaluate(achievementId);
         }
 
-        // ====================================================================
-        //  内部：校验 / 登记 / 评定 / 解锁
-        // ====================================================================
+        // 内部：校验 / 登记 / 评定 / 解锁。
 
-        /// <summary>
-        /// **先把全部配置校验一遍，再动手登记**（与 `QuestRuntime.Accept` 同一个形状）。
-        /// <para>⚠️ 为什么不能"边校验边登记"：登记是**有副作用**的（写进 `ConditionTracker`），
-        /// 校验到第 3 个成就才发现奖励表缺行，前两个成就就已经登记进去了 ——
-        /// 那是一个**半成品状态**：玩家看不到它，但它会在后台悄悄涨进度。</para>
-        /// </summary>
+        // 功能：在登记之前把全部成就配置校验一遍，配置有错就抛异常，避免留下登记到一半的半成品。
+        // 入参：无（读 m_achievements / m_conditions / m_rewards）。
+        // 返回：无；配置有错抛 InvalidOperationException，消息点名成就、条件或奖励。
+        // 步骤：
+        //   1) 表为空直接返回 —— 没成就不是错误（这个项目可能不做成就）
+        //   2) 逐行查：至少有一条条件、每条条件在条件表里能找到且能解析成 ConditionDef
+        //   3) 用 seenConditions 抓「两个成就引用同一条条件」，报错才能点名两个成就
+        //   4) 最后查奖励行：先查奖励再登记，因为登记之后条件一齐就会发奖，而「要发奖时才发现缺行」没法回头（成就自动解锁，没有取消交付）
+        // 上游：构造函数。
+        // 下游：m_conditions.TryGet、ConditionDef.TryCreate、m_rewards.TryGet。
+        // 注意：不能边校验边登记 —— 登记会写进 ConditionTracker，校验到第 3 个成就才发现错时，前两个已经登记进去，会在后台悄悄涨进度，玩家却看不到。
         private void ValidateAll()
         {
             List<Config_Achievement> rows = m_achievements.rows;
 
             if (rows == null || rows.Count == 0)
             {
-                return;     // 没成就不是错误（这个项目可能不做成就）
+                return;
             }
 
-            var seenConditions = new Dictionary<int, int>();    // 条件编号 → 先占住它的成就编号
+            var seenConditions = new Dictionary<int, int>();
 
             for (int i = 0; i < rows.Count; i++)
             {
@@ -393,9 +360,6 @@ namespace NBC.Game.Achievement
                             "[AchievementRuntime] 成就 " + row.id + " 的条件 " + conditionId + " 配置有错：" + error);
                     }
 
-                    // ⚠️ 两个成就抢同一条条件 → `ConditionTracker.Register` 会**当场抛异常**，
-                    //    但那时候抛出来的消息里没有"是哪两个成就"。
-                    //    这里提前抓，才能**点名两个成就**（报错要说清是谁跟谁）。
                     int firstOwner;
 
                     if (seenConditions.TryGetValue(conditionId, out firstOwner))
@@ -410,9 +374,6 @@ namespace NBC.Game.Achievement
                     seenConditions.Add(conditionId, row.id);
                 }
 
-                // ⚠️ **先查奖励，再登记**：登记之后条件一齐就会去发奖，
-                //    而"要发奖时才发现奖励表没有这一行"是**没法回头**的
-                //    （成就是自动解锁的，没有"取消交付"这个动作）。
                 Config_Reward rewardRow;
 
                 if (!m_rewards.TryGet(row.rewardId, out rewardRow))
@@ -425,7 +386,16 @@ namespace NBC.Game.Achievement
             }
         }
 
-        /// <summary>把全部成就的条件登记进条件系统（`resetProgress: false`）。</summary>
+        // 功能：把全部成就的条件登记进条件系统，resetProgress 传 false，让进度跨局保留且登记时已达成会当场回调。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 先把全部条件 → 成就的归属记满：Register 会当场回调，回调里要靠这张表认出自己的条件
+        //   2) 再逐条 Register；TryGet / TryCreate 失败就跳过（ValidateAll 已保证成立，这里只是再取值）
+        // 上游：构造函数（ValidateAll 之后）。
+        // 下游：ConditionTracker.Register。
+        // 注意：false 就是任务与成就的唯一差别 —— 任务接取时传 true（接了才开始算），成就传 false（一直生效、不清零；已达成时登记当场回调，是为了「上次已打满、这次登录就解锁」，否则玩家得再打一只）。
+        // 注意：顺序不能颠倒 —— 先登记再记归属，重入回调会认不出条件而静默返回，表现为登录后永不解锁且无日志。
         private void RegisterAll()
         {
             List<Config_Achievement> rows = m_achievements.rows;
@@ -435,8 +405,6 @@ namespace NBC.Game.Achievement
                 return;
             }
 
-            // ① 先把**全部归属**记好：`Register` 会当场回调（见类头），
-            //    回调里要靠这张表认出"这是我的条件"。
             for (int i = 0; i < rows.Count; i++)
             {
                 Config_Achievement row = rows[i];
@@ -452,7 +420,6 @@ namespace NBC.Game.Achievement
                 }
             }
 
-            // ② 再逐条登记
             for (int i = 0; i < rows.Count; i++)
             {
                 Config_Achievement row = rows[i];
@@ -467,7 +434,6 @@ namespace NBC.Game.Achievement
                     Config_QuestCondition conditionRow;
                     ConditionDef def;
 
-                    // ValidateAll 已经保证这两步都成立（这里只是再走一遍取值）
                     if (!m_conditions.TryGet(row.conditionIds[c], out conditionRow))
                     {
                         continue;
@@ -479,17 +445,19 @@ namespace NBC.Game.Achievement
                         continue;
                     }
 
-                    // ⚠️ **这一行就是"任务"与"成就"的唯一差别**：false = 不清零、且已达成时当场回调。
                     m_tracker.Register(row.conditionIds[c], def, false);
                 }
             }
         }
 
-        /// <summary>
-        /// 把全部成就**统一评一遍**。
-        /// <para>必要性见类头第 ③ 段：多条条件的成就，在逐条登记的过程中
-        /// 每条单独回调时都凑不齐（后面的条件还没登记，`IsMet` 恒 false）。</para>
-        /// </summary>
+        // 功能：把全部成就统一评一遍，兜住「多条条件、后登记的那条才凑齐」的情况。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 遍历配置行，非 null 的逐个 Evaluate
+        // 上游：构造函数最后一步。
+        // 下游：Evaluate。
+        // 注意：这一步不是冗余 —— 逐条登记时，还没登记的条件 IsMet 恒为 false，两条都已达成的成就在登记循环里每条单独触发都凑不齐。
         private void EvaluateAll()
         {
             List<Config_Achievement> rows = m_achievements.rows;
@@ -508,13 +476,20 @@ namespace NBC.Game.Achievement
             }
         }
 
-        /// <summary>评一个成就是不是该解锁了（该解就解；已解过就什么都不做）。</summary>
-        /// <param name="achievementId">成就编号。</param>
+        // 功能：评一个成就是不是该解锁；已解锁的什么都不做，条件没齐的也什么都不做。
+        // 入参：achievementId 成就编号。
+        // 返回：无。
+        // 步骤：
+        //   1) 先查 m_unlocked：已解过就返回，绝不能重复发奖
+        //   2) 查配置行并检查全部条件；查不到或没齐都返回
+        //   3) 都满足才 Unlock
+        // 上游：OnConditionMet（条件达成）、EvaluateAll（构造收尾）。
+        // 下游：AreAllConditionsMet、Unlock。
         private void Evaluate(int achievementId)
         {
             if (m_unlocked.Contains(achievementId))
             {
-                return;     // 已经解过 —— **不能重复发奖**
+                return;
             }
 
             Config_Achievement row;
@@ -527,9 +502,14 @@ namespace NBC.Game.Achievement
             Unlock(row);
         }
 
-        /// <summary>这个成就的全部条件都达成了吗。</summary>
-        /// <param name="row">成就配置行。</param>
-        /// <returns>都达成了返回 true（条件为空时返回 false）。</returns>
+        // 功能：判断这个成就的全部条件是不是都达成了。
+        // 入参：row 成就配置行。
+        // 返回：true 表示至少有一条条件且全部达成；false 表示一条条件都没有，或还有条件没达成。
+        // 步骤：
+        //   1) 条件为空直接返回 false —— 空列表不算「全部达成」
+        //   2) 逐条查 m_tracker.IsMet，遇到没达成的立刻返回 false
+        // 上游：Evaluate。
+        // 下游：ConditionTracker.IsMet。
         private bool AreAllConditionsMet(Config_Achievement row)
         {
             int[] conditionIds = row.conditionIds;
@@ -550,17 +530,24 @@ namespace NBC.Game.Achievement
             return true;
         }
 
-        /// <summary>解锁一个成就并发奖。</summary>
-        /// <param name="row">成就配置行。</param>
+        // 功能：把一个已判定满足条件的成就标记成已解锁，并按台账决定要不要发奖。
+        // 入参：row 成就配置行。
+        // 返回：无；奖励缺行时记录 m_lastProblem 并广播 UnlockFailed，不抛异常。
+        // 步骤：
+        //   1) 查奖励行；缺行就记录失败并返回 —— 此刻在 ConditionTracker.Notify 的派发循环里，抛出去会打断别人的进度派发
+        //   2) 查台账：已发过就只点亮成就、不广播 Unlocked —— 这一局刚达成与重启后读回早已达成，区别只在台账
+        //   3) 没发过则先标记已解锁、再造 QuestReward、Grant、MarkGranted，最后广播 Unlocked
+        // 上游：Evaluate。
+        // 下游：m_rewards.TryGet、m_ledger.HasGranted / MarkGranted、m_rewardSink.Grant、EventCenter。
+        // 注意：台账命中时仍然要标记成已解锁（玩家看到的状态必须对），不发的只是奖励；刻意不广播 Unlocked —— 那是「刚刚解锁」的庆祝信号，重启时重放会让玩家以为又拿了一次，「恢复状态」与「发生事件」是两件事。
+        // 注意：必须先改状态再发奖 —— 发奖可能触发订阅方回头查「这个成就解锁了吗」，那时必须已经是已解锁。
+        // 注意：必须先发奖再记账 —— 反过来 Grant 抛异常就变成「记了账但没发」，玩家永远拿不到；现在最坏是「发了没记上」，重启会补发一次（多给，不少给，且多给还能从日志查出来）。
         private void Unlock(Config_Achievement row)
         {
             Config_Reward rewardRow;
 
             if (!m_rewards.TryGet(row.rewardId, out rewardRow))
             {
-                // ⚠️ 这里**不能抛异常**：我们此刻在 `ConditionTracker.Notify` 的派发循环里
-                //    （一次击杀可能同时推进好几条条件），抛出去会把**别人**的进度派发一起打断。
-                //    所以改成"记录 + 广播"，让问题**有痕迹**但不扩大伤害。
                 m_lastProblem = "成就 " + row.id + " 该解锁，但奖励 " + row.rewardId +
                                 " 在 Reward 表里找不到 —— **没有解锁**（避免出现「成就亮了奖励没到」）。";
 
@@ -569,17 +556,8 @@ namespace NBC.Game.Achievement
                 return;
             }
 
-            // ---- ⚠️ 台账守卫：**发过就不再发**（`Docs\27` §11.5）----
-            // 走到这里有两种情况，必须分开处理：
-            //   ① 这一局真的刚达成 → 该发奖
-            //   ② **重启后**从持久化进度里读回"早就达成了" → 该点亮成就，**但不该再发奖**
-            // 判别依据就是台账。
             if (m_ledger.HasGranted(ERewardOwnerKind.Achievement, row.id))
             {
-                // ⚠️ **仍然要标记成已解锁**：玩家看到的状态必须是"解锁了"（那是对的），
-                //    不发的只是奖励。而**刻意不广播 `Unlocked`** ——
-                //    那是"刚刚解锁"的庆祝信号，重启时重放一遍会让玩家以为又拿了一次。
-                //    ⇒ "**恢复状态**"与"**发生事件**"是两件事（同 M3-B：移动是状态、动作是事件）。
                 if (m_unlocked.Add(row.id))
                 {
                     m_unlockedOrder.Add(row.id);
@@ -596,25 +574,25 @@ namespace NBC.Game.Achievement
             QuestReward reward = new QuestReward(rewardRow.id, rewardRow.exp, rewardRow.gold,
                                                  rewardRow.itemId, rewardRow.itemCount);
 
-            // ⚠️ 顺序（与 `QuestRuntime.Submit` 同一个理由）：**先改状态、再发奖**。
-            //    成就的"状态"只有内存里这一个集合，改它是不会失败的；
-            //    而发奖可能触发订阅方（比如背包满、UI 弹窗）再反过来查"这个成就解锁了吗"——
-            //    那时必须已经是"已解锁"。
             m_rewardSink.Grant(row.id, reward);
 
-            // ⚠️ 顺序：**先发奖、再记账**。
-            //    反过来的话，`Grant` 抛异常就变成"记了账但没发" ⇒ 玩家**永远拿不到**。
-            //    现在这个顺序最坏是"发了但没记上" ⇒ 下次重启会**补发一次**（多给，不少给）。
-            //    两个方向都不完美，但**少给玩家**比多给更糟（而且多给还能从日志查出来）。
             m_ledger.MarkGranted(ERewardOwnerKind.Achievement, row.id, reward.RewardId);
 
             EventCenter.Instance.Trigger(AchievementEvents.Unlocked,
                 new AchievementUnlockedPayload(row.id, reward.RewardId));
         }
 
-        /// <summary>造一个追踪视图（**每次新建对象**）。</summary>
-        /// <param name="row">成就配置行。</param>
-        /// <returns>视图。</returns>
+        // 功能：把一个成就配置行加上实时进度，摊平成追踪视图；配置有错的行也照样给出并标出问题。
+        // 入参：row 成就配置行。
+        // 返回：新建的追踪视图，条件顺序与配置一致；每次调用都新建对象。
+        // 步骤：
+        //   1) 先填编号、名字、描述与解锁状态
+        //   2) 没有条件就返回只有成就信息的视图
+        //   3) 逐条取条件配置与进度；配置错就造一行「配置有错」而不是静默少一行
+        //   4) 取不到进度按 0/N 显示 —— 追踪视图是给人看的，看板自己崩掉最差
+        //   5) 最后用 QuestProgressOverlay.Apply 把权威值盖上去：成就是服务端权威真的管到的那一批（服务端目前只登记成就条件），服务端没提过的条件保留本地值并标成 LocalPrediction
+        // 上游：TryGetTracking、CopyTrackings。
+        // 下游：m_conditions.TryGet、ConditionDef.TryCreate、m_tracker.TryGetProgress、QuestProgressOverlay.Apply。
         private AchievementTracking BuildTracking(Config_Achievement row)
         {
             AchievementTracking tracking = new AchievementTracking();
@@ -639,7 +617,6 @@ namespace NBC.Game.Achievement
                     !ConditionDef.TryCreate(conditionRow.eventType, conditionRow.targetId,
                                             conditionRow.requiredCount, out def, out _))
                 {
-                    // 配置有错时**照样给出这一行**（说清问题），而不是静默少一行
                     QuestConditionLine broken = new QuestConditionLine();
                     broken.ConditionId = conditionIds[i];
                     broken.Description = "⚠️ 条件 " + conditionIds[i] + " 配置有错";
@@ -651,8 +628,6 @@ namespace NBC.Game.Achievement
 
                 if (!m_tracker.TryGetProgress(conditionIds[i], out progress))
                 {
-                    // ⚠️ 正常不该发生（构造时就登记了）。但"取不到"要**如实显示成 0/N**，
-                    //    而不是抛异常 —— 追踪视图是给**看**的，看板自己崩掉最差。
                     progress = new ConditionProgress(0, def.RequiredCount);
                 }
 
@@ -665,16 +640,20 @@ namespace NBC.Game.Achievement
                 tracking.Conditions.Add(line);
             }
 
-            // ⚠️ **在返回之前**把权威值盖上去（`Docs\27` §二十四）：
-            //    成就是"服务端权威进度**真的管到**"的那一批（服务端目前只登记成就条件），
-            //    所以这里是"以服务端为准"最看得见的地方。
-            //    服务端没提过的条件 ⇒ 保留本地那份，只是被标成 `LocalPrediction`。
             QuestProgressOverlay.Apply(tracking.Conditions, Authority);
 
             return tracking;
         }
 
-        /// <summary>退订事件、注销全部条件（可以重复调用）。</summary>
+        // 功能：退订条件系统事件并注销全部条件登记；可以重复调用。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 已 Dispose 过就直接返回，保证重复调用无害
+        //   2) 先退订两个事件，再逐个 Unregister 归属表里的条件，最后 Clear
+        // 上游：BattleSession.Dispose；EditMode 用例的清理。
+        // 下游：ConditionTracker.Unregister。
+        // 注意：只注销登记、不动进度 —— 成就进度跨局保留，重进一局要能接着算，这正是 resetProgress 传 false 的意义。
         public void Dispose()
         {
             if (m_disposed)
@@ -687,8 +666,6 @@ namespace NBC.Game.Achievement
             m_tracker.ProgressChanged -= OnConditionProgressChanged;
             m_tracker.ConditionMet -= OnConditionMet;
 
-            // ⚠️ **只注销登记，不动进度**（`ConditionTracker.Unregister` 的契约）：
-            //    成就的进度是跨局的，重进一局要能接着算 —— 这正是 `resetProgress: false` 的意义。
             foreach (KeyValuePair<int, int> pair in m_ownerOfCondition)
             {
                 m_tracker.Unregister(pair.Key);

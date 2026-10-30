@@ -1,42 +1,5 @@
-// ============================================================================
-//  QuestRuntime —— 任务运行时：接取 → 进度 → 完成 → 交付 → 发奖
-//  项目：3D联网战斗Demo   对应：M2-A2、Docs\20 §三 M2 的验收线
-//
-//  ---------------------------------------------------------------------------
-//  一条任务的完整生命周期（每一步都写在这里，因为它就是"闭环"本身）
-//  ---------------------------------------------------------------------------
-//      Accept(3001)
-//        ├─ 查配置表 Quest → 拿 conditionIds / rewardId
-//        ├─ **先把全部条件都校验一遍**（缺一行就整体不接，见下）
-//        ├─ 逐条向 ConditionTracker 登记（resetProgress = true：接了才开始算）
-//        └─ 状态 → Accepted，广播 Quest.Accepted
-//
-//      （玩家去打怪）战斗 → 事件 → ConditionEventBridge → ConditionTracker.Notify
-//        └─ 条件满 → ConditionTracker.ConditionMet → 本类 OnConditionMet
-//             └─ 该任务**所有**条件都满了 → 状态 → Completed，广播 Quest.Completed
-//
-//      Submit(3001)
-//        ├─ 状态必须是 Completed（否则给一句人话原因）
-//        ├─ **先查奖励表**（查不到就整体不交付 —— 不能出现"交付了但没奖励"）
-//        ├─ 注销条件、状态 → Submitted、发奖、广播 Quest.Submitted + Quest.RewardGranted
-//        └─ 奖励经 IQuestRewardSink 发下去（M4 换成服务端权威实现）
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 两条刻意做成"全有或全无"的地方（半成品状态最难查）
-//  ---------------------------------------------------------------------------
-//  ① `Accept` 如果"登记到第三条才发现条件表里没这行"，会把前两条留在
-//     `ConditionTracker` 里 —— 一个**半接取**的任务：UI 上没有它，
-//     但它会在后台悄悄累计进度。所以**先全部校验，再统一登记**。
-//  ② `Submit` 如果"状态改了但奖励表缺行"，玩家就白白损失一个任务。
-//     所以**先查奖励，再改状态**。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ `OnConditionMet` 为什么**不能**假设"这个条件一定是任务的"
-//  ---------------------------------------------------------------------------
-//  任务与成就**共用同一个 `ConditionTracker`**（`Docs\20` §四 的核心复用）。
-//  所以达成通知里会混着**成就的**条件编号 —— 本类认不出来时必须**安静地忽略**，
-//  而不是抛"未知条件"异常。这是"通用层 + 多个消费者"结构里必须守住的边界。
-// ============================================================================
+// 这个文件里有：
+//   QuestRuntime（类）：任务运行时，管接取、累计进度、判定完成、交付发奖的整条闭环
 
 using System;
 using System.Collections.Generic;
@@ -46,42 +9,53 @@ using NBC.Shared.Condition;
 
 namespace NBC.Game.Quest
 {
-    /// <summary>任务运行时（**单机就能闭环**；M4 起进度改由服务端权威校验）。</summary>
+    /// <summary>任务运行时：任务状态与奖励的唯一入口，接取、进度、完成、交付、发奖都经过这里。</summary>
+    // 主要功能：管一条任务从接取、累计进度、判定完成、交付到发奖的全过程，不碰界面与网络。
+    // 主要数据成员：三张配置表（任务 / 条件 / 奖励）、与成就共用的 ConditionTracker、发奖接缝 IQuestRewardSink、每个任务的状态与接取顺序。
+    // 主要外部方法：Accept / Submit / Abandon / FollowState / CopyOffers / CopyActiveQuestIds / CopyActiveTrackings / TryGetTracking / DescribeActive / StateOf / Dispose。
+    // 谁在用它：BattleSession 造一个并转成玩法入口；QuestPanelModel 拿它刷新任务面板；Boot 的 M2DemoBehaviour 与 Editor 的 NetDebugWindow 直接调其中少数几个公开方法；EditMode 用例直接构造来断言状态迁移。
+    // 注意：接取必须先把全部条件校验一遍、再统一登记，否则失败时会留下界面看不见、却在后台累计进度的半接取任务。
+    // 注意：交付必须先查奖励表、再改状态，否则会出现任务已经没了、奖励也没到。
+    // 注意：条件系统与成就共用，达成通知里混着成就的条件编号，本类认不出来时必须安静忽略，不能抛未知条件异常。
+    // 注意：单机即可闭环；M4 起进度改由服务端权威校验，本地只跟随状态（见 FollowState）。
     public sealed class QuestRuntime : IDisposable
     {
-        /// <summary>任务表。</summary>
+        // 任务表：任务编号 → 配置行，构造后不变
         private readonly QuestConfig m_quests;
 
-        /// <summary>条件表。</summary>
+        // 条件表：条件编号 → 配置行，任务与成就共用同一份，构造后不变
         private readonly QuestConditionConfig m_conditions;
 
-        /// <summary>奖励表。</summary>
+        // 奖励表：奖励编号 → 配置行，交付时按任务行的 rewardId 查
         private readonly RewardConfig m_rewards;
 
-        /// <summary>条件系统（任务与成就共用）。</summary>
+        // 条件系统：任务与成就共用的那个实例，本类只登记自己的条件编号
         private readonly ConditionTracker m_tracker;
 
-        /// <summary>发奖的地方。</summary>
+        // 发奖出口：M2 是内存实现，M4 换服务端权威实现
         private readonly IQuestRewardSink m_rewardSink;
 
-        /// <summary>每个任务当前的状态（不在表里 = None）。</summary>
+        // 每个任务当前的状态（取值 0..3），键为任务编号；不在表里等于 EQuestState.None
         private readonly Dictionary<int, EQuestState> m_states = new Dictionary<int, EQuestState>();
 
-        /// <summary>条件编号 → 它属于哪个任务（用于把达成通知路由回来）。</summary>
+        // 条件编号 → 所属任务编号，只装本类登记过的条件，用于把达成通知路由回来
         private readonly Dictionary<int, int> m_ownerOfCondition = new Dictionary<int, int>();
 
-        /// <summary>已接取的任务编号（含"已完成待交付"，按接取顺序）。</summary>
+        // 已接取的任务编号（含已完成待交付），按接取顺序排列；元素个数即 ActiveCount
         private readonly List<int> m_active = new List<int>();
 
-        /// <summary>Dispose 过没有（重复 Dispose 要无害）。</summary>
+        // 是否已 Dispose；true 之后除 Dispose 外的公开方法都抛 ObjectDisposedException
         private bool m_disposed;
 
-        /// <summary>造一个任务运行时。</summary>
-        /// <param name="quests">任务表（不能为 null）。</param>
-        /// <param name="conditions">条件表（不能为 null）。</param>
-        /// <param name="rewards">奖励表（不能为 null）。</param>
-        /// <param name="tracker">条件系统（不能为 null）。</param>
-        /// <param name="rewardSink">发奖的地方（不能为 null；M2 用内存实现）。</param>
+        // 功能：收下三张配置表、共用的条件系统与发奖出口，并订阅条件的进度与达成通知。
+        // 入参：quests 任务表（不能为 null）；conditions 条件表（不能为 null）；rewards 奖励表（不能为 null）；tracker 条件系统（不能为 null，与成就共用）；rewardSink 发奖出口（不能为 null，M2 用内存实现）
+        // 返回：无
+        // 步骤：
+        //   1) 五个依赖逐个查空，缺一个就抛 ArgumentNullException 并在提示里点名，避免半装配的对象跑到运行期
+        //   2) 先赋值、最后才订阅：订阅在前的话，回调里读到的会是空字段
+        //   3) 订阅 ProgressChanged 与 ConditionMet 两个通知，任务侧只被动接收，不轮询条件系统
+        // 上游：BattleSession 的构造函数（Game 内唯一装配点）
+        // 下游：ConditionTracker 的两个事件
         public QuestRuntime(QuestConfig quests, QuestConditionConfig conditions, RewardConfig rewards,
                             ConditionTracker tracker, IQuestRewardSink rewardSink)
         {
@@ -105,36 +79,46 @@ namespace NBC.Game.Quest
             m_tracker = tracker;
             m_rewardSink = rewardSink;
 
-            // 订阅条件系统的两个通知（见类头说明：达成通知里会有**成就的**条件，认不出来要安静忽略）
             m_tracker.ProgressChanged += OnConditionProgressChanged;
             m_tracker.ConditionMet += OnConditionMet;
         }
 
-        /// <summary>当前接了但还没交付的任务数。</summary>
+        // 功能：报告当前接了但还没交付的任务个数。
+        // 入参：无
+        // 返回：已接取任务数（含已完成待交付），0 表示手上没有任务
+        // 上游：EditMode 用例断言手上任务数；任务面板不读它，直接走 CopyActiveTrackings
+        // 下游：m_active
         public int ActiveCount
         {
             get { return m_active.Count; }
         }
 
-        /// <summary>某个任务当前的状态。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <returns>状态（没接过 = None）。</returns>
+        /// <summary>查一个任务当前的状态；没接过的任务返回 None。</summary>
+        // 功能：把任务编号翻成状态，查不到就当作没接过。
+        // 入参：questId 任务编号
+        // 返回：状态值（0..3）；没有记录时为 EQuestState.None
+        // 步骤：
+        //   1) 用 TryGetValue 一次取值，未命中就落到 None —— 不区分没接过与放弃过，两者本来就同义
+        // 上游：任务面板分桶、Editor 的 NetDebugWindow 跟随权威时读本地状态
+        // 下游：无
         public EQuestState StateOf(int questId)
         {
             EQuestState state;
             return m_states.TryGetValue(questId, out state) ? state : EQuestState.None;
         }
 
-        /// <summary>
-        /// 把所有**可接任务**（配置里有、玩家状态是 None）复制进一个列表。
-        /// <para>
-        /// ⚠️ 为什么这个方法在运行时，而不是让 UI 自己去翻配置表：
-        /// "哪些能接"是**玩法规则**（后面前置条件、等级限制、日常限次都会进来），
-        /// 而 UI 只该问"现在能接什么"。规则放这里，变化时不会漏到 UI 里去。
-        /// </para>
-        /// <para>顺序 = 配置表里的顺序（策划排的顺序就是 UI 的顺序）。</para>
-        /// </summary>
-        /// <param name="buffer">目标列表（会先 Clear）。</param>
+        // 功能：把配置里存在、玩家还没接过的任务按配置表顺序填进调用方的列表。
+        // 入参：buffer 目标列表（不能为 null；会先 Clear，列表由调用方复用）
+        // 返回：无（结果都写进 buffer）
+        // 步骤：
+        //   1) 先查空并抛 ArgumentNullException，免得把 null 带到别的调用方
+        //   2) 先 Clear 再填：调用方复用的是同一个列表，不清会重复追加
+        //   3) 配置行集合为 null 时直接返回，空表与没有表同样处理
+        //   4) 按配置表顺序遍历，跳过状态不是 None 的：接过、可交付、已交付都不再算可接
+        //   5) 剩下的包成 QuestOffer 加进 buffer，顺序即策划排的顺序，也就是界面顺序
+        // 上游：QuestPanelModel 刷新可接列表
+        // 下游：StateOf
+        // 注意：为什么在运行时判定、而不是让界面自己去翻配置表 —— 哪些能接是玩法规则（前置条件、等级限制、日常限次都会进来），规则留在这里，变化时不会漏到界面里去。
         public void CopyOffers(List<QuestOffer> buffer)
         {
             if (buffer == null)
@@ -155,7 +139,6 @@ namespace NBC.Game.Quest
             {
                 Config_Quest row = rows[i];
 
-                // 接过（含"已完成待交付"与"已交付"）的就不再是"可接"
                 if (StateOf(row.id) != EQuestState.None)
                 {
                     continue;
@@ -165,8 +148,14 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>把"已接取的任务编号"复制进一个列表（UI 遍历用；顺序 = 接取顺序）。</summary>
-        /// <param name="buffer">目标列表（会先 Clear）。</param>
+        // 功能：把已接取的任务编号按接取顺序填进调用方的列表。
+        // 入参：buffer 目标列表（不能为 null；会先 Clear）
+        // 返回：无（结果都写进 buffer）
+        // 步骤：
+        //   1) 先查空、再 Clear，理由与 CopyOffers 相同
+        //   2) 按 m_active 的下标顺序逐个拷进 buffer，这个顺序就是接取顺序
+        // 上游：任务面板与调试输出遍历手上的任务
+        // 下游：无
         public void CopyActiveQuestIds(List<int> buffer)
         {
             if (buffer == null)
@@ -182,13 +171,19 @@ namespace NBC.Game.Quest
             }
         }
 
-        // ====================================================================
-        //  接取 / 交付 / 放弃
-        // ====================================================================
 
-        /// <summary>接取一个任务。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <returns>结果（失败时带一句人话原因）。</returns>
+        // 功能：把一个任务接到玩家身上：校验配置、登记条件、置为已接取并广播接取成功。
+        // 入参：questId 任务编号（必须在任务表里，且当前状态为 None）
+        // 返回：QuestActionResult；Ok 为 true 表示已接取并登记了条件，失败时 Reason 是一句给玩家看的原因
+        // 步骤：
+        //   1) 先 EnsureNotDisposed，拆掉的对象不许再改状态
+        //   2) 查任务配置，查不到就把「先跑 ConfigKit 生成、再点配置表导入菜单」写进原因，省得报错只剩一个编号
+        //   3) 用 DescribeBlock 判是否可接，已接、可交付、已交付一律拒绝
+        //   4) 解析并登记条件，resetProgress 传 true：玩家主动接取要从零开始算
+        //   5) 全部成功后才改状态、记进 m_active，最后广播 Quest.Accepted
+        // 上游：BattleSession.AcceptQuest、QuestPanelModel（玩家点接取）
+        // 下游：DescribeBlock、ResolveAndRegisterConditions、Reject、EventCenter
+        // 注意：先校验、再登记 —— 若登记到第三条才发现条件表缺行，前两条会留在 ConditionTracker 里，变成界面看不见却仍在累计的半接取任务。
         public QuestActionResult Accept(int questId)
         {
             EnsureNotDisposed();
@@ -209,8 +204,6 @@ namespace NBC.Game.Quest
                 return Reject(questId, blocked);
             }
 
-            // 解析 + 登记（**先校验，再登记**）。接取要清零；"跟随权威"那条路不清零
-            // —— 两份实现迟早漂移，所以这里共用一个帮手（`resetProgress` 是开关）。
             string reason = ResolveAndRegisterConditions(quest, questId, true);
 
             if (reason != null)
@@ -225,13 +218,15 @@ namespace NBC.Game.Quest
             return QuestActionResult.Success();
         }
 
-        /// <summary>
-        /// 解析一个任务的全部条件并登记。**先全部校验、再统一登记**（校验失败时不留半截状态）。
-        /// </summary>
-        /// <param name="quest">任务（配置行）。</param>
-        /// <param name="questId">任务编号（报错文案用）。</param>
-        /// <param name="resetProgress">要不要清零进度（接取 = true；跟随权威 = false）。</param>
-        /// <returns>成功返回 null；失败返回一句人话原因（调用方决定是 `Reject` 还是静默放弃）。</returns>
+        // 功能：把一个任务的全部条件解析成 ConditionDef 并登记；失败时不留下任何登记。
+        // 入参：quest 任务配置行；questId 任务编号（只用于报错文案）；resetProgress 是否清零进度（接取传 true，跟随权威传 false）
+        // 返回：成功返回 null；失败返回一句人话原因，由调用方决定走 Reject 还是静默放弃
+        // 步骤：
+        //   1) 条件数组为 null 或空时直接报错：没有条件的任务接了就永远做不完，没有任何东西能推进它
+        //   2) 第一轮只解析与校验：条件表缺行、ConditionDef 建不出来都直接返回原因，此时一条都还没登记
+        //   3) 第二轮才统一登记：m_tracker.Register 加记下条件归属，两轮分开正是「先校验、再登记」的落点
+        // 上游：Accept（resetProgress 为 true）、FollowState（false 不清零）；两条路共用这一个帮手，免得两份实现迟早漂移
+        // 下游：ConditionTracker.Register
         private string ResolveAndRegisterConditions(Config_Quest quest, int questId, bool resetProgress)
         {
             int[] conditionIds = quest.conditionIds;
@@ -274,22 +269,19 @@ namespace NBC.Game.Quest
             return null;
         }
 
-        /// <summary>
-        /// **跟随权威**：把本地这个任务的状态改成服务端说的那个（M4-S3 `Docs\27` §二十八）。
-        ///
-        /// <para>⚠️ 它**只改状态**，绝不做本地动作：**不发奖**、**不触发**「接取/交付成功」事件、
-        /// **不给玩家任何提示**、而且**不重置进度**（`resetProgress: false`）。
-        /// 那些都是服务端的事 —— 本地再做一遍就是"客户端自己当权威"（§二十一修掉的洞）。</para>
-        ///
-        /// <para>⚠️ **幂等**：本地已经等于目标状态就直接返回 0（"同一件事做两遍"是这一片要防的
-        /// 静默错误：不报错，只让玩家状态慢慢跑偏）。</para>
-        ///
-        /// <para>⚠️ 与 `Accept`/`Submit` 的关系：那两个是"**玩家动作**"（要清零/发奖/触发事件），
-        /// 这个是"**追随权威**"（只对齐状态）。别用它去顶替玩家动作。</para>
-        /// </summary>
-        /// <param name="questId">任务编号。</param>
-        /// <param name="authoritativeState">服务端说的状态：1=已接 2=已完成 3=已交付；**0=回退成未接取**。</param>
-        /// <returns>真的改变了本地状态返回 1；已经一致、或本地没这个任务返回 0。</returns>
+        // 功能：跟随权威 —— 本地状态向服务端看齐，本类不做任何本地副作用。
+        // 入参：questId 任务编号；authoritativeState 服务端状态：1 已接、2 已完成、3 已交付、0 回退成未接取，其余值一律当 0
+        // 返回：本地状态真的变了返回 1；已经一致、或本地配置表里没有这个任务返回 0
+        // 步骤：
+        //   1) 配置表里没有就返回 0，不猜也不新建
+        //   2) 目标与当前相同直接返回 0，这就是幂等：同一份同步施加两次等于 0 次跟随
+        //   3) 目标是 0 时只改状态并注销条件登记，不动进度行，与放弃任务同源
+        //   4) 本地原本是 None 时，先把条件登记上但不许清零（进度以服务端那份为准）；登记失败就静默返回 0，不广播 Rejected —— 那也是一种副作用
+        //   5) 目标是已交付时，照 Submit 的收尾移出进行中并注销条件，但不发奖、不广播
+        // 上游：RuntimeQuestFollowSink.FollowToState（IQuestFollowSink 的实现）→ QuestStateReconciler.Apply
+        // 下游：ResolveAndRegisterConditions、UnregisterConditions、ToState
+        // 注意：它只改状态，绝不做本地动作 —— 不发奖、不触发接取或交付成功事件、不给玩家提示、也不重置进度；那些都是服务端的事，本地再做一遍就是客户端自己当权威。
+        // 注意：别拿它顶替玩家的 Accept / Submit：那两个要清零、发奖、触发事件，这个只对齐状态。
         public int FollowState(int questId, int authoritativeState)
         {
             EnsureNotDisposed();
@@ -298,7 +290,7 @@ namespace NBC.Game.Quest
 
             if (!m_quests.TryGet(questId, out quest))
             {
-                return 0;       // 本地配置表里没有 ⇒ 什么都不做（**不许猜**）
+                return 0;
             }
 
             EQuestState target = ToState(authoritativeState);
@@ -306,12 +298,11 @@ namespace NBC.Game.Quest
 
             if (target == current)
             {
-                return 0;       // ⚠️ 幂等：这一条就是"同一份同步施加两次 ⇒ 0 次跟随"的保证
+                return 0;
             }
 
             if (target == EQuestState.None)
             {
-                // 回退：**只**改状态 + 注销条件登记，**不动进度行**（与"放弃任务没做"同源，见 §28）
                 UnregisterConditions(quest);
                 m_states[questId] = EQuestState.None;
                 m_active.Remove(questId);
@@ -320,10 +311,9 @@ namespace NBC.Game.Quest
 
             if (current == EQuestState.None)
             {
-                // 从"没接过"往上跟随：条件要登记，但**绝不清零**（进度按服务端那份算）
                 if (ResolveAndRegisterConditions(quest, questId, false) != null)
                 {
-                    return 0;   // 配置有问题 ⇒ 静默不跟随（**不触发 Rejected 事件**，那也是一种副作用）
+                    return 0;
                 }
 
                 m_active.Add(questId);
@@ -333,7 +323,6 @@ namespace NBC.Game.Quest
 
             if (target == EQuestState.Submitted)
             {
-                // 与 `Submit` 的收尾一致（注销条件、移出进行中），但**不发奖、不触发事件**
                 m_active.Remove(questId);
                 UnregisterConditions(quest);
             }
@@ -341,9 +330,13 @@ namespace NBC.Game.Quest
             return 1;
         }
 
-        /// <summary>把协议里的状态数字翻成枚举（0..3；其余一律当 0 = 未接取）。</summary>
-        /// <param name="state">状态数字。</param>
-        /// <returns>状态。</returns>
+        // 功能：把协议里的状态数字翻成本地的状态。
+        // 入参：state 状态数字（1 已接、2 已完成、3 已交付，其余一律当 0）
+        // 返回：对应枚举；0 与任何未定义值都返回 None
+        // 步骤：
+        //   1) 只认 1 / 2 / 3，default 落到 None：服务端多送一个新状态时，本地宁可当没接过也不猜
+        // 上游：FollowState
+        // 下游：无
         private static EQuestState ToState(int state)
         {
             switch (state)
@@ -355,9 +348,19 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>交付一个**已完成**的任务并发奖励。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <returns>结果（失败时带一句人话原因）。</returns>
+        // 功能：交付一个已完成的任务，并把奖励交给发奖接缝。
+        // 入参：questId 任务编号（当前状态必须是 Completed）
+        // 返回：QuestActionResult；Ok 为 true 表示已交付且奖励已发出，失败时 Reason 是一句人话
+        // 步骤：
+        //   1) 先 EnsureNotDisposed
+        //   2) 用 DescribeBlock 判是否可交付，没接、没做完、已交付各给一句对应原因
+        //   3) 再查任务配置与奖励表；奖励查不到就整体不交付，状态一个字都不动
+        //   4) 成功才注销条件、把状态改成已交付、移出进行中列表
+        //   5) 把奖励行包成中性的 QuestReward，交给 IQuestRewardSink 发下去
+        //   6) 最后广播 Quest.Submitted 与 Quest.RewardGranted
+        // 上游：BattleSession.SubmitQuest、QuestPanelModel（玩家点交付）
+        // 下游：UnregisterConditions、IQuestRewardSink.Grant、EventCenter
+        // 注意：先查奖励、再改状态 —— 否则奖励缺行时玩家会处在任务没了、奖励也没到的状态，这是最气人的一种 bug。
         public QuestActionResult Submit(int questId)
         {
             EnsureNotDisposed();
@@ -379,15 +382,12 @@ namespace NBC.Game.Quest
 
             Config_Reward rewardRow;
 
-            // ⚠️ **先查奖励表，再改状态**：查不到就整体不交付，
-            //    否则玩家会处于"任务没了、奖励也没到"的状态（最气人的一种 bug）。
             if (!m_rewards.TryGet(quest.rewardId, out rewardRow))
             {
                 return Reject(questId, "任务 " + questId + " 的奖励 " + quest.rewardId +
                                        " 在 Reward 表里找不到，所以**没有交付**（避免\"任务没了奖励也没到\"）。");
             }
 
-            // -------- 注销条件、改状态、发奖 --------
             UnregisterConditions(quest);
 
             m_states[questId] = EQuestState.Submitted;
@@ -405,9 +405,17 @@ namespace NBC.Game.Quest
             return QuestActionResult.Success();
         }
 
-        /// <summary>放弃一个任务（**演示/重跑用**：注销条件、状态回到 None）。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <returns>结果。</returns>
+        /// <summary>放弃一个任务：注销条件、状态回到 None；已交付的不能放弃。</summary>
+        // 功能：把手上一个任务丢掉，注销条件并广播放弃，主要给演示与重跑用。
+        // 入参：questId 任务编号（不能是没接过或已交付）
+        // 返回：QuestActionResult；Ok 为 true 表示状态已回到 None
+        // 步骤：
+        //   1) 先 EnsureNotDisposed
+        //   2) 没接过、已交付都拒绝：前者没什么可放弃，后者奖励已经发出去、不能靠放弃收回
+        //   3) 配置行还在就注销条件登记，配置被别人删掉时也不至于崩
+        //   4) 状态回 None、移出进行中列表，广播 Quest.Abandoned
+        // 上游：Boot 的 M2DemoBehaviour（演示重跑）、EditMode 用例
+        // 下游：UnregisterConditions、Reject、EventCenter
         public QuestActionResult Abandon(int questId)
         {
             EnsureNotDisposed();
@@ -438,14 +446,16 @@ namespace NBC.Game.Quest
             return QuestActionResult.Success();
         }
 
-        // ====================================================================
-        //  追踪视图（给 UI）
-        // ====================================================================
 
-        /// <summary>取一个任务的追踪视图。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <param name="tracking">视图（**每次调用新建一个对象**，所以别在每帧里调）。</param>
-        /// <returns>配置表里有这个任务就返回 true（**没接过的任务也能取到**，方便"可接列表"）。</returns>
+        // 功能：取一个任务的追踪视图，供任务面板与调试窗口显示。
+        // 入参：questId 任务编号；tracking 输出视图（配置表里没有这个任务时为 null）
+        // 返回：配置表里有这个任务返回 true；没接过的任务也能取到，方便可接列表
+        // 步骤：
+        //   1) 查配置行，查不到就把 tracking 置 null 并返回 false
+        //   2) 查到就现造一个视图，所以别在每帧里调它
+        // 上游：EditMode 用例按编号取单个视图；任务面板走 CopyActiveTrackings 批量取
+        // 下游：BuildTracking
+        // 注意：每次调用都新建对象，做成 Try 只是为了不靠异常表达「查不到」。
         public bool TryGetTracking(int questId, out QuestTracking tracking)
         {
             Config_Quest quest;
@@ -460,8 +470,16 @@ namespace NBC.Game.Quest
             return true;
         }
 
-        /// <summary>把所有**已接取**任务的追踪视图复制进一个列表。</summary>
-        /// <param name="buffer">目标列表（会先 Clear；里面的对象是新建的）。</param>
+        /// <summary>把已接取任务的追踪视图按接取顺序填进列表；每次调用都新建视图对象。</summary>
+        // 功能：一次性把手上的任务都变成可显示的追踪视图。
+        // 入参：buffer 目标列表（不能为 null；会先 Clear，里面的视图是新造的）
+        // 返回：无（结果都写进 buffer）
+        // 步骤：
+        //   1) 查空并 Clear，列表由调用方复用，每次刷新不产生新的列表分配
+        //   2) 按 m_active 的顺序取配置行，配置缺失的任务跳过 —— 任务被删了也不让面板崩
+        //   3) 每个都现造视图加进 buffer
+        // 上游：QuestPanelModel 刷新追踪区、Boot 的 M2DemoBehaviour 打印、EditMode 用例
+        // 下游：BuildTracking
         public void CopyActiveTrackings(List<QuestTracking> buffer)
         {
             if (buffer == null)
@@ -482,8 +500,16 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>把"已接取任务"的追踪信息拼成一段文本（控制台/调试面板用）。</summary>
-        /// <returns>多行文本。</returns>
+        /// <summary>把已接取任务拼成一段多行文本，控制台与调试面板直接打印。</summary>
+        // 功能：给调试输出一条现成的任务总览，省得调用方自己拼。
+        // 入参：无
+        // 返回：多行文本；一个任务都没有时返回「当前没有已接取的任务。」
+        // 步骤：
+        //   1) 先用一个临时列表取全部追踪视图
+        //   2) 空就直接给一句人话，避免只打印一个标题
+        //   3) 用 StringBuilder 拼标题与每一行，行数就是手上的任务数
+        // 上游：Editor 的 NetDebugWindow、BattleSession 的调试输出
+        // 下游：CopyActiveTrackings
         public string DescribeActive()
         {
             List<QuestTracking> trackings = new List<QuestTracking>();
@@ -505,38 +531,47 @@ namespace NBC.Game.Quest
             return builder.ToString();
         }
 
-        // ====================================================================
-        //  条件系统的通知
-        // ====================================================================
 
-        /// <summary>某条条件的进度变了（**可能是成就的**，认不出来就忽略）。</summary>
-        /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">新进度。</param>
+        // 功能：条件进度一变就转成任务侧的 Quest.ProgressChanged 广播。
+        // 入参：conditionKey 条件编号；progress 新进度（本方法不读它，只负责转发）
+        // 返回：无
+        // 步骤：
+        //   1) 查条件归属，不是本类登记的（例如成就的）就安静返回，不抛未知条件异常
+        //   2) 认得出的才按任务编号广播，界面据此重画进度
+        // 上游：ConditionTracker.ProgressChanged
+        // 下游：EventCenter（Quest.ProgressChanged）
         private void OnConditionProgressChanged(int conditionKey, ConditionProgress progress)
         {
             int questId;
 
             if (!m_ownerOfCondition.TryGetValue(conditionKey, out questId))
             {
-                return;   // 不是本类管的（例如成就的条件）—— 安静忽略
+                return;
             }
 
             EventCenter.Instance.Trigger(QuestEvents.ProgressChanged, questId);
         }
 
-        /// <summary>某条条件**达成**了：若该任务所有条件都满了，就把它标成"可交付"。</summary>
-        /// <param name="conditionKey">条件编号。</param>
-        /// <param name="progress">达成时的进度。</param>
+        // 功能：某个条件达成后检查该任务是否全部达成，是就把状态推到可交付并广播。
+        // 入参：conditionKey 条件编号；progress 达成时的进度（本方法不读它，判定以 ConditionTracker.IsMet 为准）
+        // 返回：无
+        // 步骤：
+        //   1) 查条件归属，不是本类的就安静忽略 —— 成就的条件编号也会走到这里
+        //   2) 状态不是已接取就直接返回：注销与通知之间可能有窗口，已交付或已放弃的不能再被改
+        //   3) 配置行缺失、或不是所有条件都达成，都直接返回
+        //   4) 全部达成才把状态改成可交付，并广播 Quest.Completed
+        // 上游：ConditionTracker.ConditionMet
+        // 下游：AreAllConditionsMet、EventCenter（Quest.Completed）
+        // 注意：这里只广播可以交付了，不自动发奖 —— 发奖是玩家去交任务的动作，自动发会让任务这个玩法退化成计数器。
         private void OnConditionMet(int conditionKey, ConditionProgress progress)
         {
             int questId;
 
             if (!m_ownerOfCondition.TryGetValue(conditionKey, out questId))
             {
-                return;   // 不是本类管的（例如成就的条件）—— 安静忽略
+                return;
             }
 
-            // 已经交付/放弃了就别再改状态（注销与通知之间可能有窗口）
             if (StateOf(questId) != EQuestState.Accepted)
             {
                 return;
@@ -551,18 +586,18 @@ namespace NBC.Game.Quest
 
             m_states[questId] = EQuestState.Completed;
 
-            // ⚠️ 这里只广播"可以交付了"，**不自动发奖**：
-            //    发奖是玩家的动作（去交任务），自动发会让"任务"这个玩法退化成"计数器"。
             EventCenter.Instance.Trigger(QuestEvents.Completed, questId);
         }
 
-        // ====================================================================
-        //  内部
-        // ====================================================================
 
-        /// <summary>这个任务的全部条件都达成了吗。</summary>
-        /// <param name="quest">任务配置行。</param>
-        /// <returns>都达成了返回 true（**条件为空时返回 false**：没有条件的任务不算完成）。</returns>
+        // 功能：判断一个任务的条件是否全部达成。
+        // 入参：quest 任务配置行
+        // 返回：全部达成返回 true；条件数组为 null 或空时返回 false（没有条件的任务不算完成）
+        // 步骤：
+        //   1) 空条件先返回 false，与 ResolveAndRegisterConditions 的拒绝口径保持一致
+        //   2) 逐个问 ConditionTracker.IsMet，遇到一个没达成就提前返回
+        // 上游：OnConditionMet
+        // 下游：ConditionTracker.IsMet
         private bool AreAllConditionsMet(Config_Quest quest)
         {
             int[] conditionIds = quest.conditionIds;
@@ -583,8 +618,14 @@ namespace NBC.Game.Quest
             return true;
         }
 
-        /// <summary>注销一个任务的全部条件（**只注销登记，不动进度**）。</summary>
-        /// <param name="quest">任务配置行。</param>
+        // 功能：注销一个任务的全部条件登记。
+        // 入参：quest 任务配置行
+        // 返回：无
+        // 步骤：
+        //   1) 条件数组为 null 就返回，没登记过也就没什么可注销
+        //   2) 逐条 Unregister 并删掉归属记录；只动登记，不动进度行
+        // 上游：Submit、Abandon、FollowState（回退与已交付两条分支）
+        // 下游：ConditionTracker.Unregister
         private void UnregisterConditions(Config_Quest quest)
         {
             int[] conditionIds = quest.conditionIds;
@@ -601,9 +642,17 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>造一个追踪视图。</summary>
-        /// <param name="quest">任务配置行。</param>
-        /// <returns>视图。</returns>
+        // 功能：把一个任务配置行连同当前进度装成一个追踪视图。
+        // 入参：quest 任务配置行
+        // 返回：新造的 QuestTracking；条件行按配置顺序排列，缺进度时按 0 兜底
+        // 步骤：
+        //   1) 先把编号、名字、描述与当前状态填进视图
+        //   2) 没有条件就直接返回，免得下面的循环空转
+        //   3) 逐条查条件表并建 ConditionDef；配置有错时照样给一行，描述写成条件编号配置有错，而不是静默少一行
+        //   4) 取不到进度就按 0 / 需求数兜底，保证界面有东西可显示
+        //   5) 把描述、当前、需求、是否达成填进条件行
+        // 上游：TryGetTracking、CopyActiveTrackings
+        // 下游：ConditionTracker.TryGetProgress、ConditionDef.TryCreate / Describe
         private QuestTracking BuildTracking(Config_Quest quest)
         {
             QuestTracking tracking = new QuestTracking();
@@ -627,7 +676,6 @@ namespace NBC.Game.Quest
                 if (!m_conditions.TryGet(conditionIds[i], out row) ||
                     !ConditionDef.TryCreate(row.eventType, row.targetId, row.requiredCount, out def, out _))
                 {
-                    // 配置有错时**照样给出这一行**（描述写清问题），而不是静默少一行
                     QuestConditionLine broken = new QuestConditionLine();
                     broken.ConditionId = conditionIds[i];
                     broken.Description = "⚠️ 条件 " + conditionIds[i] + " 配置有错";
@@ -654,13 +702,16 @@ namespace NBC.Game.Quest
             return tracking;
         }
 
-        /// <summary>
-        /// 状态不对时给一句人话原因（**说清"现在是什么状态"**，而不只是"不能这么做"）。
-        /// </summary>
-        /// <param name="questId">任务编号。</param>
-        /// <param name="actual">当前状态。</param>
-        /// <param name="expected">需要的状态。</param>
-        /// <returns>可以继续时返回 null；否则返回原因。</returns>
+        // 功能：状态不对时给出「现在是什么状态」的一句人话，而不只是「不能这么做」。
+        // 入参：questId 任务编号（拼文案用）；actual 当前状态；expected 需要的状态（None 表示接取，Completed 表示交付）
+        // 返回：状态已经对上返回 null；否则返回一句给玩家看的原因
+        // 步骤：
+        //   1) actual 等于 expected 就放行，返回 null
+        //   2) expected 为 None 时，按已接、可交付、已交付分别给话
+        //   3) 剩下的只可能是要交付，按没接、没做完、已交付分别给话
+        //   4) 未定义状态给一句带状态名的兜底，不至于返回空原因
+        // 上游：Accept、Submit
+        // 下游：无
         private static string DescribeBlock(int questId, EQuestState actual, EQuestState expected)
         {
             if (actual == expected)
@@ -683,7 +734,6 @@ namespace NBC.Game.Quest
                 }
             }
 
-            // expected == Completed
             switch (actual)
             {
                 case EQuestState.None:
@@ -697,19 +747,27 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>拒绝一次操作：广播原因（让 UI 能显示）+ 返回带原因的失败结果。</summary>
-        /// <param name="questId">任务编号。</param>
-        /// <param name="reason">原因。</param>
-        /// <returns>失败结果。</returns>
+        // 功能：拒绝一次操作：广播原因并返回带原因的失败结果。
+        // 入参：questId 任务编号；reason 原因（一句给玩家看的中文）
+        // 返回：Ok 为 false、Reason 为 reason 的结果
+        // 步骤：
+        //   1) 先广播 Quest.Rejected，再返回失败结果
+        // 上游：Accept、Submit、Abandon 的业务拒绝分支
+        // 下游：EventCenter、QuestActionResult.Fail
+        // 注意：原因不能只留在返回值里 —— 调用方很可能是界面，它多半只判了 Ok 就完事；广播出去谁都看得见。
         private static QuestActionResult Reject(int questId, string reason)
         {
-            // ⚠️ 被拒绝的原因**不能只留在返回值里**：调用方很可能是 UI，
-            //    它多半只判了 Ok/失败就完事。广播出去，谁都看得见。
             EventCenter.Instance.Trigger(QuestEvents.Rejected, new QuestRejectedPayload(questId, reason));
             return QuestActionResult.Fail(reason);
         }
 
-        /// <summary>Dispose 之后不许再用（防止"对象已经拆了还在被调"）。</summary>
+        // 功能：确认对象还没被 Dispose，拆掉的对象不许再被调用。
+        // 入参：无
+        // 返回：无；已 Dispose 时抛 ObjectDisposedException
+        // 步骤：
+        //   1) 只看 m_disposed 一个标志，命中就抛，异常里带类型名与一句人话
+        // 上游：Accept、Submit、Abandon、FollowState 的入口
+        // 下游：无
         private void EnsureNotDisposed()
         {
             if (m_disposed)
@@ -719,7 +777,16 @@ namespace NBC.Game.Quest
             }
         }
 
-        /// <summary>退订条件系统的事件、注销全部条件（可以重复调用）。</summary>
+        // 功能：退订条件系统的两个事件，并清空本地的归属表与已接列表。
+        // 入参：无
+        // 返回：无；重复调用必须无害
+        // 步骤：
+        //   1) 已经 Dispose 过就直接返回
+        //   2) 先置标志再退订，避免退订过程中被重入
+        //   3) 退订 ProgressChanged 与 ConditionMet，最后清空归属表与已接列表
+        // 上游：BattleSession.Dispose、EditMode 用例
+        // 下游：ConditionTracker 的事件
+        // 注意：这里不逐条注销条件，注销只发生在状态迁移处（Submit、Abandon、FollowState），别把清理条件寄托在 Dispose 上。
         public void Dispose()
         {
             if (m_disposed)
