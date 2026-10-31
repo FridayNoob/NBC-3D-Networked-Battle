@@ -1,42 +1,22 @@
-// ============================================================================
-//  NBC.Framework.Perf · 性能采样器（把计数器组装成一份快照）
-//  对应需求：FW-M12（FPS / DrawCall / SetPass / Tris / GC Alloc / 内存）
-//
-//  ---------------------------------------------------------------------------
-//  职责：**只负责"组装"，不负责"从哪读"**
-//  ---------------------------------------------------------------------------
-//      PerfSampler.Tick(deltaSeconds)
-//          ├── 把这一帧的耗时喂给 FpsCounter（纯逻辑，可测）
-//          └── 向 IPerfCounterSource 要各个计数器（接缝，可注入）
-//
-//  于是 EditMode 里能测的东西很多：帧率窗口、NaN 的传播、
-//  "读不到"时的行为、"总共推进了多少帧"……
-//  真正依赖 Unity Profiler 的只有 `ProfilerRecorderCounterSource` 那一个文件。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 读不到就填 NaN，绝不填 0
-//  ---------------------------------------------------------------------------
-//  发布版没有渲染统计时，`TryRead` 会返回 false。
-//  这时候填 0 的话看板会显示"DrawCall = 0" —— **一个看起来正常的假数字**。
-//  所以约定 NaN，显示层渲染成 `N/A`。
-//
-//  同时记一个 `ReadFailureCount`：看板显示 N/A 时，你能分清
-//  "**从来没读到过**"（计数器不可用）和"**偶尔读不到**"（偶发抖动）。
-// ============================================================================
+// 这个文件里有：
+//   PerfSampler（类）：性能采样器，每帧把帧耗时与六项计数器组装成一份快照
+// 注意：读不到就填 NaN，绝不填 0 —— 0 会显示成看起来正常的假数字，显示层要把 NaN 渲染成 N/A。
 
 using System;
 
 namespace NBC.Framework.Perf
 {
-    /// <summary>
-    /// 性能采样器：每帧产出一份 <see cref="PerfSnapshot"/>。
-    /// </summary>
+    // 主要功能：每帧收一次帧耗时、读一遍六项性能计数器，组装成不可变快照并维护累计统计。
+    // 主要数据成员：m_fps（滑动窗口帧率统计）、m_values（六项计数器最近读数，读不到是 NaN）、TickCount（累计帧数）、ReadFailureCount（读失败次数）。
+    // 主要外部方法：Tick / Reset / Dispose，只读属性 Source / Current / Fps / TickCount / ReadFailureCount。
+    // 谁在用它：NBC.Framework.UI 的 PerfHudPanel 每帧调 Tick 并读 Current 显示；EditMode 测试注入假计数器源验证读数与失败计数。
+    /// <summary>性能采样器：每帧读六项计数器配合帧耗时产出一份快照，读不到填 NaN 并累计失败次数。</summary>
     public sealed class PerfSampler : IDisposable
     {
-        /// <summary>默认窗口帧数。</summary>
+        /// <summary>默认帧率窗口帧数，60 帧（60 FPS 下约 1 秒）；也是 FpsCounter 的默认窗口。</summary>
         public const int DefaultWindowFrames = FpsCounter.DefaultWindowFrames;
 
-        /// <summary>计数器总数（用于遍历）。</summary>
+        // 六项计数器的遍历表，顺序与 PerfCounterId 的枚举值 0..5 一一对应，同时是 m_values 的下标，顺序不能改
         private static readonly PerfCounterId[] AllCounters = new PerfCounterId[]
         {
             PerfCounterId.DrawCalls,
@@ -47,17 +27,31 @@ namespace NBC.Framework.Perf
             PerfCounterId.MonoUsedMemory
         };
 
+        // 计数器来源，构造时注入；本类只在构造末尾 Start、在 Dispose 里 Stop
         private readonly IPerfCounterSource m_source;
+        // 帧率统计，窗口帧数构造后固定；进参按秒，对外给帧/秒与毫秒
         private readonly FpsCounter m_fps;
 
-        /// <summary>各计数器当前值（读不到的是 NaN）。</summary>
+        // 六项计数器最近一次读到的值，下标同 AllCounters；读不到是 NaN（PerfSnapshot.Unavailable），单位随项是个/帧或字节
         private readonly float[] m_values = new float[AllCounters.Length];
 
+        // 是否已 Dispose；true 之后再 Tick 抛异常，再 Dispose 直接返回
         private bool m_disposed;
 
-        /// <summary>构造。</summary>
-        /// <param name="source">计数器来源。</param>
-        /// <param name="fpsWindowFrames">FPS 窗口帧数。</param>
+        // 功能：接上计数器来源、按窗口帧数建帧率统计，把六项值先填成 NaN，最后启动采集。
+        // 入参：source 计数器来源，null 直接抛 ArgumentNullException；fpsWindowFrames 帧率窗口帧数，默认 60 帧，小于 1 时 FpsCounter 内部退回默认值
+        // 返回：无（构造函数）
+        // 步骤：
+        //   1) 先校验 source 非 null，在这里炸掉之后每帧读值就不用反复判空
+        //   2) 用 fpsWindowFrames 建 FpsCounter，窗口长度此时固定
+        //   3) 六项值先填 Unavailable（NaN），避免第一帧之前把 0 当成真实读数
+        //   4) Current 置空快照，末尾再调 Start —— 部件都就绪后才开始采集
+        // 上游：PerfHudPanel.OnInit（播放模式下 new ProfilerRecorderCounterSource）、EditMode 测试注入假源
+        // 下游：FpsCounter 构造函数、IPerfCounterSource.Start
+        // 注意：窗口帧数决定 FPS 的平滑程度与覆盖时长（默认 60 帧，60 FPS 下约 1 秒）：太小 FPS 乱跳，太大把卡顿抹平。
+        /// <summary>接上来源、按窗口帧数建帧率统计，填好初始 NaN 后启动采集。</summary>
+        /// <param name="source">计数器来源，null 抛 ArgumentNullException。</param>
+        /// <param name="fpsWindowFrames">帧率窗口帧数，默认 60 帧；小于 1 时退回默认值。</param>
         public PerfSampler(IPerfCounterSource source, int fpsWindowFrames = DefaultWindowFrames)
         {
             if (source == null)
@@ -77,34 +71,47 @@ namespace NBC.Framework.Perf
             m_source.Start();
         }
 
-        /// <summary>计数器的来源。</summary>
+        // 功能：交出构造时注入的计数器来源，外部要直接读某个计数器时用。
+        /// <summary>构造时注入的计数器来源；本类在 Dispose 时对它调 Stop。</summary>
         public IPerfCounterSource Source
         {
             get { return m_source; }
         }
 
-        /// <summary>最新的一份快照。</summary>
+        // 功能：取最新一份快照，显示层每帧读它。
+        // 返回：最近一次 Tick 产出的不可变快照；构造后与 Reset 后是 PerfSnapshot.Empty
+        /// <summary>最新一份快照；还没 Tick 过时是空快照。</summary>
         public PerfSnapshot Current { get; private set; }
 
-        /// <summary>累计推进了多少帧。</summary>
+        // 功能：取累计推进的帧数，从构造或 Reset 起算。
+        // 返回：累计帧数，帧，≥ 0；每次 Tick 加一，Reset 归零
+        /// <summary>累计推进的帧数，帧；Reset 归零。</summary>
         public long TickCount { get; private set; }
 
-        /// <summary>
-        /// **读不到**计数器的累计次数。
-        /// <para>用来区分"计数器根本不可用"（次数 ≈ 帧数 × 6）和"偶尔读不到"。</para>
-        /// </summary>
+        // 功能：累计读不到计数器的次数，用来区分计数器根本不可用与偶发抖动。
+        // 返回：读失败次数，次，≥ 0；每帧最多加六次（六个计数器各一次），Reset 归零
+        // 注意：次数约等于帧数 × 6 说明计数器根本不可用；只是偶尔增加说明偶发抖动。
+        /// <summary>读不到计数器的累计次数，次；约等于帧数 × 6 说明计数器不可用，偶尔增加说明偶发抖动。</summary>
         public long ReadFailureCount { get; private set; }
 
-        /// <summary>帧率计数（需要更细的统计时可以直接用它）。</summary>
+        // 功能：交出内部帧率统计，需要窗口样本数、最差帧耗时等细节时直接用它。
+        /// <summary>帧率统计；需要最差帧耗时、窗口样本数等细节时直接读它。</summary>
         public FpsCounter Fps
         {
             get { return m_fps; }
         }
 
-        /// <summary>
-        /// 推进一帧。
-        /// </summary>
-        /// <param name="deltaSeconds">这一帧花了多少秒。</param>
+        // 功能：推进一帧：把本帧耗时喂给帧率窗口，帧号加一，再重新组装一份快照。
+        // 入参：deltaSeconds 本帧耗时，秒；非正数被丢弃，超过 1 秒按 1 秒记
+        // 返回：无
+        // 步骤：
+        //   1) 先查是否已 Dispose，已释放就抛异常 —— 别让 Tick 在释放后静默空转
+        //   2) 耗时记进帧率窗口；FPS 要每一帧都喂，漏一帧就偏
+        //   3) 帧号加一，再读一遍六项计数器组装快照
+        // 上游：PerfHudPanel.Tick（每帧回调，传 unscaledDeltaTime）、EditMode 测试直接调
+        // 下游：ThrowIfDisposed、FpsCounter.AddFrame、Build
+        /// <summary>推进一帧：记一帧耗时、帧号加一，并刷新 Current 快照。</summary>
+        /// <param name="deltaSeconds">本帧耗时，秒；非正数丢弃，超过 1 秒按 1 秒记。</param>
         public void Tick(float deltaSeconds)
         {
             ThrowIfDisposed();
@@ -114,7 +121,18 @@ namespace NBC.Framework.Perf
             Current = Build();
         }
 
-        /// <summary>清空统计（帧号也归零）。</summary>
+        // 功能：清空统计：帧率窗口、帧号、读失败次数与六项值全部回到初始状态。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 清空帧率窗口，让它回到预热状态
+        //   2) 帧号与读失败次数归零，从 0 重新计数
+        //   3) 六项值重新填 NaN，避免上一轮的值留在快照里
+        //   4) Current 置空快照，下一帧 Tick 之前读到的是空值
+        // 上游：需要重开统计的调用方与 EditMode 测试
+        // 下游：FpsCounter.Reset
+        // 注意：Reset 不 Stop 也不 Start 计数器来源 —— 底层采集一直在跑，这里只清统计。
+        /// <summary>清空统计：帧率窗口、帧号、读失败次数与六项值都回到初始状态。</summary>
         public void Reset()
         {
             m_fps.Reset();
@@ -129,7 +147,16 @@ namespace NBC.Framework.Perf
             Current = PerfSnapshot.Empty;
         }
 
-        /// <summary>停掉底层采集。</summary>
+        // 功能：停掉底层采集并标记已释放，重复调用直接返回。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 已释放就直接返回，保证幂等
+        //   2) 先置 m_disposed 再调 Stop：之后 Tick 抛异常，重复 Dispose 也不会再 Stop 一次
+        // 上游：PerfHudPanel.ReleaseSampler（OnDestroy 或测试显式调用）、EditMode 测试的 finally
+        // 下游：IPerfCounterSource.Stop
+        // 注意：调用方必须先停掉每帧驱动再 Dispose —— 反过来的话释放后仍有回调进来，Tick 会抛 ObjectDisposedException。
+        /// <summary>停掉底层采集；可重复调用，之后 Tick 会抛 ObjectDisposedException。</summary>
         public void Dispose()
         {
             if (m_disposed)
@@ -141,12 +168,18 @@ namespace NBC.Framework.Perf
             m_source.Stop();
         }
 
-        // ====================================================================
-        //  内部
-        // ====================================================================
+        // 内部
 
-        /// <summary>读一遍所有计数器，组装成快照。</summary>
-        /// <returns>快照。</returns>
+        // 功能：读一遍六个计数器，读到的更新缓存，读不到就填 NaN 并累加失败次数，最后把缓存拼成快照。
+        // 入参：无（计数器来源与缓存都在字段上）
+        // 返回：本帧的快照；六项中读不到的是 NaN，FPS 与平均帧耗时来自帧率窗口，帧号取 TickCount
+        // 步骤：
+        //   1) 按 AllCounters 的顺序逐项 TryRead，成功就存进 m_values
+        //   2) 失败存 NaN 并给 ReadFailureCount 加一 —— 绝不填 0 冒充
+        //   3) 最后按固定顺序把帧率、平均帧耗时与六项值装进快照，帧号用 TickCount
+        // 上游：Tick 每帧调一次
+        // 下游：IPerfCounterSource.TryRead、PerfSnapshot 构造函数
+        // 注意：发布版（非开发版）大部分渲染统计不可用、EditMode 下 Profiler 也没在跑，读不到是正常状态而不是错误；这时对应项是 NaN，看板显示 N/A。
         private PerfSnapshot Build()
         {
             for (int i = 0; i < AllCounters.Length; i++)
@@ -176,7 +209,13 @@ namespace NBC.Framework.Perf
                 TickCount);
         }
 
-        /// <summary>销毁之后再用就报错（别让它静默地什么都不做）。</summary>
+        // 功能：已 Dispose 还来 Tick 时报错，别让它静默地什么都不做。
+        // 入参：无
+        // 返回：无
+        // 步骤：只查 m_disposed，true 就抛 ObjectDisposedException 并把类型名写进消息，方便定位是谁在释放后还在用
+        // 上游：Tick
+        // 下游：无
+        // 注意：故意抛异常而不是静默返回 —— 静默会让释放后还在每帧调用的地方永远发现不了自己的生命周期用错了。
         private void ThrowIfDisposed()
         {
             if (m_disposed)
