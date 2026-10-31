@@ -1,39 +1,9 @@
-// ============================================================================
-//  ConfigImporter —— 把 ConfigKit 生成的 .tsv 灌进 ScriptableObject 资产
-//  项目：3D联网战斗Demo   对应：需求 8（Excel → SO）、Docs\17-配置表规范.md §九
+// 这个文件里有：
+//   ConfigImporter（静态类）：把 ConfigKit.Cli 生成的 .tsv 按表名反射灌进对应的 SO 资产，另提供只报告模式逐字段比对现有资产
 //
-//  ---------------------------------------------------------------------------
-//  它在整条流水线里的位置
-//  ---------------------------------------------------------------------------
-//      Excel(.xlsx) ──ConfigKit.Cli──► Config_<表>.cs（类型）
-//                                      <表>Config.cs（SO 类型 + LoadFromTsv）
-//                                      <表>.tsv      （数据）   ← ★ 本脚本读它
-//
-//  ⚠️ **为什么读 .tsv 而不是 .json**：见 Tools\ConfigKit\README.md §七。
-//     一句话：Unity 的序列化器不支持可空值类型、`JsonUtility` 里枚举按整数走，
-//     而这两条在本机无法实测；TSV + 生成的显式加载器把这两个问题都绕开了，
-//     而且不需要任何解析库。JSON 那份产物是给**外部工具/人**看的。
-//
-//  ---------------------------------------------------------------------------
-//  为什么这里必须用反射
-//  ---------------------------------------------------------------------------
-//  `<表>Config` 是**生成出来的**类型 —— 本脚本编译时它可能还不存在，
-//  所以只能按名字找。这不是偷懒，是"生成物↔消费者"必须解耦的必然结果
-//  （ConfigKit.Cli 生成 → Unity 编译 → 本脚本按名字装配）。
-//
-//  ⚠️ 反射只在**编辑器**里用，不影响打包产物（Editor 脚本不进包），
-//     所以不存在 IL2CPP/AOT 那类问题。
-//
-//  ---------------------------------------------------------------------------
-//  用法（菜单）
-//  ---------------------------------------------------------------------------
-//      Tools/NBC/配置表/导入 TSV → ScriptableObject
-//      Tools/NBC/配置表/检查（只报告，不写资产）
-//
-//  ⚠️ 前提：先在命令行跑过 ConfigKit.Cli（生成 .cs 与 .tsv），
-//     并且 Unity 已经把这些 .cs 编译过一遍 —— 否则本脚本找不到类型，
-//     它会**明确告诉你去跑哪条命令**，而不是静默什么都不做。
-// ============================================================================
+// 注意：生成的 SO 类型（表名 + Config）在本脚本编译时可能还不存在，所以只能按类型名反射装配；反射只在编辑器里用，Editor 脚本不进包，没有 IL2CPP/AOT 那类问题。
+// 注意：选 .tsv 而不是 .json，是因为 Unity 序列化不支持可空值类型、JsonUtility 把枚举按整数走；TSV 配生成的显式加载器把这两个问题都绕开，还不用引解析库（JSON 那份是给外部工具看的，详见 Tools\ConfigKit\README.md）。
+// 注意：点菜单前必须先在命令行跑过 ConfigKit.Cli、并等 Unity 把生成的 .cs 编译完，否则找不到类型；找不到时报告会写清缺哪一步，不是静默跳过。
 
 using System;
 using System.Collections.Generic;
@@ -45,38 +15,49 @@ using UnityEngine;
 
 namespace NBC.EditorTools
 {
-    /// <summary>把 ConfigKit 生成的 .tsv 导入成 &lt;表&gt;Config 资产。</summary>
+    // 主要功能：把生成目录里的每张 .tsv 反射灌进同名 SO 资产，并能在只报告模式下逐字段比对现有资产与源表。
+    // 主要数据成员：TsvDirectory（源 .tsv 目录）、AssetDirectory（资产目录）、LoadMethodName 与 TypeSuffix（生成物契约：加载方法名、类型与资产名后缀）。
+    // 主要外部方法：无（两个菜单入口都是 private），对外只公开两个目录常量。
+    // 谁在用它：Unity 菜单 Tools/NBC/配置表/导入 TSV → ScriptableObject 与检查（只报告）；同程序集的 ConfigStalenessCheck、EditorConfigSource 复用两个目录常量。
     public static class ConfigImporter
     {
-        /// <summary>生成的 .tsv 所在目录（与 ConfigKit.Cli 的 out 参数默认值一致）。</summary>
+        // 生成的 .tsv 目录，工程相对路径；与 ConfigKit.Cli 的 --out 默认值一致，改这里要同步改命令行
         public const string TsvDirectory = "Assets/_Project/Game/Config/Generated";
 
-        /// <summary>生成出来的 SO 资产放在哪。</summary>
+        // SO 资产目录，工程相对路径；导入器写、ConfigStalenessCheck 与 EditorConfigSource 读，只留这一个真值
         public const string AssetDirectory = "Assets/_Project/Configs";
 
+        // 生成的 SO 类型上约定的加载方法名，同时是「可导入」的判据；写错会一张表都找不到
         private const string LoadMethodName = "LoadFromTsv";
+        // 表名拼成类型名与资产名的后缀（Hero 加 Config 得 HeroConfig），必须与生成器一致
         private const string TypeSuffix = "Config";
 
-        /// <summary>导入全部表（写资产）。</summary>
+        // 功能：菜单入口，扫一遍全部表并真的写资产。
         [MenuItem("Tools/NBC/配置表/导入 TSV → ScriptableObject")]
         private static void ImportAll()
         {
             Run(true);
         }
 
-        /// <summary>只检查、不写资产（先看看会动哪些文件）。</summary>
+        // 功能：菜单入口，只检查不写资产，先看会动哪些文件。
         [MenuItem("Tools/NBC/配置表/检查（只报告，不写资产）")]
         private static void CheckOnly()
         {
             Run(false);
         }
 
-        // ====================================================================
-        //  主流程
-        // ====================================================================
-
-        /// <summary>跑一遍。</summary>
-        /// <param name="write">true = 真的写资产；false = 只报告。</param>
+        // 功能：扫生成目录里的 .tsv，逐张调 ImportOne，最后把成功与失败汇总成一份报告打到 Console。
+        // 入参：write 为 true 真的写资产；false 只报告、不落盘
+        // 返回：无（结果走 Console 日志）
+        // 步骤：
+        //   1) 先把生成目录转成绝对路径，后面的读写都不依赖当前工作目录
+        //   2) 目录不存在或没有 .tsv 就直接报错或警告退出——多半是还没跑过 ConfigKit.Cli，这里必须告诉人先跑哪两条命令
+        //   3) 文件名排序后再导，报告顺序才稳定，两次运行能直接 diff
+        //   4) 写模式先建资产目录，缺目录时 CreateAsset 会失败
+        //   5) 逐张 ImportOne 并各自包 try/catch：一张表坏了不能拖停其余表，异常原因记进失败列表
+        //   6) 全部导完只 SaveAssets 加 Refresh 一次，避免每张表各触发一次全量重导入
+        // 上游：菜单 ImportAll / CheckOnly
+        // 下游：ToAbsolute、ImportOne、Render
         private static void Run(bool write)
         {
             string absolute = ToAbsolute(TsvDirectory);
@@ -135,17 +116,23 @@ namespace NBC.EditorTools
             Debug.Log(Render(done, failed, write));
         }
 
-        /// <summary>导入一张表。返回"是否真的处理了"（false = 跳过，不算失败）。</summary>
-        /// <param name="tableName">表名。</param>
-        /// <param name="tsv">tsv 文本。</param>
-        /// <param name="write">是否写资产。</param>
-        /// <returns>处理了没有。</returns>
+        // 功能：导入一张表——按表名找可导入类型，取或新建对应资产，用生成的加载器灌数据；只报告模式改为逐字段比对。
+        // 入参：tableName 表名（.tsv 文件名去掉扩展名）；tsv 文件全文；write 是否写资产
+        // 返回：true 表示这张表处理成功（只报告模式下「会新建」也算成功）；false 表示找不到类型、创建实例失败或内容不一致
+        // 步骤：
+        //   1) 先按表名拼出类型名（表名加 Config 后缀），再找可导入类型——判据里必须带上加载方法，不能只按名字找
+        //   2) 取资产；写模式下没有就 CreateInstance 加 CreateAsset，只报告模式只提示「会新建」，不在磁盘上留东西
+        //   3) 只报告模式：新建一个临时实例、用同一份 tsv 灌一遍，再与现有资产逐字段比内容，最后销毁临时实例
+        //   4) 写模式：反射调生成的加载器灌进现有资产，它按字段名对列，调换列顺序不会错位；再 SetDirty 让 Unity 真正写盘
+        // 上游：Run 逐张调用
+        // 下游：FindImportableType、GetLoadMethod、CompareRows、CountRows
+        // 注意：只报告模式过去只验证 tsv 能不能导入、从不和现有资产比，于是手改 SO 永远抓不到；而资产是后改的、比源表新，按修改时间的检查也会放过它，所以必须逐字段比内容。
+        // 注意：资产是生成物，手改会被下次导入覆盖；服务端读的是源 CSV 而不是 SO，改资产对服务端没有任何影响。
+        // 注意：这里不再判加载方法找没找到——FindImportableType 就是按它筛的，再判一次是永远走不到的分支，那种分支比没有分支更糟。
         private static bool ImportOne(string tableName, string tsv, bool write)
         {
             string soTypeName = tableName + TypeSuffix;
 
-            // ⚠️ 找类型时**必须同时要求它有 LoadFromTsv(string)** —— 见 FindImportableType 的说明：
-            //    只按"名字 + 是 ScriptableObject"找会**随机挑到同名类型**（测试里的假类型就撞过名）。
             string diagnostic;
             Type soType = FindImportableType(soTypeName, out diagnostic);
 
@@ -156,8 +143,6 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            // 这里不再判 `LoadFromTsv` 找没找到：`FindImportableType` **就是按它筛的**，
-            // 所以再判一次是**永远走不到的分支**（那种分支比没有分支更糟，见 M2-B 的教训）。
             MethodInfo load = GetLoadMethod(soType);
 
             string assetPath = AssetDirectory + "/" + soTypeName + ".asset";
@@ -186,12 +171,6 @@ namespace NBC.EditorTools
 
             if (!write)
             {
-                // ⚠️ 2026-09-26 修：只报告模式原来**只验证"TSV 能不能导入"**，从不与现有资产比对 ——
-                //    于是"手改了 SO"这类问题**永远抓不到**。负责人就撞上了：他在 Unity 的
-                //    `MonsterConfig.asset` 里把狼王血量改成 1000，测试时狼王还是 2000
-                //    （因为**服务端读的是 `Configs\Design\Monster.csv` 真源**，它看不到 SO）。
-                //    注意"比时间"也抓不到：资产是**后改**的，比源表更新，`ConfigStalenessCheck`
-                //    那类按 mtime 的检查会放过它。⇒ 必须**逐字段比内容**。
                 ScriptableObject fresh = ScriptableObject.CreateInstance(soType);
                 load.Invoke(fresh, new object[] { tsv });
 
@@ -214,7 +193,6 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            // 反射调用生成的加载器（它按**字段名**对列，所以调换列顺序不会错位）
             load.Invoke(asset, new object[] { tsv });
 
             EditorUtility.SetDirty(asset);
@@ -227,20 +205,17 @@ namespace NBC.EditorTools
             return true;
         }
 
-        // ====================================================================
-        //  查找与报告
-        // ====================================================================
-
-        /// <summary>
-        /// 逐字段比较两个资产的数据行（**只报告模式**用）。
-        /// <para>⚠️ 为什么比内容而不是比时间：资产是**生成物**，手改之后它比源表**更新** ——
-        /// 任何"比 mtime"的检查（如 `ConfigStalenessCheck`）都会放过它。
-        /// 而"改了却没生效"这类问题**不报错**，只能靠把两份内容摆在一起看。</para>
-        /// <para>用 `id` 建索引再比，所以**行顺序变了不算差异**（生成器的加表顺序可能变）。</para>
-        /// </summary>
-        /// <param name="asset">现有资产。</param>
-        /// <param name="fresh">用同一份 TSV 重新灌出来的新实例。</param>
-        /// <returns>差异（人话；空 = 一致）。</returns>
+        // 功能：把同一份 tsv 灌出来的新实例与现有资产逐字段比，产出人能看懂的差异清单。
+        // 入参：asset 现有资产；fresh 用同一份 tsv 重新灌出来的新实例
+        // 返回：差异列表，空表示一致；读不到 rows 或 id 字段时返回一条说明而不是抛异常
+        // 步骤：
+        //   1) 反射拿生成物约定的 rows 字段，拿不到先报「生成物变了」
+        //   2) 用 id 建索引再按 id 比，行顺序变了不算差异（生成器的加表顺序可能变）
+        //   3) 新表里缺的 id 记「资产缺少」，旧表里多出来的 id 记「资产多了」
+        //   4) 同 id 逐字段比，数组交给 SameFieldValue 按元素比
+        // 上游：ImportOne 的只报告模式
+        // 下游：SameFieldValue、DescribeValue
+        // 注意：必须比内容而不是比时间——资产是生成物，手改之后它比源表更新，任何按修改时间的检查都会放过它，而「改了却没生效」本身不报错，只能把两份内容摆在一起看。
         private static List<string> CompareRows(ScriptableObject asset, ScriptableObject fresh)
         {
             var diffs = new List<string>();
@@ -324,10 +299,15 @@ namespace NBC.EditorTools
             return diffs;
         }
 
-        /// <summary>两个字段值是否相同（数组按元素比 —— 生成物里有 `int[] skillIds` 这类字段）。</summary>
-        /// <param name="a">甲。</param>
-        /// <param name="b">乙。</param>
-        /// <returns>相同返回 true。</returns>
+        // 功能：比两个字段值是否相同，数组按元素逐个比。
+        // 入参：a、b 两侧字段值，可能为 null（生成物里有 int[] skillIds 这类数组字段）
+        // 返回：true 表示值相同；false 表示不同（数组长度不同或任一元素不同）
+        // 步骤：
+        //   1) 两侧都不是数组就退化成 Equals，交给类型自己的相等语义
+        //   2) 只有一侧是数组就判不同；两侧都是数组再比长度
+        //   3) 长度相同后逐元素 Equals——数组默认的引用相等在这里没用
+        // 上游：CompareRows
+        // 下游：无
         private static bool SameFieldValue(object a, object b)
         {
             var arrayA = a as Array;
@@ -354,9 +334,15 @@ namespace NBC.EditorTools
             return true;
         }
 
-        /// <summary>把字段值写成人话（数组写成 `[1,2]`；null 写成 `（null）`）。</summary>
-        /// <param name="value">值。</param>
-        /// <returns>人话。</returns>
+        // 功能：把字段值写成人话，数组写成方括号加逗号分隔，null 写成「（null）」。
+        // 入参：value 字段值，可能为 null
+        // 返回：能直接拼进差异行的文本；null 与空字符串分别可辨
+        // 步骤：
+        //   1) null 先单独返回，否则 ToString 会给出空串，和「值是空字符串」分不清
+        //   2) 不是数组直接 ToString
+        //   3) 数组逐元素拼，元素之间只加逗号不加空格，差异行才短
+        // 上游：CompareRows
+        // 下游：无
         private static string DescribeValue(object value)
         {
             if (value == null)
@@ -386,31 +372,18 @@ namespace NBC.EditorTools
             return text.Append(']').ToString();
         }
 
-        /// <summary>
-        /// 在所有已加载程序集里找**可导入**的 &lt;表&gt;Config。
-        ///
-        /// ------------------------------------------------------------------
-        /// ⚠️ 为什么"按名字找"不够（2026-09-23 真踩到，负责人点菜单报错）
-        /// ------------------------------------------------------------------
-        /// 原来的实现是"**任意程序集里第一个**同名且是 ScriptableObject 的类型"。
-        /// 工程里出现**同名类型**之后就变成了**随机挑**：
-        ///
-        ///     · `NBC.Game.Config.HeroConfig`（生成物，有 `LoadFromTsv`）
-        ///     · `NBC.Tests.EditMode.ConfigMgrTests+HeroConfig`（测试里的假类型，**没有**）
-        ///
-        /// 测试程序集在编辑器里**是加载着的**，而 `GetAssemblies()` 的顺序不保证，
-        /// 于是点导入菜单会报"H​eroConfig 上没有 LoadFromTsv(string)" ——
-        /// 报错还误导人去重跑 ConfigKit（其实生成物是好的）。
-        /// 现象很能说明问题：当时**只有 HeroConfig / SkillConfig 失败**，
-        /// 因为**只有这两个名字撞了**（其余 5 张表只有一个同名类型）。
-        ///
-        /// ✅ 改法：判据从"名字像"收紧成"**名字像 且 真的有 `LoadFromTsv(string)`**" ——
-        ///    那个方法正是导入器**需要的东西**，用它当判据既准确又不会错杀。
-        ///    若仍有多个候选，**不猜**，把候选列表报出来让人处理。
-        /// </summary>
-        /// <param name="typeName">类型名（如 `HeroConfig`）。</param>
-        /// <param name="diagnostic">找不到/有歧义时的说明（成功时为 null）。</param>
-        /// <returns>可用的类型；找不到或有歧义时返回 null。</returns>
+        // 功能：在所有已加载程序集里找表名对应的 SO 类型，且必须带加载方法；找不到或有歧义时报出诊断文案。
+        // 入参：typeName 类型名（表名加 Config 后缀）；diagnostic 找不到或歧义时的说明，成功时为 null
+        // 返回：唯一可导入的类型；0 个或多个候选时返回 null——宁可报错也不猜
+        // 步骤：
+        //   1) 遍历 AppDomain 里所有程序集（测试程序集在编辑器里同样是加载着的），记下名字对上且是 ScriptableObject 的候选
+        //   2) 再按有没有加载方法收窄成可导入候选：那个方法正是导入器需要的东西，用它当判据既准确又不会错杀
+        //   3) 只剩一个就直接用；有多个就列出全名让人处理，猜错会把数据导进错误的类型，而且看起来一切正常
+        //   4) 一个可导入的都没有时，把同名但不可导入的列出来，那才是真正的线索；连同名都没有才提示去跑 ConfigKit
+        // 上游：ImportOne
+        // 下游：GetLoadMethod、Describe
+        // 注意：只按「名字像且是 ScriptableObject」找会随机挑到同名类型——生成物在 Game 程序集里，测试的假类型撞过同一个名且没有加载方法，而 GetAssemblies 的顺序不保证；那时的报错还误导人去重跑 ConfigKit，其实生成物是好的。
+        // 注意：取类型时可能有个别类型加载失败，ReflectionTypeLoadException 里能拿到的那部分仍要用，少一个无关类型不该让整次导入失败。
         private static Type FindImportableType(string typeName, out string diagnostic)
         {
             List<Type> nameMatches = new List<Type>();
@@ -428,7 +401,6 @@ namespace NBC.EditorTools
                 }
                 catch (ReflectionTypeLoadException exception)
                 {
-                    // 部分类型加载失败时，仍把成功的那部分拿来用
                     types = exception.Types;
                 }
                 catch (Exception)
@@ -467,7 +439,6 @@ namespace NBC.EditorTools
 
             if (importable.Count > 1)
             {
-                // 有歧义就**别猜**：猜错了会把数据导进错误的类型，而且看起来一切正常
                 diagnostic =
                     "找到 " + importable.Count + " 个同名**且可导入**的类型，无法确定用哪一个：\n" +
                     Describe(importable) +
@@ -475,7 +446,6 @@ namespace NBC.EditorTools
                 return null;
             }
 
-            // 一个可导入的都没有：把"同名但不可导入"的列出来，这才是真正的线索
             if (nameMatches.Count > 0)
             {
                 diagnostic =
@@ -496,18 +466,27 @@ namespace NBC.EditorTools
             return null;
         }
 
-        /// <summary>取一个类型的 `LoadFromTsv(string)` 公开实例方法（没有就返回 null）。</summary>
-        /// <param name="type">类型。</param>
-        /// <returns>方法；没有则 null。</returns>
+        // 功能：取类型上公开的实例方法 LoadFromTsv(string)，没有就返回 null。
+        // 入参：type 待检查的类型
+        // 返回：方法信息；类型上没有这个方法时为 null，调用方据此判「不可导入」
+        // 步骤：
+        //   1) 按名字加明确的参数类型查，不靠参数个数猜，免得撞上重载
+        // 上游：ImportOne、FindImportableType
+        // 下游：无
         private static MethodInfo GetLoadMethod(Type type)
         {
             return type.GetMethod(LoadMethodName, BindingFlags.Public | BindingFlags.Instance,
                 null, new[] { typeof(string) }, null);
         }
 
-        /// <summary>把一组类型写成"全名（程序集）"的多行列表（报歧义/报线索用）。</summary>
-        /// <param name="types">类型。</param>
-        /// <returns>文本。</returns>
+        // 功能：把一组类型写成「全名（程序集）」的逐行列表，报歧义与线索时用。
+        // 入参：types 待描述的类型
+        // 返回：每行一个类型的文本，行首两个空格加圆点
+        // 步骤：
+        //   1) 逐类型拼全名
+        //   2) 再取程序集名；取不到就写问号，不能让报错本身再炸一次
+        // 上游：FindImportableType 的三条诊断分支
+        // 下游：无
         private static string Describe(List<Type> types)
         {
             StringBuilder builder = new StringBuilder();
@@ -522,7 +501,6 @@ namespace NBC.EditorTools
                 }
                 catch (Exception)
                 {
-                    // 取不到程序集名不该让报错本身炸掉
                     builder.Append("?");
                 }
 
@@ -532,9 +510,14 @@ namespace NBC.EditorTools
             return builder.ToString();
         }
 
-        /// <summary>把 "Assets/..." 换成绝对路径（Application.dataPath 去掉末尾的 /Assets）。</summary>
-        /// <param name="assetRelativePath">以 Assets/ 开头的路径。</param>
-        /// <returns>绝对路径。</returns>
+        // 功能：把以 Assets/ 开头的工程相对路径换成绝对路径。
+        // 入参：assetRelativePath 以 Assets/ 开头的工程内路径
+        // 返回：绝对路径，分隔符统一成正斜杠
+        // 步骤：
+        //   1) Application.dataPath 结尾就是 /Assets，截掉它得到工程根目录，避免依赖当前工作目录
+        //   2) 拼上相对路径再把反斜杠换成斜杠，同一路径在日志里只有一种写法
+        // 上游：Run 开头
+        // 下游：无
         private static string ToAbsolute(string assetRelativePath)
         {
             string projectRoot = Application.dataPath.Substring(
@@ -543,9 +526,14 @@ namespace NBC.EditorTools
             return Path.Combine(projectRoot, assetRelativePath).Replace('\\', '/');
         }
 
-        /// <summary>数一个 SO 资产里有多少行数据（用反射，因为它没有统一接口）。</summary>
-        /// <param name="asset">资产。</param>
-        /// <returns>行数。</returns>
+        // 功能：数一个 SO 资产里 rows 有多少条。
+        // 入参：asset 资产
+        // 返回：行数；没有 rows 字段或它不是集合时返回 0
+        // 步骤：
+        //   1) 生成物没有统一接口，只能反射取 rows
+        //   2) 取不到就按 0 算——这行日志只是提示，不该因为数不出来就让整张表失败
+        // 上游：ImportOne 新建资产后的日志
+        // 下游：无
         private static int CountRows(ScriptableObject asset)
         {
             FieldInfo rows = asset.GetType().GetField("rows", BindingFlags.Public | BindingFlags.Instance);
@@ -559,20 +547,28 @@ namespace NBC.EditorTools
             return collection == null ? 0 : collection.Count;
         }
 
-        /// <summary>把反射调用抛出的包装异常剥开（否则报错信息是 "Exception has been thrown by the target..."）。</summary>
-        /// <param name="exception">异常。</param>
-        /// <returns>里面那个。</returns>
+        // 功能：剥掉反射调用包在外面的 TargetInvocationException，只留真正的原因。
+        // 入参：exception 捕获到的异常
+        // 返回：包装层的内部异常；不是包装异常或没有内层时原样返回
+        // 步骤：
+        //   1) 只认 TargetInvocationException 这一层，也只剥一层——反射调用只会套一层，内层异常自带堆栈
+        // 上游：Run 的 catch
+        // 下游：无
         private static Exception Unwrap(Exception exception)
         {
             TargetInvocationException wrapper = exception as TargetInvocationException;
             return wrapper != null && wrapper.InnerException != null ? wrapper.InnerException : exception;
         }
 
-        /// <summary>拼报告。</summary>
-        /// <param name="done">处理好的表。</param>
-        /// <param name="failed">失败的表。</param>
-        /// <param name="write">是否写了资产。</param>
-        /// <returns>报告文本。</returns>
+        // 功能：把本次导入的数据来源、资产目录、模式、成功与失败表清单拼成一段报告文本。
+        // 入参：done 处理成功的表名；failed 失败的表名与原因；write 是否真写了资产
+        // 返回：报告全文；没有失败时不含失败段
+        // 步骤：
+        //   1) 先写表头与两个目录、模式，出问题时能一眼看出导的是哪份配置
+        //   2) 再写成功表数与表名，空列表只留数字，不留空括号
+        //   3) 有失败才追加逐条原因
+        // 上游：Run 最后一次性输出
+        // 下游：无
         private static string Render(List<string> done, List<string> failed, bool write)
         {
             StringBuilder builder = new StringBuilder();
