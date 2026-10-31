@@ -1,55 +1,35 @@
-// ============================================================================
-//  NBC.Framework · 池注册表（轻量，只服务于统计面板）
-//  来源：为 M1-A2 新增；对应验收 V8（池统计面板可看复用率）
-//
-//  ---------------------------------------------------------------------------
-//  为什么"不做中心管理器"，却又要一个注册表？
-//  ---------------------------------------------------------------------------
-//  原框架的 PoolMgr 是【中心管理器】：所有池塞进一个 `Dictionary<string, PoolData>`，
-//  用资源路径字符串当 key。这带来三个问题（详见 Docs/06 §四）：
-//    · P-11：`public Dictionary poolDic` 把内部容器直接暴露出去
-//    · FW-06 同类：字符串 key 拼错不报错
-//    · 池的生命周期被全局单例绑死，谁都能取到别人的池
-//
-//  本项目的做法是：**池由使用它的系统自己持有**（`ObjectPool<T>` 是普通对象，
-//  不是单例）。这样类型安全、作用域清晰、也好测。
-//
-//  但"自己持有"会带来一个新问题：**调试面板怎么枚举所有池？**
-//  答案是让池在创建时【自愿登记】到一个极薄的注册表里 —— 面板只需要一份名单，
-//  不需要（也不应该）拥有池的控制权：
-//
-//      池 <-持有-> 使用它的系统        （所有权）
-//      池 ->登记-> PoolRegistry       （只是一张名单，单向）
-//
-//  这就是"注册表"和"中心管理器"的区别：**注册表没有分发权，管理器有。**
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 一条纪律：池要 Dispose
-//  ---------------------------------------------------------------------------
-//  注册表持的是【强引用】。池用完不 `Dispose()`，名单里就会残留一条永远不释放的记录。
-//  所以本框架的约定是：**谁创建池，谁负责 Dispose**（系统销毁 / 场景卸载时）。
-//  A2 的测试里有一条专门盯这件事（`Dispose_UnregistersFromRegistry`）。
-// ============================================================================
+// 这个文件里有：
+//   PoolRegistry（静态类）：池的自愿登记名单，只增删与拷贝名单，不持有池的控制权
 
 using System.Collections.Generic;
 
 namespace NBC.Framework
 {
-    /// <summary>
-    /// 池的登记名单。只增删名单，不持有池的控制权。
-    /// </summary>
+    // 主要功能：维护在册池的名单，让统计面板能枚举全部池；只有名单、没有分发权，池仍由使用它的系统自己持有。
+    // 主要数据成员：s_pools（在册池的强引用列表，元素个数即 Count）、s_lock（保护名单的锁）。
+    // 主要外部方法：Register / Unregister / CopyTo / Clear / Count。
+    // 谁在用它：ObjectPool<T> 与 GameObjectPool 在构造与 Dispose 时登记、注销；测试与统计面板读名单。
+    /// <summary>池的登记名单。只增删名单，不持有池的控制权。</summary>
     public static class PoolRegistry
     {
+        // 在册池的强引用名单；元素个数即 Count（登记条数，不是池内对象数），取值 0 到已登记数
         private static readonly List<IPoolStatsSource> s_pools = new List<IPoolStatsSource>();
 
-        /// <summary>保护名单的锁。池一般在主线程建，但登记表本身没有理由不是线程安全的。</summary>
+        // 保护名单的锁；池主要在主线程建，但名单本身按线程安全做
         private static readonly object s_lock = new object();
 
-        /// <summary>当前登记在册的池数量。测试与面板用。</summary>
+        /// <summary>当前登记在册的池数量，供测试与统计面板读取。</summary>
         public static int Count
         {
             get
             {
+                // 功能：加锁读一次名单长度，供断言与面板显示。
+                // 入参：无
+                // 返回：在册池数量，0 表示当前没有任何池登记。
+                // 步骤：加锁读 Count，避免与登记、注销并发时读到中间态。
+                // 上游：测试（登记与注销的断言）、统计面板
+                // 下游：无
+                // 注意：口径是登记条数、不是池里对象数；重复登记被忽略，同一个池只算一次。
                 lock (s_lock)
                 {
                     return s_pools.Count;
@@ -57,13 +37,18 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 登记一个池。由池的构造函数调用，通常不需要手工调用。
-        /// 重复登记同一个对象会被忽略。
-        /// </summary>
-        /// <param name="pool">要登记的池。</param>
+        /// <summary>把一个池登记进名单；重复登记同一对象会被忽略。</summary>
         public static void Register(IPoolStatsSource pool)
         {
+            // 功能：把池加进名单，让统计面板能枚举到它；由池的构造函数调用，通常不用手工调。
+            // 入参：pool 要登记的池，null 直接忽略
+            // 返回：无
+            // 步骤：
+            //   1) 先挡 null：名单里不放空引用，后面 CopyTo 的消费方就不用再判空
+            //   2) 加锁后判重再 Add：重复登记会让面板重复显示、Count 也多算，所以重复的忽略
+            // 上游：ObjectPool<T>、GameObjectPool 的构造函数
+            // 下游：s_pools 名单
+            // 注意：名单持的是强引用，池用完不 Dispose 就会一直留在名单里（等同泄漏）；谁创建池谁负责 Dispose。
             if (pool == null)
             {
                 return;
@@ -78,12 +63,18 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 注销一个池。由池的 Dispose 调用。
-        /// </summary>
-        /// <param name="pool">要注销的池。</param>
+        /// <summary>把池从名单里移除；由池的 Dispose 调用，重复注销不报错。</summary>
         public static void Unregister(IPoolStatsSource pool)
         {
+            // 功能：把池从名单移除，避免池已销毁而面板还能枚举到它。
+            // 入参：pool 要注销的池，null 直接忽略
+            // 返回：无
+            // 步骤：
+            //   1) 先挡 null，与 Register 对称
+            //   2) 加锁后 Remove：List.Remove 找不到时静默返回，所以重复注销不会抛
+            // 上游：ObjectPool<T>、GameObjectPool 的 Dispose
+            // 下游：s_pools 名单
+            // 注意：注销只删名单，不回收池里的对象；漏调的话名单残留的是已销毁池的强引用，池再也回收不掉。
             if (pool == null)
             {
                 return;
@@ -95,13 +86,19 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 把当前所有池拷进 buffer（先清空 buffer）。
-        /// 调试面板每帧调用时请复用同一个 buffer，避免每帧产生垃圾。
-        /// </summary>
-        /// <param name="buffer">接收结果的列表。</param>
+        /// <summary>把当前在册的池拷进 buffer；拷前会清空 buffer，面板请复用同一个 buffer。</summary>
         public static void CopyTo(List<IPoolStatsSource> buffer)
         {
+            // 功能：给面板与测试一份当前名单的拷贝，调用方拿到的是副本，改它不影响登记表。
+            // 入参：buffer 接收结果的列表，会被先清空再填充；null 直接返回
+            // 返回：无
+            // 步骤：
+            //   1) 先挡 null，避免空引用
+            //   2) 先清空 buffer 再填：不清会把上一帧的残留一起带出去，名单越积越长
+            //   3) 在锁内 AddRange，保证拷到的是同一时刻的名单
+            // 上游：统计面板（每帧复用同一个 buffer）、测试
+            // 下游：无
+            // 注意：面板每帧新建 List 会持续产生垃圾，请复用同一个 buffer。
             if (buffer == null)
             {
                 return;
@@ -114,13 +111,16 @@ namespace NBC.Framework
             }
         }
 
-        /// <summary>
-        /// 清空名单。
-        /// 用途：退出播放模式时的整体清理、以及测试用例之间的隔离。
-        /// 注意它【不会】销毁池本身 —— 名单不是所有者。
-        /// </summary>
+        /// <summary>清空名单，不销毁池本身；用于退出播放模式的整体清理与测试用例之间的隔离。</summary>
         public static void Clear()
         {
+            // 功能：一次性清掉整张名单，用于退出播放模式或测试之间的隔离。
+            // 入参：无
+            // 返回：无
+            // 步骤：加锁后直接清空列表；只清名单、不调池的 Dispose，因为注册表不是池的所有者
+            // 上游：退出播放模式时的整体清理、测试的每个用例前后
+            // 下游：无
+            // 注意：Clear 之后池仍照常在跑，清理方要自己负责 Dispose，否则这些池会变成没人持有的孤儿。
             lock (s_lock)
             {
                 s_pools.Clear();
