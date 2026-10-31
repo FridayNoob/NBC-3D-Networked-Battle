@@ -1,77 +1,7 @@
-// ============================================================================
-//  NBC.Framework.UI · UI 管理器
-//  替代：唐老师框架 UI/UIManager.cs（原 150 行）
-//  缺陷编号：FW-10（硬编码层路径）、P-09（销毁与字典不同步）、P-11（public 容器）、
-//            P-12（as 转换不检查）
-//  需求条目：FW-M09（生命周期、异步加载、UI 栈、层级管理）
-//  完整记录：Docs/06-框架改造记录.md §三 FW-10、§四 P-09 / P-11 / P-12
-//
-//  ---------------------------------------------------------------------------
-//  它负责什么
-//  ---------------------------------------------------------------------------
-//  一句话：**面板从哪来、挂到哪一层、什么时候收起来。**
-//
-//      UIManager.Instance.ShowPanel("BagPanel", UILayer.Mid, panel => { ... });
-//      UIManager.Instance.HidePanel("BagPanel");    // 收起来（回池，**不销毁**）
-//      UIManager.Instance.ClosePanel("BagPanel");   // 真的关掉（销毁 + 释放素材句柄）
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 为什么核心是「回调」而不是 `async/await`（这一条很重要，别改回去）
-//  ---------------------------------------------------------------------------
-//  C# 的 `await` 在恢复执行时，会把"后续代码"**投递回它当初捕获的那个
-//  SynchronizationContext**（同步上下文）—— Unity 编辑器/播放模式里装了
-//  `UnitySynchronizationContext`，它的"投递"要有**帧循环**才会被执行。
-//
-//  问题在于：**EditMode 测试没有帧循环。**
-//  于是在 EditMode 里 `await` 一个"稍后才完成"的加载，续体被投递到队列里，
-//  却永远没人来跑它 → 测试卡死（或者只能靠轮询硬凑）。
-//
-//  而本框架既有的异步风格是**回调 + 句柄**（`AssetHandle.OnComplete`、
-//  `SceneLoader.Tick`），回调是**在完成的那一刻被直接调用**的，
-//  不经过任何上下文投递 —— 所以它在 EditMode 里**确定性地**能跑。
-//
-//  结论：**内部一律用回调**。`ShowPanelAsync` 只是包在外面的一个便利层
-//  （`TaskCompletionSource`），因为它在回调触发的那一刻就 `SetResult` 了，
-//  所以外面 `await` 到的是一个**已经完成**的任务，同样不会卡。
-//
-//  ---------------------------------------------------------------------------
-//  原版错在哪（逐条）
-//  ---------------------------------------------------------------------------
-//  **P-09：`Destroy` 是延迟的，字典是即时的。**
-//      public void HidePanel(string panelName)
-//      {
-//          panelDic[panelName].HideMe();
-//          GameObject.Destroy(panelDic[panelName].gameObject);   // 这一帧末尾才真删
-//          panelDic.Remove(panelName);                            // 但这里当场就移除了
-//      }
-//  后果：同一帧里"关掉再打开"会重新走一遍异步加载，还可能拿到**那个还没被删掉的旧实例**。
-//
-//  **修法（结构上让它不可能发生）**：面板关掉时**根本不销毁**，只是收起来回池。
-//  既然不销毁，就不存在"延迟销毁"这个时间窗口，P-09 自然消失 ——
-//  这比"加个标记去挡"更彻底。
-//
-//  **P-11：`public Dictionary<string, BasePanel> panelDic`** 把内部容器敞开给外面。
-//  这里全部 `private`，对外只给只读查询方法。
-//
-//  **P-12：`(obj.transform as RectTransform).offsetMax = ...` 不检查。**
-//  预制体根节点不是 `RectTransform` 时静默变 null → NRE，报错点离配置错误很远。
-//  这里改成显式检查 + 点名报错。
-//
-//  ---------------------------------------------------------------------------
-//  两条必须写死的语义（避免猜）
-//  ---------------------------------------------------------------------------
-//  **① 同一个面板名，同时只会有一条加载任务。**
-//     第二次请求会**挂到同一条任务上**，而不是再加载一次。
-//     （原版没有这个保护：同帧连点两下 = 加载两遍 + `panelDic.Add` 抛重复键异常。）
-//
-//  **② 显示中的面板重复请求 = 只调 `ShowMe()`，不重新加载。** 原版既有语义，保留。
-//
-//  ---------------------------------------------------------------------------
-//  ⚠️ 一个必须记住的既有约定（Docs/06 §13.7）
-//  ---------------------------------------------------------------------------
-//  `LoadAssetAsync<GameObject>` 返回的是**原始 prefab**，不是实例。
-//  **要实例请自己 `Instantiate`。** 本类就是这么做的。
-// ============================================================================
+// 这个文件里有：
+//   UIManager（类）：UI 总管，加载 Canvas、按层显示 / 收起 / 关闭面板，维护 UI 栈、面板池与素材句柄。
+//   PendingLoad（类）：一次进行中的面板加载，收集同名请求挂上来的成功与失败回调。
+// 设计取舍与历史踩坑见 Docs\06-框架改造记录.md 的 UI 管理器一节。
 
 using System;
 using System.Collections.Generic;
@@ -81,80 +11,85 @@ using UnityEngine;
 
 namespace NBC.Framework.UI
 {
-    /// <summary>
-    /// UI 管理器：加载 Canvas、显示 / 隐藏面板、管理 UI 栈。
-    /// </summary>
+    // 主要功能：加载 Canvas，按层显示 / 收起 / 关闭面板，维护 UI 栈、面板池与素材句柄。
+    // 主要数据成员：m_visible（显示中的面板）、m_pooled（回池面板）、m_pending（同名共享的加载任务）、m_panelHandles（预制体句柄）、m_stack（UI 栈）、m_layers / m_canvasInstance（Canvas 与层引用）。
+    // 主要外部方法：ShowPanel / ShowPanelAsync / HidePanel / ClosePanel / HideAll / CloseAll / PushPanel / PopPanel / HandleBack，以及 IsPanelVisible / GetPanel 与各只读属性。
+    // 谁在用它：Boot 的 HpBarDemoBehaviour、Framework.UI 的 LoadingMaskController 与 EditMode 测试。
+    /// <summary>UI 管理器：加载 Canvas、按层显示 / 收起 / 关闭面板，管理 UI 栈与素材句柄。</summary>
     public sealed class UIManager : Singleton<UIManager>
     {
         /// <summary>默认的 Canvas 预制体地址。</summary>
         public const string DefaultCanvasLocation = "UI/Canvas";
 
-        /// <summary>默认的面板预制体地址前缀（完整地址 = 前缀 + 面板名）。</summary>
+        /// <summary>默认的面板预制体地址前缀；完整地址 = 前缀 + 面板名。</summary>
         public const string DefaultPanelLocationPrefix = "UI/";
 
-        /// <summary>
-        /// 一次"正在加载中"的面板请求。**同名的后续请求会挂到这一个上**（语义①）。
-        /// </summary>
+        // 主要功能：记录一次进行中的同名面板加载，把后来的请求挂到同一条任务上。
+        // 主要数据成员：OnSuccess / OnFailure（等待这条加载结果的回调列表，按注册顺序调用）。
+        // 主要外部方法：无 —— 只由 UIManager 读写这两个列表。
+        // 谁在用它：UIManager.ShowPanel / AddCallback / SucceedPending / FailPending。
         private sealed class PendingLoad
         {
-            /// <summary>加载成功时要通知的回调。</summary>
+            // 加载成功时要通知的回调；按注册顺序调用。
             public readonly List<Action<BasePanel>> OnSuccess = new List<Action<BasePanel>>();
 
-            /// <summary>加载失败时要通知的回调。</summary>
+            // 加载失败时要通知的回调；按注册顺序调用。
             public readonly List<Action<Exception>> OnFailure = new List<Action<Exception>>();
         }
 
-        /// <summary>显示中的面板。**private**，对外不给容器（P-11）。</summary>
+        // 显示中的面板，键是面板名；只在本类内可见，对外只给查询方法。
         private readonly Dictionary<string, BasePanel> m_visible = new Dictionary<string, BasePanel>();
 
-        /// <summary>收起来的面板（**不销毁**，等着下次复用）。</summary>
+        // 收起来的面板，键是面板名；不销毁，等下次 ShowPanel 复用。
         private readonly Dictionary<string, BasePanel> m_pooled = new Dictionary<string, BasePanel>();
 
-        /// <summary>正在加载中的面板：名字 到 那一条加载。</summary>
+        // 正在加载的面板：名字到那一条加载；同名请求共享同一条任务。
         private readonly Dictionary<string, PendingLoad> m_pending =
             new Dictionary<string, PendingLoad>();
 
-        /// <summary>面板预制体的素材句柄。**面板还活着就不能释放**（三级释放语义）。</summary>
+        // 面板预制体句柄，键是面板名；面板活着就不能释放。
         private readonly Dictionary<string, AssetHandle<GameObject>> m_panelHandles =
             new Dictionary<string, AssetHandle<GameObject>>();
 
-        /// <summary>UI 栈：存的是**面板名**，栈顶是最后压进去的那个。</summary>
+        // UI 栈，存的是面板名；栈顶是最后压进去的那个。
         private readonly List<string> m_stack = new List<string>();
 
-        /// <summary>遍历 / 复查时用的临时列表（避免每次分配）。</summary>
+        // 遍历 / 复查时复用的临时名字列表，避免每次分配。
         private readonly List<string> m_nameBuffer = new List<string>();
 
-        /// <summary>Canvas 正在加载时，等着它的那些回调。</summary>
+        // Canvas 加载中排队的就绪回调。
         private readonly List<Action> m_canvasReadyCallbacks = new List<Action>();
 
-        /// <summary>Canvas 加载失败时要通知的回调。</summary>
+        // Canvas 加载失败时要通知的回调。
         private readonly List<Action<Exception>> m_canvasFailedCallbacks = new List<Action<Exception>>();
 
+        // Canvas 预制体地址；第一次加载之前可改，加载开始后不可改。
         private string m_canvasLocation = DefaultCanvasLocation;
+        // 面板预制体地址前缀；完整地址 = 前缀 + 面板名。
         private string m_panelLocationPrefix = DefaultPanelLocationPrefix;
 
+        // Canvas 实例；没加载好时为 null。
         private GameObject m_canvasInstance;
+        // Canvas 预制体句柄；Canvas 活着就不能释放。
         private AssetHandle<GameObject> m_canvasHandle;
+        // Canvas 上的层引用；非 null 就表示 Canvas 已就绪。
         private UILayers m_layers;
+        // 是否正在加载 Canvas；保证并发调用只加载一次。
         private bool m_canvasLoading;
 
-        // ====================================================================
-        //  查询（对外只读，不给容器）
-        // ====================================================================
-
-        /// <summary>Canvas 是否已经加载好、并且层配置校验通过。</summary>
+        /// <summary>Canvas 是否已加载好且层配置校验通过；加载失败或还没开始时为 false。</summary>
         public bool IsCanvasReady
         {
             get { return m_layers != null; }
         }
 
-        /// <summary>Canvas 实例。**只读用途**，没加载好时是 null。</summary>
+        /// <summary>Canvas 实例；没加载好时为 null，只读用途。</summary>
         public GameObject Canvas
         {
             get { return m_canvasInstance; }
         }
 
-        /// <summary>层引用持有者。没加载好时是 null。</summary>
+        /// <summary>Canvas 上的层引用；没加载好时为 null。</summary>
         public UILayers Layers
         {
             get { return m_layers; }
@@ -166,42 +101,49 @@ namespace NBC.Framework.UI
             get { return m_visible.Count; }
         }
 
-        /// <summary>收起来备用（池里）的面板数量。</summary>
+        /// <summary>池里收起来的面板数量。</summary>
         public int PooledPanelCount
         {
             get { return m_pooled.Count; }
         }
 
-        /// <summary>正在加载中的面板数量。</summary>
+        /// <summary>正在加载中的面板数量，按名字去重。</summary>
         public int LoadingPanelCount
         {
             get { return m_pending.Count; }
         }
 
-        /// <summary>UI 栈深度。</summary>
+        /// <summary>UI 栈深度，即栈里面板名的个数。</summary>
         public int StackDepth
         {
             get { return m_stack.Count; }
         }
 
-        /// <summary>Canvas 预制体地址。</summary>
+        /// <summary>当前 Canvas 预制体地址。</summary>
         public string CanvasLocation
         {
             get { return m_canvasLocation; }
         }
 
-        /// <summary>面板预制体地址前缀。</summary>
+        /// <summary>当前面板预制体地址前缀。</summary>
         public string PanelLocationPrefix
         {
             get { return m_panelLocationPrefix; }
         }
 
-        /// <summary>
-        /// 改 Canvas 预制体地址。**必须在第一次加载之前调**。
-        /// </summary>
-        /// <param name="location">地址。</param>
+        /// <summary>改 Canvas 预制体地址；必须在第一次加载之前调用，否则抛异常。</summary>
+        /// <param name="location">资源地址，不能为空。</param>
         public void SetCanvasLocation(string location)
         {
+            // 功能：改 Canvas 预制体地址，并挡住「已经开加载再改」的无效调用。
+            // 入参：location 资源地址，不能为空
+            // 返回：无
+            // 步骤：
+            //   1) 先挡空地址 —— 空地址要到加载时才发现，报错点会离调用处很远
+            //   2) 再挡已经开加载 —— Canvas 已在加载或就绪时改地址没有意义，当场抛异常
+            //   3) 最后才写入
+            // 上游：Boot 的 HpBarDemoBehaviour 与测试启动前
+            // 下游：EnsureCanvas（真正的加载与使用）
             if (string.IsNullOrEmpty(location))
             {
                 throw new ArgumentException("[UIManager] Canvas 地址不能为空。", nameof(location));
@@ -217,18 +159,30 @@ namespace NBC.Framework.UI
             m_canvasLocation = location;
         }
 
-        /// <summary>改面板地址前缀。默认 <see cref="DefaultPanelLocationPrefix"/>。</summary>
-        /// <param name="prefix">前缀。</param>
+        /// <summary>改面板预制体地址前缀；传 null 按空前缀处理。</summary>
+        /// <param name="prefix">前缀；完整地址 = 前缀 + 面板名。</param>
         public void SetPanelLocationPrefix(string prefix)
         {
+            // 功能：改面板地址前缀，null 回落成空串，让面板名直接当地址用。
+            // 入参：prefix 前缀，可为 null
+            // 返回：无
+            // 步骤：只做 null 回落再赋值 —— 前缀允许为空（面板名就是完整地址），所以不校验空串。
+            // 上游：Boot 的 HpBarDemoBehaviour 与测试启动前
+            // 下游：StartPanelLoad 拼地址
             m_panelLocationPrefix = prefix ?? string.Empty;
         }
 
-        /// <summary>某个面板现在是否显示中。</summary>
+        /// <summary>某个面板现在是否显示中；名字为空、只在池里或不在显示表里都返回 false。</summary>
         /// <param name="panelName">面板名。</param>
-        /// <returns>是否显示中。</returns>
+        /// <returns>显示中返回 true；否则 false。</returns>
         public bool IsPanelVisible(string panelName)
         {
+            // 功能：只查显示表判断面板是否显示中，不触发加载、不改状态。
+            // 入参：panelName 面板名，可为 null 或空
+            // 返回：显示中返回 true；空名、没显示、只在池里都返回 false
+            // 步骤：空名直接 false；再查表并核对实例没被外部销毁；未命中不抛异常。
+            // 上游：PushPanel 与测试查询
+            // 下游：m_visible
             if (string.IsNullOrEmpty(panelName))
             {
                 return false;
@@ -238,14 +192,21 @@ namespace NBC.Framework.UI
             return m_visible.TryGetValue(panelName, out panel) && panel != null;
         }
 
-        /// <summary>
-        /// 取一个**正在显示**的面板。没显示时返回 null。
-        /// </summary>
-        /// <typeparam name="T">面板类型。</typeparam>
+        /// <summary>取一个正在显示的面板并转成指定类型；没显示或类型不符返回 null。</summary>
+        /// <typeparam name="T">面板类型，必须是 BasePanel 的子类。</typeparam>
         /// <param name="panelName">面板名。</param>
-        /// <returns>面板；没显示则 null。</returns>
+        /// <returns>面板实例；没显示、已被外部销毁或类型不符时返回 null。</returns>
         public T GetPanel<T>(string panelName) where T : BasePanel
         {
+            // 功能：按名字取显示中的面板，并安全地转成调用方要的类型。
+            // 入参：panelName 面板名，可为 null 或空
+            // 返回：取到且类型匹配返回实例；空名、没显示、被销毁或类型不符返回 null
+            // 步骤：
+            //   1) 空名直接返回 null，不去查表
+            //   2) 只查显示表，池里的不算 —— 池里面板不处于可用的显示状态
+            //   3) 用 as 转换，类型不符时返回 null 而不是抛异常
+            // 上游：LoadingMaskController 刷新遮罩
+            // 下游：m_visible
             if (string.IsNullOrEmpty(panelName))
             {
                 return null;
@@ -260,27 +221,32 @@ namespace NBC.Framework.UI
             return panel as T;
         }
 
-        // ====================================================================
-        //  显示 / 隐藏 / 关闭
-        // ====================================================================
-
-        /// <summary>
-        /// 请求显示一个面板（需要时先异步加载）。**这是核心入口，回调驱动。**
-        /// </summary>
-        /// <param name="panelName">面板名（同时决定预制体地址：前缀 + 名字）。</param>
+        /// <summary>请求显示一个面板：需要时先加载，已在显示只刷新，加载中则共享同一条任务；回调驱动。</summary>
+        /// <param name="panelName">面板名，同时决定预制体地址（前缀 + 名字）。</param>
         /// <param name="layer">挂到哪一层。</param>
-        /// <param name="onShown">显示完成后的回调（可能**同步**被调用，见下面的说明）。</param>
-        /// <param name="onFailed">失败回调。</param>
+        /// <param name="onShown">显示完成后的回调；可能同步触发。</param>
+        /// <param name="onFailed">失败回调；为 null 时错误打到 Console。</param>
         public void ShowPanel(string panelName, UILayer layer = UILayer.Mid,
                               Action<BasePanel> onShown = null, Action<Exception> onFailed = null)
         {
+            // 功能：显示面板的统一入口 —— 已显示只调 ShowMe，加载中挂到同一条任务，池里有就复活，否则冷启动加载。
+            // 入参：panelName 面板名，同时决定预制体地址；layer 目标层；onShown 成功回调，可能同步触发；onFailed 失败回调，为 null 时错误打到 Console
+            // 返回：无；结果只经回调返回
+            // 步骤：
+            //   1) 先挡空名，按失败回调规则报出去
+            //   2) 已在显示：只调 ShowMe 并同步回调 —— 重复请求不重新加载
+            //   3) 正在加载：把回调挂到同一条任务上，避免同帧连点两下加载两遍、或重复键抛异常
+            //   4) 池里有同款：复活、挂层并 ShowMe；挂层失败要放回池里，不能把面板弄丢
+            //   5) 都没有：新建一条加载记录，等 Canvas 就绪后再开始加载
+            // 上游：Boot 的 HpBarDemoBehaviour、LoadingMaskController 与测试
+            // 下游：EnsureCanvas / StartPanelLoad / AttachToLayer / ShowMe
+            // 注意：onShown 可能同步触发（已显示或池中复活时），调用方不要假设它一定在下一帧才到。
             if (string.IsNullOrEmpty(panelName))
             {
                 Report(onFailed, new ArgumentException("[UIManager] 面板名不能为空。"));
                 return;
             }
 
-            // —— ① 已经在显示：只调 ShowMe，不重新加载（原版既有语义）——
             BasePanel shown;
             if (m_visible.TryGetValue(panelName, out shown) && shown != null)
             {
@@ -289,7 +255,6 @@ namespace NBC.Framework.UI
                 return;
             }
 
-            // —— ② 正在加载：挂到同一条上（语义①，P-09 的修法）——
             PendingLoad pending;
             if (m_pending.TryGetValue(panelName, out pending))
             {
@@ -297,7 +262,6 @@ namespace NBC.Framework.UI
                 return;
             }
 
-            // —— ③ 池里有收起来的同款：直接复活 ——
             BasePanel pooled;
             if (m_pooled.TryGetValue(panelName, out pooled))
             {
@@ -327,7 +291,6 @@ namespace NBC.Framework.UI
                 }
             }
 
-            // —— ④ 冷启动：建一条加载，把自己的回调挂上去 ——
             pending = new PendingLoad();
             AddCallback(pending, onShown, onFailed);
             m_pending.Add(panelName, pending);
@@ -340,19 +303,19 @@ namespace NBC.Framework.UI
                 error => FailPending(capturedName, error));
         }
 
-        /// <summary>
-        /// <see cref="ShowPanel"/> 的 `await` 版本。
-        /// <para>
-        /// ⚠️ 实现只是把回调包成 `TaskCompletionSource`。因为回调触发时任务**当场就完成了**，
-        /// 所以外面 `await` 到的是"已经完成的任务"，**不会**碰到
-        /// "续体被投递回同步上下文、而 EditMode 没有帧循环"那个坑（见文件头说明）。
-        /// </para>
-        /// </summary>
+        /// <summary>ShowPanel 的 await 版本；返回的任务在回调触发时即已完成。</summary>
         /// <param name="panelName">面板名。</param>
         /// <param name="layer">挂到哪一层。</param>
-        /// <returns>面板。</returns>
+        /// <returns>显示完成的面板；失败时任务带原始异常。</returns>
         public Task<BasePanel> ShowPanelAsync(string panelName, UILayer layer = UILayer.Mid)
         {
+            // 功能：把 ShowPanel 的回调包成 TaskCompletionSource，供外部 await。
+            // 入参：panelName 面板名；layer 目标层
+            // 返回：显示完成的面板任务；失败时任务带原始异常
+            // 步骤：直接把两个回调接到 TrySetResult / TrySetException 上，不另写加载逻辑。
+            // 上游：需要 await 显示结果的调用方与测试
+            // 下游：ShowPanel
+            // 注意：这里刻意不用 async/await —— Unity 会把续体投递回同步上下文，而 EditMode 没有帧循环，await 一个稍后完成的任务会永久卡住；回调在完成那一刻直接触发，任务当场就已完结，所以外面 await 不会卡。
             TaskCompletionSource<BasePanel> source = new TaskCompletionSource<BasePanel>();
 
             ShowPanel(
@@ -364,14 +327,23 @@ namespace NBC.Framework.UI
             return source.Task;
         }
 
-        /// <summary>
-        /// 把面板**收起来**（回池，不销毁）。
-        /// <para>⚠️ 与原版最大的区别：**原版这里会 `Destroy`**，于是有了 P-09 那个时间窗口。</para>
-        /// </summary>
+        /// <summary>把显示中的面板收起来放回池里，不销毁；返回是否确实收起了一个。</summary>
         /// <param name="panelName">面板名。</param>
-        /// <returns>true 表示确实收起来了一个。</returns>
+        /// <returns>true 表示确实从显示表里收起了一个面板。</returns>
         public bool HidePanel(string panelName)
         {
+            // 功能：把显示中的面板隐藏并放进池里等下次复用，同时挡掉池里的同名残留。
+            // 入参：panelName 面板名，可为 null 或空
+            // 返回：收起成功返回 true；空名、没显示返回 false；实例已被外部销毁也算处理过，返回 true
+            // 步骤：
+            //   1) 空名直接 false
+            //   2) 只从显示表取，没显示就 false
+            //   3) 先移出显示表，再判断实例是否已被外部销毁；销毁了就清掉池里同名残留，免得下次拿到死对象
+            //   4) HideMe 并停用 GameObject，再放进池里
+            //   5) 池里已有不同的同名实例说明有别处乱动，销毁旧的免得泄漏
+            // 上游：LoadingMaskController、PopPanel 与测试
+            // 下游：BasePanel.HideMe、m_pooled
+            // 注意：这里只回池、不销毁 —— 原版先 Destroy 再移字典，而 Destroy 要帧末才生效，同一帧关掉再打开会重走异步加载、还可能拿到没删掉的旧实例。
             if (string.IsNullOrEmpty(panelName))
             {
                 return false;
@@ -406,14 +378,21 @@ namespace NBC.Framework.UI
             return true;
         }
 
-        /// <summary>
-        /// 真的关掉一个面板：显示中的和池里的都销毁，并释放它的素材句柄。
-        /// <para>用于"这个面板以后不再用了"；日常开关请用 <see cref="HidePanel"/>。</para>
-        /// </summary>
+        /// <summary>真正关闭面板：显示中的和池里的都销毁，并释放素材句柄与栈记录。</summary>
         /// <param name="panelName">面板名。</param>
-        /// <returns>true 表示确实处理了一个面板。</returns>
+        /// <returns>true 表示确实处理了显示中或池里的一个面板。</returns>
         public bool ClosePanel(string panelName)
         {
+            // 功能：把面板彻底关掉 —— 显示表和池里的同名实例都销毁，再释放句柄、移出 UI 栈。
+            // 入参：panelName 面板名，可为 null 或空
+            // 返回：确实处理了显示中或池里的面板返回 true；两处都没有返回 false
+            // 步骤：
+            //   1) 空名直接 false
+            //   2) 先处理池里的，再处理显示中的；两处都要移出字典后再销毁
+            //   3) 最后释放素材句柄并移出 UI 栈 —— 实例销毁之后才放手素材
+            // 上游：LoadingMaskController 放弃遮罩、CloseAll 与测试
+            // 下游：DestroyObject / ReleasePanelHandle / RemoveFromStack
+            // 注意：日常开关请用 HidePanel；本方法销毁实例并释放素材，之后再次 ShowPanel 会重新加载。
             if (string.IsNullOrEmpty(panelName))
             {
                 return false;
@@ -453,9 +432,18 @@ namespace NBC.Framework.UI
             return touched;
         }
 
-        /// <summary>把所有面板收起来（进池），并清空 UI 栈。**不销毁。**</summary>
+        /// <summary>把所有显示中的面板收起回池并清空 UI 栈；不销毁。</summary>
         public void HideAll()
         {
+            // 功能：一次性收起所有显示中的面板，并把 UI 栈清空。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 先清空 UI 栈 —— 栈里的名字随后都会进池，留着只会让返回键反复碰到不存在的东西
+            //   2) 先把名字拷进缓冲再遍历 —— HidePanel 会改显示表，边遍历边删会抛异常
+            //   3) 逐个 HidePanel，最后清掉缓冲
+            // 上游：游戏层整体收起界面（当前只有测试调用）
+            // 下游：CopyVisibleNames / HidePanel
             m_stack.Clear();
             CopyVisibleNames(m_nameBuffer);
 
@@ -467,9 +455,18 @@ namespace NBC.Framework.UI
             m_nameBuffer.Clear();
         }
 
-        /// <summary>关掉所有面板并释放它们的素材句柄。**用于切场景收尾 / 管理器销毁。**</summary>
+        /// <summary>关闭所有面板并释放素材句柄；用于切场景收尾与管理器销毁。</summary>
         public void CloseAll()
         {
+            // 功能：关掉显示中的和池里的所有面板，释放它们的素材句柄。
+            // 入参：无
+            // 返回：无
+            // 步骤：
+            //   1) 先清 UI 栈
+            //   2) 把显示中的名字拷进缓冲后逐个 ClosePanel —— ClosePanel 会改显示表，不能边遍历边删
+            //   3) 再把池里的名字拷进缓冲后逐个 ClosePanel，直到池清空
+            // 上游：OnDispose 与测试
+            // 下游：CopyVisibleNames / ClosePanel
             m_stack.Clear();
 
             CopyVisibleNames(m_nameBuffer);
@@ -493,17 +490,19 @@ namespace NBC.Framework.UI
             m_nameBuffer.Clear();
         }
 
-        // ====================================================================
-        //  UI 栈
-        // ====================================================================
-
-        /// <summary>
-        /// 把一个**正在显示**的面板压进 UI 栈（表示"它可以被返回键关掉"）。
-        /// <para>⚠️ 栈是**显式**的：框架不猜哪些面板该进栈，由游戏层决定。</para>
-        /// </summary>
+        /// <summary>把一个正在显示的面板压进 UI 栈，表示它可以被返回键关掉；未显示时抛异常。</summary>
         /// <param name="panelName">面板名。</param>
         public void PushPanel(string panelName)
         {
+            // 功能：把一个正在显示的面板压到 UI 栈顶，同一个面板不会在栈里出现两次。
+            // 入参：panelName 面板名，必须正在显示
+            // 返回：无；不在显示中时抛 InvalidOperationException
+            // 步骤：
+            //   1) 先校验正在显示 —— 把没显示的面板压进去只会让返回键失灵，不如当场报错
+            //   2) 先从栈里移除同名项，再压到栈顶 —— 同一个面板只保留最上面那一份
+            // 上游：游戏层返回流程（当前只有测试调用）
+            // 下游：m_stack
+            // 注意：栈是显式的，框架不猜哪些面板该进栈，由游戏层决定。
             if (!IsPanelVisible(panelName))
             {
                 throw new InvalidOperationException(
@@ -511,24 +510,37 @@ namespace NBC.Framework.UI
                     "栈的语义是\"这个面板可以被返回键关掉\"；把没显示的面板压进去，只会让返回键失灵。");
             }
 
-            m_stack.Remove(panelName);   // 同一个面板不要在栈里出现两次
+            m_stack.Remove(panelName);
             m_stack.Add(panelName);
         }
 
-        /// <summary>栈顶的面板名；栈空时 null。</summary>
-        /// <returns>面板名。</returns>
+        /// <summary>取栈顶面板名；栈空时返回 null。</summary>
+        /// <returns>栈顶面板名；栈空为 null。</returns>
         public string PeekPanel()
         {
+            // 功能：只读栈顶面板名，不隐藏、不出栈。
+            // 入参：无
+            // 返回：栈顶面板名；栈空返回 null
+            // 步骤：直接取列表末项，空栈返回 null，不抛异常。
+            // 上游：外部查询（当前为测试）
+            // 下游：m_stack
             return m_stack.Count > 0 ? m_stack[m_stack.Count - 1] : null;
         }
 
-        /// <summary>
-        /// 把栈顶面板隐藏掉并返回它的名字。
-        /// <para>会跳过"已经被别的途径关掉"的残留项，所以返回值**可能不是**你上次压进去的那个。</para>
-        /// </summary>
-        /// <returns>被关掉的面板名；栈空返回 null。</returns>
+        /// <summary>隐藏栈顶面板并返回其名字；跳过已被别处关掉的残留项。</summary>
+        /// <returns>被收起的面板名；栈空或全是残留时返回 null。</returns>
         public string PopPanel()
         {
+            // 功能：弹出并收起栈顶面板，跳过已经被别的途径关掉的残留项。
+            // 入参：无
+            // 返回：确实收起了的面板名；栈空或全是残留时返回 null
+            // 步骤：
+            //   1) 从栈顶往下逐个取出名字并移除
+            //   2) 调 HidePanel，成功就返回这个名字
+            //   3) 失败说明这个面板已被别处关掉，继续往下找
+            // 上游：HandleBack 与游戏层返回流程
+            // 下游：HidePanel
+            // 注意：返回值可能不是你上次压进去的那个 —— 中间已被别处关掉的面板会被跳过。
             while (m_stack.Count > 0)
             {
                 int top = m_stack.Count - 1;
@@ -539,35 +551,31 @@ namespace NBC.Framework.UI
                 {
                     return panelName;
                 }
-
-                // 这个已经在别处关掉了，继续往下找。
             }
 
             return null;
         }
 
-        /// <summary>
-        /// 处理一次"返回"操作。
-        /// <para>
-        /// ⚠️ **框架不读键盘**（FW-12）。请由游戏层把返回键绑到这个方法：
-        /// 返回 true 表示"这次返回被 UI 吃掉了"，就别再去做别的事（比如退出游戏）。
-        /// </para>
-        /// </summary>
-        /// <returns>是否消费了这次返回。</returns>
+        /// <summary>处理一次返回：框架不读键盘，由游戏层把返回键绑到这里；true 表示 UI 吃掉了这次返回。</summary>
+        /// <returns>true 表示收起了一个面板，调用方不要再去做退出游戏等动作。</returns>
         public bool HandleBack()
         {
+            // 功能：把一次「返回」转发给 PopPanel，有面板可收就算消费掉了。
             return PopPanel() != null;
         }
 
-        // ====================================================================
-        //  内部：Canvas 引导
-        // ====================================================================
-
-        /// <summary>
-        /// 保证 Canvas 就绪。**并发调用只会加载一次**，其余的回调排队等同一个结果。
-        /// </summary>
-        /// <param name="onReady">就绪回调。</param>
-        /// <param name="onFailed">失败回调。</param>
+        // 功能：保证 Canvas 已就绪；并发调用只加载一次，其余回调排队等同一个结果。
+        // 入参：onReady 就绪回调；onFailed 失败回调，两者都可为 null
+        // 返回：无
+        // 步骤：
+        //   1) 已就绪就当场回调，直接返回
+        //   2) 未就绪先把两个回调排进等待队列
+        //   3) 已经在加载就直接返回 —— 后到的调用只是排队，不会再发一次加载
+        //   4) 标记加载中并取素材；同步抛出也走统一失败路径
+        //   5) 挂上 OnComplete，等素材加载完成
+        // 上游：ShowPanel 冷启动
+        // 下游：AssetManager.LoadAssetAsync、OnCanvasLoaded / FailCanvas
+        // 注意：并发调用只会加载一次，靠 m_canvasLoading 与两个回调队列保证。
         private void EnsureCanvas(Action onReady, Action<Exception> onFailed)
         {
             if (m_layers != null)
@@ -608,8 +616,18 @@ namespace NBC.Framework.UI
             handle.OnComplete += OnCanvasLoaded;
         }
 
-        /// <summary>Canvas 素材加载完成。</summary>
-        /// <param name="handle">素材句柄。</param>
+        // 功能：Canvas 素材加载完成：实例化、校验 UILayers、保存引用，再一次性通知所有等待者。
+        // 入参：handle 素材句柄
+        // 返回：无
+        // 步骤：
+        //   1) 句柄无效就释放并走 FailCanvas，错误里带上地址与原因
+        //   2) 实例化并改名为 Canvas；运行时用 DontDestroyOnLoad 让 UI 跨场景活着
+        //   3) 校验根节点上的 UILayers 与层配置，缺一个都当场抛出可照着修的错误
+        //   4) 全部校验通过才保存实例、句柄与层引用，避免半成品状态被外部看到
+        //   5) 先把待通知回调拷出来再清空，逐个调用 —— 回调里可能又发起新的加载，不能让它们落进正在遍历的列表
+        // 上游：AssetHandle.OnComplete
+        // 下游：FailCanvas、DestroyObject
+        // 注意：实例化或校验中途失败要销毁临时实例并释放句柄，否则会留下没人管的 Canvas 与泄漏的素材。
         private void OnCanvasLoaded(AssetHandle<GameObject> handle)
         {
             if (!handle.IsValid)
@@ -632,7 +650,6 @@ namespace NBC.Framework.UI
 
                 if (Application.isPlaying)
                 {
-                    // 和 A8 的音频宿主同一个理由：UI 要跨场景活着。
                     UnityEngine.Object.DontDestroyOnLoad(instance);
                 }
 
@@ -671,8 +688,6 @@ namespace NBC.Framework.UI
 
             m_canvasLoading = false;
 
-            // **先把回调拷出来再清空**：回调里可能又发起新的加载，
-            // 那时它们应该落到新的列表里，而不是被打乱。
             List<Action> callbacks = new List<Action>(m_canvasReadyCallbacks);
             m_canvasReadyCallbacks.Clear();
             m_canvasFailedCallbacks.Clear();
@@ -683,8 +698,16 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>Canvas 引导失败：通知所有等着的回调。</summary>
-        /// <param name="error">失败原因。</param>
+        // 功能：Canvas 引导失败：复位加载标记，并通知所有等着的失败回调。
+        // 入参：error 失败原因
+        // 返回：无
+        // 步骤：
+        //   1) 先复位 m_canvasLoading，让下次还能重试
+        //   2) 拷出失败回调并清空两个队列
+        //   3) 没人接手就打到 Console —— 绝不能静默，否则又是「界面出不来、Console 还干净」
+        //   4) 否则逐个回调原始异常
+        // 上游：EnsureCanvas / OnCanvasLoaded / OnDispose
+        // 下游：Report / 调用方失败回调
         private void FailCanvas(Exception error)
         {
             m_canvasLoading = false;
@@ -695,7 +718,6 @@ namespace NBC.Framework.UI
 
             if (callbacks.Count == 0)
             {
-                // 没人接手也绝不能静默 —— 否则又变成"界面出不来，Console 还干净"。
                 Report(null, error);
                 return;
             }
@@ -706,13 +728,15 @@ namespace NBC.Framework.UI
             }
         }
 
-        // ====================================================================
-        //  内部：面板加载
-        // ====================================================================
-
-        /// <summary>发起面板预制体的加载。</summary>
-        /// <param name="panelName">面板名。</param>
-        /// <param name="layer">目标层。</param>
+        // 功能：发起一次面板预制体加载，完成后转给 OnPanelLoaded。
+        // 入参：panelName 面板名；layer 目标层
+        // 返回：无
+        // 步骤：
+        //   1) 拼地址：前缀 + 面板名
+        //   2) 加载同步抛出时直接走 FailPending，不留半条加载
+        //   3) 先捕获名字与层，再挂完成回调 —— 回调里不能再读可能已变的成员
+        // 上游：ShowPanel 冷启动（Canvas 就绪后）
+        // 下游：AssetManager.LoadAssetAsync、OnPanelLoaded
         private void StartPanelLoad(string panelName, UILayer layer)
         {
             string location = m_panelLocationPrefix + panelName;
@@ -734,10 +758,18 @@ namespace NBC.Framework.UI
             handle.OnComplete += asset => OnPanelLoaded(capturedName, capturedLayer, asset);
         }
 
-        /// <summary>面板素材加载完成：实例化 → 挂层 → 初始化 → 显示。</summary>
-        /// <param name="panelName">面板名。</param>
-        /// <param name="layer">目标层。</param>
-        /// <param name="handle">素材句柄。</param>
+        // 功能：面板素材加载完成：实例化、挂层、初始化、显示，最后通知所有等待者。
+        // 入参：panelName 面板名；layer 目标层；handle 素材句柄
+        // 返回：无
+        // 步骤：
+        //   1) 句柄无效就释放并走 FailPending，错误里带上地址与原因
+        //   2) 实例化原始 prefab（加载返回的是原始资源，不是实例），并去掉 (Clone) 后缀
+        //   3) 取根节点上的 BasePanel 子类；没有就当场抛出能照着修的错误
+        //   4) 写面板名、挂到目标层、调 Initialize 与 ShowMe
+        //   5) 留住句柄（面板活着素材不能释放），最后登记显示表并通知等待者
+        // 上游：AssetHandle.OnComplete
+        // 下游：AttachToLayer / BasePanel.Initialize / ShowMe / SucceedPending
+        // 注意：中途任何一步失败都要销毁临时实例并释放句柄；句柄必须留到面板关闭，提前释放会让面板的贴图与预制体对象变空。
         private void OnPanelLoaded(string panelName, UILayer layer, AssetHandle<GameObject> handle)
         {
             string location = m_panelLocationPrefix + panelName;
@@ -757,7 +789,6 @@ namespace NBC.Framework.UI
 
             try
             {
-                // ⚠️ 既有约定（Docs/06 §13.7）：拿到的是**原始 prefab**，要自己实例化。
                 instance = UnityEngine.Object.Instantiate(handle.Asset);
 
                 if (instance == null)
@@ -766,7 +797,6 @@ namespace NBC.Framework.UI
                         "[UIManager] 面板 «" + panelName + "» 实例化失败（地址：\"" + location + "\"）。");
                 }
 
-                // 去掉 "(Clone)" 后缀，Hierarchy 里才看得清是哪个面板。
                 instance.name = panelName;
 
                 BasePanel panel = instance.GetComponent<BasePanel>();
@@ -784,7 +814,6 @@ namespace NBC.Framework.UI
                 panel.Initialize();
                 panel.ShowMe();
 
-                // 句柄要留住：面板还活着，素材就不能释放。
                 AssetHandle<GameObject> previous;
                 if (m_panelHandles.TryGetValue(panelName, out previous) && previous != null)
                 {
@@ -808,15 +837,18 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>把面板挂到指定层，并把它的 RectTransform 铺满。</summary>
-        /// <param name="instance">面板实例。</param>
-        /// <param name="panelName">面板名（只用于报错）。</param>
-        /// <param name="layer">目标层。</param>
+        // 功能：把面板实例挂到指定层，并把它的 RectTransform 铺满。
+        // 入参：instance 面板实例；panelName 面板名（只用于报错）；layer 目标层
+        // 返回：无；根节点不是 RectTransform 或层配置有问题时抛异常
+        // 步骤：
+        //   1) 先检查根节点是 RectTransform —— 不是就点名报错，不要等后面空引用
+        //   2) 按层取父节点，配置有问题时 UILayers 会抛带人话的异常
+        //   3) SetParent 必须传 worldPositionStays: false，再清零 localPosition / localScale / offset
+        // 上游：ShowPanel（池中复活）、OnPanelLoaded
+        // 下游：UILayers.Get
+        // 注意：SetParent 不传 false 时 Unity 会为保持世界坐标反算 localScale，界面会被拉伸或缩小。
         private void AttachToLayer(GameObject instance, string panelName, UILayer layer)
         {
-            // P-12 的修法：`as` 转换**必须检查**。
-            // 原版直接 `(obj.transform as RectTransform).offsetMax = ...`，
-            // 根节点不是 RectTransform 时静默变 null → NRE，报错点离配置错误很远。
             RectTransform rect = instance.transform as RectTransform;
 
             if (rect == null)
@@ -828,11 +860,9 @@ namespace NBC.Framework.UI
                     "⚠️ 常见原因：把一个 3D 物体或一个**空 GameObject**当成了 UI 预制体。");
             }
 
-            // 取层：配置有问题时 Get 会抛出**带人话**的异常（见 UILayers）。
+            // 取层：配置有问题时 Get 会抛出带人话的异常（见 UILayers）。
             Transform parent = m_layers.Get(layer);
 
-            // ⚠️ `worldPositionStays: false` —— UI 必须用这个。
-            // 不传的话 Unity 会为了"保持世界坐标"去反算 localScale，界面会被拉伸或缩小。
             rect.SetParent(parent, false);
 
             rect.localPosition = Vector3.zero;
@@ -841,14 +871,12 @@ namespace NBC.Framework.UI
             rect.offsetMin = Vector2.zero;
         }
 
-        // ====================================================================
-        //  内部：回调派发
-        // ====================================================================
-
-        /// <summary>把回调挂到一条正在进行的加载上。</summary>
-        /// <param name="pending">加载记录。</param>
-        /// <param name="onShown">成功回调。</param>
-        /// <param name="onFailed">失败回调。</param>
+        // 功能：把两个回调挂到一条进行中的加载上，空回调忽略。
+        // 入参：pending 加载记录；onShown 成功回调；onFailed 失败回调，两者都可为 null
+        // 返回：无
+        // 步骤：非空才加入对应列表；顺序即注册顺序，完成时按顺序通知。
+        // 上游：ShowPanel
+        // 下游：PendingLoad
         private static void AddCallback(PendingLoad pending, Action<BasePanel> onShown,
                                         Action<Exception> onFailed)
         {
@@ -863,9 +891,16 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>加载成功：摘掉记录，通知所有等待者。</summary>
-        /// <param name="panelName">面板名。</param>
-        /// <param name="panel">面板。</param>
+        // 功能：加载成功：摘掉加载记录，按注册顺序通知所有等待者。
+        // 入参：panelName 面板名；panel 已显示的面板
+        // 返回：无
+        // 步骤：
+        //   1) 没有对应记录就直接返回（可能已被 OnDispose 取消）
+        //   2) 先移除记录，再清掉失败回调 —— 成功之后失败回调不会再被触发
+        //   3) 把成功回调拷出来再逐个调用 —— 回调里可能再次 ShowPanel / HidePanel，不能边遍历边改列表
+        // 上游：OnPanelLoaded
+        // 下游：PendingLoad.OnSuccess
+        // 注意：派发用的是回调拷贝，回调里增删面板不会打乱本次遍历。
         private void SucceedPending(string panelName, BasePanel panel)
         {
             PendingLoad pending;
@@ -885,9 +920,17 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>加载失败：摘掉记录，通知所有等待者。</summary>
-        /// <param name="panelName">面板名。</param>
-        /// <param name="error">失败原因。</param>
+        // 功能：加载失败：摘掉记录并通知所有等待者；没人接手时打到 Console。
+        // 入参：panelName 面板名；error 失败原因
+        // 返回：无
+        // 步骤：
+        //   1) 没有对应记录说明这次失败没人等（或已取消），直接 Report
+        //   2) 移除记录并清掉成功回调
+        //   3) 拷出失败回调；一个都没有就 Report，绝不静默
+        //   4) 否则逐个回调原始异常
+        // 上游：StartPanelLoad / OnPanelLoaded / OnDispose
+        // 下游：Report
+        // 注意：先拷贝回调再派发 —— 回调里再发起新的加载不会打乱本次遍历。
         private void FailPending(string panelName, Exception error)
         {
             PendingLoad pending;
@@ -914,8 +957,7 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>安全地调一个无参回调。</summary>
-        /// <param name="callback">回调。</param>
+        // 功能：回调非空时才调用的无参转发，省掉每个调用处的判空。
         private static void Invoke(Action callback)
         {
             if (callback != null)
@@ -924,9 +966,7 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>安全地调一个面板回调。</summary>
-        /// <param name="callback">回调。</param>
-        /// <param name="panel">面板。</param>
+        // 功能：回调非空时才调用的面板回调转发，省掉每个调用处的判空。
         private static void Invoke(Action<BasePanel> callback, BasePanel panel)
         {
             if (callback != null)
@@ -935,12 +975,13 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>
-        /// 报告一个**没人接手**的错误。
-        /// <para>⚠️ 没有失败回调时绝不能静默 —— 那就变成"界面不出现，Console 还干净"的老毛病了。</para>
-        /// </summary>
-        /// <param name="onFailed">失败回调（可为 null）。</param>
-        /// <param name="error">错误。</param>
+        // 功能：报告一个没人接手的错误：有失败回调就交出去，没有就打到 Console。
+        // 入参：onFailed 失败回调，可为 null；error 错误
+        // 返回：无
+        // 步骤：先尝试失败回调；再兜底 Debug.LogError，绝不静默。
+        // 上游：ShowPanel / FailCanvas / FailPending
+        // 下游：Debug.LogError
+        // 注意：这里不要再加 [UIManager] 前缀 —— 本类抛出的消息自己已经带了来源标识，再加一次会变成叠词。
         private static void Report(Action<Exception> onFailed, Exception error)
         {
             if (onFailed != null)
@@ -949,18 +990,15 @@ namespace NBC.Framework.UI
                 return;
             }
 
-            // ⚠️ **不要在这里再加 "[UIManager]" 前缀。**
-            //    本类抛出的消息**自己已经带了来源标识**，再加一次就会变成
-            //    "[UIManager] [UIManager] 管理器已销毁……" 这种叠词（实际上出现过一次）。
             Debug.LogError(error.Message);
         }
 
-        // ====================================================================
-        //  内部：清理
-        // ====================================================================
-
-        /// <summary>把显示中的面板名拷进缓冲。</summary>
-        /// <param name="buffer">缓冲（会先清空）。</param>
+        // 功能：把显示表中的面板名拷进缓冲，供遍历时安全地增删。
+        // 入参：buffer 接收结果的列表，会先清空
+        // 返回：无
+        // 步骤：先清空缓冲再逐个加入键 —— 先拷贝再遍历，避免遍历时改显示表抛异常。
+        // 上游：HideAll / CloseAll
+        // 下游：m_visible
         private void CopyVisibleNames(List<string> buffer)
         {
             buffer.Clear();
@@ -971,8 +1009,12 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>释放某个面板的素材句柄。</summary>
-        /// <param name="panelName">面板名。</param>
+        // 功能：从表里摘掉并释放某个面板的预制体句柄。
+        // 入参：panelName 面板名
+        // 返回：无
+        // 步骤：先查表；命中就先移除再 Dispose，避免重复释放。
+        // 上游：ClosePanel
+        // 下游：m_panelHandles
         private void ReleasePanelHandle(string panelName)
         {
             AssetHandle<GameObject> handle;
@@ -987,8 +1029,12 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>把面板从 UI 栈里摘掉（关面板时用）。</summary>
-        /// <param name="panelName">面板名。</param>
+        // 功能：把某个面板名从 UI 栈里全部摘掉。
+        // 入参：panelName 面板名
+        // 返回：无
+        // 步骤：从栈顶往下倒序遍历删除 —— 倒序不会因删除而跳过元素；同名项可能不止一个。
+        // 上游：ClosePanel
+        // 下游：m_stack
         private void RemoveFromStack(string panelName)
         {
             for (int i = m_stack.Count - 1; i >= 0; i--)
@@ -1000,12 +1046,12 @@ namespace NBC.Framework.UI
             }
         }
 
-        /// <summary>
-        /// 销毁一个 GameObject。
-        /// <para>⚠️ EditMode 下不能调 `Object.Destroy`（Unity 会报 "Destroy may not be called from
-        /// edit mode"），而这条错误会污染测试结果。所以按运行模式分流。</para>
-        /// </summary>
-        /// <param name="go">目标对象。</param>
+        // 功能：销毁一个 GameObject；按运行 / 编辑模式分流。
+        // 入参：go 目标对象，可为 null
+        // 返回：无
+        // 步骤：null 直接返回；运行时用 Destroy，非运行时用 DestroyImmediate —— EditMode 调 Destroy 会报错并污染测试结果。
+        // 上游：HidePanel / ClosePanel / OnCanvasLoaded / OnPanelLoaded / OnDispose
+        // 下游：UnityEngine.Object
         private static void DestroyObject(GameObject go)
         {
             if (go == null)
@@ -1023,24 +1069,19 @@ namespace NBC.Framework.UI
             }
         }
 
-        // ====================================================================
-        //  生命周期
-        // ====================================================================
-
-        /// <summary>
-        /// 销毁时把所有面板、Canvas、素材句柄**一起清干净**。
-        /// <para>⚠️ 面板必须**真正销毁**，否则单例没了、对象还挂在场景里 —— 那就是泄漏。</para>
-        /// <para>
-        /// ⚠️ **还有未完成的加载时，会通过失败回调把"这次加载被取消"报出来 —— 这是刻意的。**
-        /// 不报的话，还在 `await` 的调用方会**永远挂着**（有专门一条用例守它：
-        /// `Dispose_CancelsPendingLoadsInsteadOfHanging`）。
-        /// 代价是：如果调用方在加载途中直接销毁管理器，Console 里会多一条 error。
-        /// **不想看到它，就在销毁之前先取消自己的请求**（例如先 `HideNow()` / 退订）。
-        /// </para>
-        /// </summary>
+        // 功能：销毁时把未完成的加载、面板、Canvas 与素材句柄一起清干净。
+        // 入参：无（Singleton 的销毁钩子）
+        // 返回：无
+        // 步骤：
+        //   1) 先取消所有进行中的面板加载，通过失败回调报出去 —— 否则还在 await 的调用方会永远挂着
+        //   2) 再取消 Canvas 的等待回调
+        //   3) CloseAll 销毁所有面板并释放句柄；清空栈与缓冲
+        //   4) 释放 Canvas 句柄并销毁实例，最后复位状态与地址
+        // 上游：Singleton.DisposeInstance
+        // 下游：FailPending / FailCanvas / CloseAll / DestroyObject
+        // 注意：面板必须真正销毁，否则单例没了、对象还挂在场景里就是泄漏；加载途中销毁会按设计多一条 error，不想看到就先取消自己的请求。
         protected override void OnDispose()
         {
-            // 还在等加载的调用方必须收到失败，否则它们会**永远等下去**。
             List<string> pendingNames = new List<string>(m_pending.Keys);
 
             for (int i = 0; i < pendingNames.Count; i++)
