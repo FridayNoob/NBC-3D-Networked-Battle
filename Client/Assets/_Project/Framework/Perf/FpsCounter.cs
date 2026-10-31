@@ -1,75 +1,74 @@
-// ============================================================================
-//  NBC.Framework.Perf · 帧率计数（**纯逻辑，不依赖 Unity**）
-//  对应需求：FW-M12（FPS）
-//
-//  ---------------------------------------------------------------------------
-//  为什么不能直接显示 `1 / Time.deltaTime`
-//  ---------------------------------------------------------------------------
-//  那个值是**瞬时**的：一帧 16.6ms、下一帧 17.1ms，显示出来的 FPS 就在 58~60 之间
-//  疯狂跳动，**根本看不清**。而且它会被单帧的抖动完全主导。
-//
-//  所以要看的是**一段时间内的平均** —— 这就是"滑动窗口"：
-//  保留最近 N 帧的耗时，用 `N / Σ耗时` 算平均 FPS。
-//
-//  ⚠️ 另外单看平均会把"偶尔卡一下"抹平（平均 60 但每 3 秒卡 200ms）。
-//     所以还提供 `WorstFrameMilliseconds` —— **卡顿要看最差的那一帧，不是平均**。
-//
-//  ---------------------------------------------------------------------------
-//  这个类是纯逻辑（没有一行 UnityEngine），所以 EditMode 能直接测：
-//      喂一串构造好的帧耗时 → 断言 FPS
-//  不需要真跑一帧。这和 A5 的 `Tick(deltaTime)`、A10 的帧号是同一个手法。
-// ============================================================================
+// 这个文件里有：
+//   FpsCounter（类）：滑动窗口帧率统计，用最近若干帧的耗时算平均 FPS、平均与最差帧耗时
 
 namespace NBC.Framework.Perf
 {
-    /// <summary>
-    /// 滑动窗口帧率统计。
-    /// </summary>
+    // 主要功能：维护最近 N 帧的耗时，算出平均帧率、平均帧耗时与最差帧耗时。
+    // 主要数据成员：m_frameSeconds（环形缓冲，秒）、m_count（有效样本数，帧）、m_sum（窗口内耗时和，秒）。
+    // 主要外部方法：AddFrame / Reset / Fps / AverageFrameMilliseconds / WorstFrameMilliseconds。
+    // 谁在用它：PerfSampler 每帧喂一次 AddFrame；EditMode 测试直接构造它验算统计结果。
+    /// <summary>滑动窗口帧率统计：只接收每帧耗时（秒），不依赖 Unity，可在 EditMode 里直接测。</summary>
     public sealed class FpsCounter
     {
-        /// <summary>默认窗口大小（帧）。</summary>
+        /// <summary>默认窗口帧数，60 帧（60 FPS 下约 1 秒）。</summary>
         public const int DefaultWindowFrames = 60;
 
-        /// <summary>
-        /// 单帧耗时的**上限**（秒）。
-        /// <para>
-        /// ⚠️ 为什么要夹住：编辑器里断点停一下、切出去再切回来，
-        /// 单帧可能"耗时"好几秒。不夹的话，那一帧会**污染整个窗口** ——
-        /// 接下来一整个窗口的 FPS 都显示成 0.2，看着像卡死了。
-        /// 夹到 1 秒相当于"这一帧很慢"，但不会毁掉统计。
-        /// </para>
-        /// </summary>
+        /// <summary>单帧耗时上限，秒；超过按 1 秒记。</summary>
         public const float MaxTrackedFrameSeconds = 1f;
 
+        // 环形缓冲，存放最近各帧的耗时，秒；长度 = 窗口帧数
         private readonly float[] m_frameSeconds;
 
+        // 下一个要写入的槽位下标，0..窗口帧数-1；满窗后它指向最旧的样本
         private int m_nextIndex;
+        // 当前有效样本数，帧，0..窗口帧数；未满说明还在预热
         private int m_count;
+        // 窗口内所有样本的耗时和，秒；必须与槽位内容同步，否则 FPS 会偏
         private float m_sum;
 
-        /// <summary>构造。</summary>
-        /// <param name="windowFrames">窗口帧数；小于 1 时用默认值。</param>
+        // 功能：按窗口帧数分配环形缓冲；帧数不合法时退回默认值。
+        // 入参：windowFrames 采样窗口的帧数，小于 1 时按默认 60 帧处理。
+        // 返回：无（构造函数不返回值）。
+        // 步骤：
+        //   1) 按 windowFrames 分配缓冲
+        //   2) windowFrames 小于 1 时改用默认 60 帧，因为长度 0 的数组会让 AddFrame 取模时除以零
+        // 注意：窗口帧数决定能看到多长时间的抖动；窗口太短 FPS 跳动，太长又会把卡顿抹平。
+        // 上游：PerfSampler 构造时传入窗口帧数；测试直接 new。
+        // 下游：无。
+        /// <summary>按窗口帧数分配环形缓冲，帧数小于 1 时退回默认值。</summary>
+        /// <param name="windowFrames">采样窗口的帧数，小于 1 时按默认 60 帧处理。</param>
         public FpsCounter(int windowFrames = DefaultWindowFrames)
         {
             m_frameSeconds = new float[windowFrames >= 1 ? windowFrames : DefaultWindowFrames];
         }
 
-        /// <summary>窗口帧数。</summary>
+        // 功能：取窗口容量，创建后固定不变。
+        // 返回：窗口最多容纳的帧数，帧。
+        /// <summary>窗口容量，帧。</summary>
         public int WindowFrames
         {
             get { return m_frameSeconds.Length; }
         }
 
-        /// <summary>窗口里现在有多少个样本（小于窗口帧数说明还在预热）。</summary>
+        // 功能：取当前已经收进来的帧数。
+        // 返回：窗口内样本数，帧；小于窗口容量说明还在预热。
+        // 上游：EditMode 测试断言预热进度（也会经 PerfSampler.Fps 间接读）。
+        // 下游：无。
+        /// <summary>窗口里当前的样本数，帧；小于窗口容量说明还在预热。</summary>
         public int SampleCount
         {
             get { return m_count; }
         }
 
-        /// <summary>
-        /// 平均帧率。
-        /// <para>还没有样本时是 0（而不是 `NaN` —— 显示层直接用就行）。</para>
-        /// </summary>
+        // 功能：用样本数除以窗口内耗时和，算平均帧率。
+        // 返回：平均帧率，帧/秒；没有样本或耗时和非正时返回 0。
+        // 步骤：
+        //   1) 没有样本或耗时和非正，直接返回 0
+        //   2) 样本数 ÷ 耗时和（秒）= 帧/秒
+        // 注意：没有样本时返回 0 而不是 NaN，显示层可以直接用，也顺手挡住了除以零。
+        // 上游：PerfSampler.Build 每次产出快照时读。
+        // 下游：HUD 只读快照，不直接碰它。
+        /// <summary>窗口内的平均帧率，帧/秒；没有样本时为 0。</summary>
         public float Fps
         {
             get
@@ -83,16 +82,29 @@ namespace NBC.Framework.Perf
             }
         }
 
-        /// <summary>窗口内的平均帧耗时（毫秒）。</summary>
+        // 功能：把窗口内耗时和除以样本数，换算成单帧平均耗时。
+        // 返回：平均帧耗时，毫秒；没有样本时为 0。
+        // 步骤：
+        //   1) 样本数为 0 先返回 0，避免除以零
+        //   2) 耗时和 ÷ 样本数得到秒，再乘 1000 换成毫秒
+        // 上游：PerfSampler.Build。
+        // 下游：无。
+        /// <summary>窗口内的平均单帧耗时，毫秒；没有样本时为 0。</summary>
         public float AverageFrameMilliseconds
         {
             get { return m_count == 0 ? 0f : (m_sum / m_count) * 1000f; }
         }
 
-        /// <summary>
-        /// 窗口内**最慢那一帧**的耗时（毫秒）。
-        /// <para>⚠️ 看卡顿要看它，不能只看平均值 —— 平均 60 FPS 完全可以掩盖每 3 秒卡 200ms。</para>
-        /// </summary>
+        // 功能：找出窗口里最慢那一帧的耗时。
+        // 返回：最差帧耗时，毫秒；没有样本时为 0。
+        // 步骤：
+        //   1) 没有样本直接返回 0
+        //   2) 遍历 m_count 个有效样本取最大值（窗口只有 60 帧量级，每次重算的开销可忽略）
+        //   3) 秒乘 1000 换成毫秒
+        // 注意：看卡顿要看它，平均 60 FPS 完全可能掩盖每 3 秒卡 200 毫秒。
+        // 上游：EditMode 测试直接断言；PerfSampler 的快照暂未接入。
+        // 下游：无。
+        /// <summary>窗口内最慢一帧的耗时，毫秒；没有样本时为 0。</summary>
         public float WorstFrameMilliseconds
         {
             get
@@ -104,7 +116,6 @@ namespace NBC.Framework.Perf
 
                 float worst = 0f;
 
-                // 只有窗口大小这个量级（默认 60），每次算一遍的开销可以忽略
                 for (int i = 0; i < m_count; i++)
                 {
                     if (m_frameSeconds[i] > worst)
@@ -117,14 +128,22 @@ namespace NBC.Framework.Perf
             }
         }
 
-        /// <summary>
-        /// 记一帧。
-        /// </summary>
-        /// <param name="deltaSeconds">这一帧花了多少秒。</param>
+        // 功能：把一帧耗时记进环形窗口，满窗时用新值替换最旧值，并同步维护样本数与耗时和。
+        // 入参：deltaSeconds 本帧耗时，秒；非正数丢弃，超过上限按 1 秒记。
+        // 返回：无。
+        // 步骤：
+        //   1) 非正数直接返回，不记进窗口
+        //   2) 超过上限先夹到 MaxTrackedFrameSeconds，再入窗
+        //   3) 窗口未满：写入当前槽位、累加耗时和、样本数加一
+        //   4) 窗口已满：先从耗时和里减掉该槽位的旧值，再覆盖并累加新值
+        //   5) 写指针环形前移，取模回绕到 0
+        // 注意：非正耗时会让 Fps 除以零或出现负值；编辑器断点、切出再切回可能产生数秒的假耗时，不夹上限会让整个窗口的 FPS 失真到像卡死。
+        // 上游：PerfSampler.Tick 每帧调用一次。
+        // 下游：无。
+        /// <summary>记一帧耗时；非正数丢弃，超过上限按上限记。</summary>
+        /// <param name="deltaSeconds">这一帧的耗时，秒。</param>
         public void AddFrame(float deltaSeconds)
         {
-            // 非正数没有意义（暂停帧、或者调用方算错了）—— 丢掉而不是记进去，
-            // 否则会出现"除以 0"或者"负耗时"这种说不清的统计
             if (deltaSeconds <= 0f)
             {
                 return;
@@ -143,7 +162,6 @@ namespace NBC.Framework.Perf
             }
             else
             {
-                // 窗口满了：把最旧的那个换掉
                 m_sum -= m_frameSeconds[m_nextIndex];
                 m_frameSeconds[m_nextIndex] = deltaSeconds;
                 m_sum += deltaSeconds;
@@ -152,7 +170,15 @@ namespace NBC.Framework.Perf
             m_nextIndex = (m_nextIndex + 1) % m_frameSeconds.Length;
         }
 
-        /// <summary>清空统计。</summary>
+        // 功能：清空窗口，回到没有样本的预热状态。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 逐个槽位清零，避免残留旧帧耗时
+        //   2) 写指针、样本数、耗时和一并归零，让下一次 AddFrame 从 0 号槽重新开始
+        // 上游：PerfSampler.Reset（重开统计时）。
+        // 下游：无。
+        /// <summary>清空窗口，回到没有样本的预热状态。</summary>
         public void Reset()
         {
             for (int i = 0; i < m_frameSeconds.Length; i++)
