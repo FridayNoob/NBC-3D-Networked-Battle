@@ -1,12 +1,12 @@
 // 这个文件里有：
-//   PlayerMove（类）：W 前进、S 倒退、A/D 转身朝左/右再前进；不斜走，朝向只由 A/D/W 决定
+//   PlayerMove（类）：四向移动（W/A/S/D 都是转身朝该方向再前进）；不斜走，朝向只由方向键决定
 
 using NBC.Framework.Input;
 using UnityEngine;
 
 namespace NBC.Game.Player
 {
-    // 主要功能：每帧读输入，取主导轴得到 W/A/S/D 四种之一：W 面朝前走、A/D 先转身再前进、S 保持朝向倒退。
+    // 主要功能：每帧读输入，取主导轴得到 W/A/S/D 四种之一，统一「转身朝该方向 + 沿该方向前进」。
     // 主要数据成员：m_moveSpeed（米/秒）、m_turnSpeed（度/秒）、m_forwardSpeed / m_sideSpeed（给动画的分量）。
     // 主要外部方法：ForwardSpeed / SideSpeed / MoveSpeed / CurrentSpeed（只读属性）。
     // 谁在用它：挂在角色物体上；输入取自 InputManager.Instance.Current，键位在 InputMapping 里可改。
@@ -67,7 +67,7 @@ namespace NBC.Game.Player
             get { return m_currentSpeed; }
         }
 
-        // 功能：每帧把输入压成四向之一，转身或倒退并位移，同时算出前后 / 左右分量。
+        // 功能：每帧把输入压成四向之一，转身朝该方向并位移，同时算出前后 / 左右分量。
         // 入参：无（引擎每帧调用）
         // 返回：无
         // 步骤：
@@ -78,12 +78,12 @@ namespace NBC.Game.Player
         //        W（z>0）  ：朝向 = 世界前方，沿该方向前进
         //        A（x<0）  ：朝向 = 世界左方，转身后沿该方向前进
         //        D（x>0）  ：朝向 = 世界右方，转身后沿该方向前进
-        //        S（z<0）  ：朝向不变，沿 -当前朝向 倒退
+        //        S（z<0）  ：朝向 = 世界后方，转身后沿该方向前进
         //   5) 转身用 RotateTowards 限速（0.125 秒转 90 度），位移用「目标方向」而不是当前朝向，避免转弯时走弧线
         //   6) 位移后按 forward / right 点乘，拆出前后 / 左右分量
         // 上游：Unity 引擎每帧调用
         // 下游：InputManager.Current、Transform.rotation、Transform.position
-        // 注意：A/D 会转身、S 不会 —— 这三条是负责人在 2026-10-28 明确要求的
+        // 注意：四向一律会转身（S 也转身，2026-10-31 由负责人改；R012 时曾是「S 不转身倒退」）
         private void Update()
         {
             m_forwardSpeed = 0f;
@@ -108,29 +108,18 @@ namespace NBC.Game.Player
             }
 
             bool forwardWins = Mathf.Abs(z) >= Mathf.Abs(x);
-            bool backpedal = forwardWins && z < 0f;
 
-            // 目标是世界坐标的四个基本方向之一
+            // 目标是世界坐标的四个基本方向之一（S 就是 (0,0,-1)，与 A/D 同样对待）
             Vector3 targetDirection = forwardWins
                 ? new Vector3(0f, 0f, Mathf.Sign(z))
                 : new Vector3(Mathf.Sign(x), 0f, 0f);
 
-            Vector3 moveDirection;
+            // 四向统一：先转身朝目标方向（限速），位移仍用目标方向，避免边走边转出弧线
+            Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation, targetRotation, m_turnSpeed * Time.deltaTime);
 
-            if (backpedal)
-            {
-                // 后退：不改朝向，沿「当前朝向的反方向」走 ⇒ 动画会进 WalkBack
-                moveDirection = -transform.forward;
-            }
-            else
-            {
-                // 前进 / 左 / 右：先转身朝目标方向（限速），位移仍用目标方向，避免边走边转出弧线
-                Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);
-                transform.rotation = Quaternion.RotateTowards(
-                    transform.rotation, targetRotation, m_turnSpeed * Time.deltaTime);
-
-                moveDirection = targetDirection;
-            }
+            Vector3 moveDirection = targetDirection;
 
             Vector3 before = transform.position;
             transform.position += moveDirection * (m_moveSpeed * Time.deltaTime);
