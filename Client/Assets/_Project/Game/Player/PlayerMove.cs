@@ -137,5 +137,19 @@ namespace NBC.Game.Player
             m_sideSpeed = Vector3.Dot(moved, transform.right) / dt;
             m_currentSpeed = moved.magnitude / dt;
         }
+
+        // 功能：被禁用时把三个速度清零，避免下游继续读到「停之前那一帧」的旧速度。
+        // 入参：无
+        // 返回：无
+        // 步骤：直接归零（这三个字段只在 Update 里写，禁用后不会再被刷新）
+        // 上游：Unity 引擎（组件被禁用时调用）、PlayerBrain 的状态闸门
+        // 下游：PlayerAnimation 读这三个值
+        // 注意：不清零的话，状态机禁用本组件后动画会一直保持「在走」——因为 PlayerAnimation 读到的是旧值
+        private void OnDisable()
+        {
+            m_forwardSpeed = 0f;
+            m_sideSpeed = 0f;
+            m_currentSpeed = 0f;
+        }
     }
 }

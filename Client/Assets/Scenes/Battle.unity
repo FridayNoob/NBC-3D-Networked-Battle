@@ -473,58 +473,15 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 1279496892705747275, guid: a93b47c056555ef4e93fb84a04282ed1,
+    - target: {fileID: 560796732677680202, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -20.258194
+      propertyPath: defaultEventSetting.monitoredLayers.Array.size
+      value: 2
       objectReference: {fileID: 0}
-    - target: {fileID: 1279496892705747275, guid: a93b47c056555ef4e93fb84a04282ed1,
+    - target: {fileID: 560796732677680202, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: -89.616135
-      objectReference: {fileID: 0}
-    - target: {fileID: 1468701655573631190, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 20.258146
-      objectReference: {fileID: 0}
-    - target: {fileID: 2827892552148406830, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0.12640975
-      objectReference: {fileID: 0}
-    - target: {fileID: 2827892552148406830, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 2.007124
-      objectReference: {fileID: 0}
-    - target: {fileID: 2827892552148406830, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0.58087546
-      objectReference: {fileID: 0}
-    - target: {fileID: 3351973052597654587, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_Avatar
-      value: 
-      objectReference: {fileID: 9000000, guid: 3e4217cf9a9145444918bb654c767c9a, type: 3}
-    - target: {fileID: 3351973052597654587, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_WarningMessage
-      value: "\nBinding warning: Some generic clip(s) animate transforms that are
-        already bound by a Humanoid avatar. These transforms can only be changed
-        by Humanoid clips.\n\tTransform 'index_03_l'\n\tTransform 'index_03_r'\n\tTransform
-        'index_03_l'\n\tTransform 'index_03_r'\n\tTransform 'index_03_l'\n\tTransform
-        'index_03_r'\n\tFrom animation clip 'S_Sp_Idle'\n\tFrom animation clip 'S_Sp_Skill2'\n\tFrom
-        animation clip 'S_SP_Walk'\n\tFrom animation clip 'S_Sp_TurnL'\n\tFrom animation
-        clip 'S_Sp_TurnR'\n\tFrom animation clip 'S_Quickshift_B'\n\tFrom animation
-        clip 'S_Quickshift_F'\n\tFrom animation clip 'S_Quickshift_L'\n\tFrom animation
-        clip 'S_Quickshift_R'\n\tFrom animation clip 'S_Take'\n\tand more ..."
-      objectReference: {fileID: 0}
-    - target: {fileID: 3351973052597654587, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_ApplyRootMotion
-      value: 0
+      propertyPath: defaultEventSetting.monitoredLayers.Array.data[0]
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 3762231254516395996, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
@@ -581,38 +538,14 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 5279479066487228663, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -0.124318495
-      objectReference: {fileID: 0}
-    - target: {fileID: 5279479066487228663, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 2.5732977
-      objectReference: {fileID: 0}
-    - target: {fileID: 5279479066487228663, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0.6286043
-      objectReference: {fileID: 0}
-    m_RemovedComponents:
-    - {fileID: 9207870817118646670, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
+    m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 3762231254516395996, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
       insertIndex: -1
-      addedObject: {fileID: 962813210}
-    - targetCorrespondingSourceObject: {fileID: 3762231254516395996, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 962813209}
-    - targetCorrespondingSourceObject: {fileID: 3762231254516395996, guid: a93b47c056555ef4e93fb84a04282ed1,
-        type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 962813214}
+      addedObject: {fileID: 962813215}
   m_SourcePrefab: {fileID: 100100000, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
 --- !u!1 &962813208 stripped
 GameObject:
@@ -620,7 +553,13 @@ GameObject:
     type: 3}
   m_PrefabInstance: {fileID: 962813207}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &962813209
+--- !u!4 &962813213 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4575078637956642150, guid: a93b47c056555ef4e93fb84a04282ed1,
+    type: 3}
+  m_PrefabInstance: {fileID: 962813207}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &962813215
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -629,45 +568,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 962813208}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7c2a1da2fb6f7104fa5f1a7bcc7d5a3d, type: 3}
+  m_Script: {fileID: 11500000, guid: a04078ef99afb8948afd752958af2ae0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_animator: {fileID: 0}
-  m_damping: 0.1
---- !u!114 &962813210
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 962813208}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c2c8271ee2cf4c24fa5699c754aa80ba, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_moveSpeed: 5
-  m_turnSpeed: 720
---- !u!114 &962813214
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 962813208}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: dabaf2f856c5ede49beb8a6f964f4422, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  animEventFunctionName: SwitchSocket
-  defaultEventSetting:
-    enabled: 0
-    eventName: 
-    monitoredLayers: 
-  showDebugLog: 0
-  weaponSlots: []
-  supportIKSettings: []
+  m_move: {fileID: 0}
 --- !u!1001 &1631205724
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -738,12 +642,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 40046bae76ac54bffb59f14f47d9ba1b, type: 3}
---- !u!4 &1631205733 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 400100, guid: 40046bae76ac54bffb59f14f47d9ba1b,
-    type: 3}
-  m_PrefabInstance: {fileID: 1631205724}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1672047826
 GameObject:
   m_ObjectHideFlags: 0
@@ -850,7 +748,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3990c5768429eb14b81e39a26c3d4bcb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_target: {fileID: 1631205733}
+  m_target: {fileID: 962813213}
   m_offset: {x: 0, y: 4, z: -6}
   m_smooth: 8
 --- !u!114 &1672047831
