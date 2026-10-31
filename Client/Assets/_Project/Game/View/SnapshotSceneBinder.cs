@@ -22,11 +22,22 @@ namespace NBC.Game.View
         // 毫米换米的系数；1 毫米 = 0.001 米，表现层唯一一次单位换算（数据层全是整数毫米）
         private const float MmToUnit = 0.001f;
 
+        // 追踪速度上限，米/秒；超过这个速度就不是「追」，而是瞬移或数据错乱，直接归位更安全
+        private const float MaxChaseSpeed = 60f;
+
         // 表现层读的那一份数据；null = 还没绑定，LateUpdate 直接返回
         private SnapshotView m_view;
 
         // 我的玩家编号；0 = 未知，此时不认英雄也不跟随
         private long m_ownerPlayerId;
+
+        // 快照间隔，秒；默认 1/30（服务端 30Hz）。追踪速度 = 距离 / 这个值 ⇒ 刚好在下一条快照到达时追上
+        [SerializeField]
+        private float m_snapshotIntervalSeconds = 1f / 30f;
+
+        // 瞬移阈值，米；目标离当前位置超过它就当作换局 / 复活 / 传送，直接归位而不是滑过去
+        [SerializeField]
+        private float m_teleportDistanceMeters = 10f;
 
         // 实例编号到槽位的复用表；稳态容量等于见过的单位数，不每帧 new
         private readonly Dictionary<int, Slot> m_slots = new Dictionary<int, Slot>();
@@ -177,7 +188,7 @@ namespace NBC.Game.View
             Debug.Log("[NBC 视图接管] 场景里没有主相机 ⇒ **播放模式**下自建了一台（运行时建，不落盘）。");
         }
 
-        // 功能：每帧把快照里的每个实体搬到对应几何体上，并驱动相机跟随。
+        // 功能：每帧把快照里的每个实体朝目标位置推进（匀速追踪，不再硬跳），并驱动相机跟随。
         // 入参：无
         // 返回：无
         // 步骤：
@@ -188,7 +199,8 @@ namespace NBC.Game.View
         //   5) 活着就把毫米换成米写位置；我的英雄放大到 1.4 倍，y 取缩放的一半把胶囊抬高一些，少埋进地面
         //   6) 收尾隐藏本帧没出现的旧物体，再让相机跟随，最后累计帧数
         // 上游：Unity 每帧调用；只读 m_view，不写回世界
-        // 下游：EnsureSlot、HideGone、FollowHero
+        // 下游：EnsureSlot、MoveSlotTo（位置追踪）、HideGone、FollowHero
+        // 注意：位置不再直接赋值 —— 30Hz 快照直接赋值会「每 33ms 跳一格」，改成朝目标匀速追（R006）
         private void LateUpdate()
         {
             if (m_view == null)
@@ -220,7 +232,10 @@ namespace NBC.Game.View
                 bool mine = m_ownerPlayerId != 0 && e.OwnerPlayerId == m_ownerPlayerId;
                 float scale = mine ? HeroScale : 1f;
 
-                slot.Transform.localPosition = new Vector3(e.PosXMm * MmToUnit, scale * 0.5f, e.PosZMm * MmToUnit);
+                // 目标位置（局部坐标，与槽位父节点一致）；高度取一半，让胶囊体站在地面上
+                Vector3 target = new Vector3(e.PosXMm * MmToUnit, scale * 0.5f, e.PosZMm * MmToUnit);
+
+                MoveSlotTo(slot, target);
                 slot.Transform.localScale = new Vector3(scale, scale, scale);
             }
 
@@ -241,6 +256,47 @@ namespace NBC.Game.View
         //   1) 遍历所有槽位，SeenPush 不等于本帧序号就是本帧没出现
         //   2) 只给还显示着的调 SetActive(false)，避免每帧重复写
         //   3) 注意：只隐藏不销毁，单位可能只是这一帧不在，留着下次复用更省
+        // 功能：把槽位朝目标位置匀速推进（30Hz 快照 → 60fps 连续），必要时直接归位。
+        // 入参：slot 槽位；target 本帧快照给的目标位置（局部坐标，米）
+        // 返回：无
+        // 步骤：
+        //   1) 槽位第一次落位 ⇒ 直接放到目标（否则会从原点滑过来）
+        //   2) 距离超过瞬移阈值 ⇒ 直接归位（换局 / 复活 / 传送）
+        //   3) 否则按「距离 / 快照间隔」算速度（上限 MaxChaseSpeed），朝目标推进 speed * dt
+        // 上游：LateUpdate 遍历实体时
+        // 下游：Transform.localPosition
+        // 注意：速度取「刚好在下一条快照到达时追上」，不取固定值 —— 固定值会越追越远或提前停下
+        // 注意：全程用 localPosition（槽位挂在池根下），别混进世界坐标
+        private void MoveSlotTo(Slot slot, Vector3 target)
+        {
+            Vector3 current = slot.Transform.localPosition;
+
+            if (!slot.Positioned)
+            {
+                slot.Positioned = true;
+                slot.Transform.localPosition = target;
+                return;
+            }
+
+            float distance = Vector3.Distance(current, target);
+
+            if (distance >= m_teleportDistanceMeters || distance <= 0.0001f)
+            {
+                // 换局 / 复活 / 传送：直接归位；距离为 0 也直接写一次，省掉无效计算
+                slot.Transform.localPosition = target;
+                return;
+            }
+
+            float interval = m_snapshotIntervalSeconds > 0.001f ? m_snapshotIntervalSeconds : 0.001f;
+            float speed = distance / interval;
+
+            if (speed > MaxChaseSpeed)
+            {
+                speed = MaxChaseSpeed;
+            }
+
+            slot.Transform.localPosition = Vector3.MoveTowards(current, target, speed * Time.deltaTime);
+        }
         // 上游：LateUpdate 每帧末尾
         // 下游：GameObject.SetActive
         private void HideGone()
@@ -365,6 +421,9 @@ namespace NBC.Game.View
 
             // 最后一次被看到的帧序号；小于当前 m_pushCount 即本帧没出现
             public int SeenPush;
+
+            // 是否已经落过位；首次出现要直接归位，不能从原点滑进来
+            public bool Positioned;
 
             // 功能：缓存物体与它的 Transform。
             // 入参：go 这个单位对应的场景物体
