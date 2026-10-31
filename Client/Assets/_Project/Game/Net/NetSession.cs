@@ -15,29 +15,6 @@ using NBC.Shared.Sim;
 
 namespace NBC.Game.Net
 {
-    // 主要功能：一条会话的五个状态，从未连接到失败。
-    // 主要数据成员：无 —— 枚举值本身就是状态，从 0 起连续编号。
-    // 主要外部方法：无，只被 NetSession.State 与编辑器窗口读取。
-    // 谁在用它：NetSession 内部切状态；Editor 的 NetDebugWindow 按它显示并禁用按钮。
-    /// <summary>会话状态。</summary>
-    public enum ESessionState
-    {
-        /// <summary>没连。</summary>
-        Disconnected = 0,
-
-        /// <summary>正在连，传输层的非阻塞连接阶段。</summary>
-        Connecting = 1,
-
-        /// <summary>连上了，正在等握手结果。</summary>
-        Handshaking = 2,
-
-        /// <summary>握手完成，可以收发。</summary>
-        Online = 3,
-
-        /// <summary>失败；原因在 FailureReason 里，此时连接已经被关掉。</summary>
-        Failed = 4
-    }
-
     // 主要功能：一条联机会话的状态机 —— 连接、握手、心跳、收包分发，全部时间由调用方 Pump 喂进来。
     // 主要数据成员：m_transport（字节载荷接缝）、m_clockMs（本地毫秒时钟）、m_state（会话状态）、m_lockstep（每局一个的锁步运行器）。
     // 主要外部方法：Connect / Disconnect / Pump / SendInput / SendLockstepInput / FindQuestState / FindProgress。

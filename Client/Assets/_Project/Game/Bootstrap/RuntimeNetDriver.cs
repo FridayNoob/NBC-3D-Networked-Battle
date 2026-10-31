@@ -66,6 +66,12 @@ namespace NBC.Game.Bootstrap
         // 最近一次错误（空 = 没出错）
         private string m_lastError = string.Empty;
 
+        // 断线重连策略（退避与次数上限都在它里面，本组件只执行它给的动作）
+        private NetReconnector m_reconnector;
+
+        // 上一帧是否在房间里（用来识别「重新进房」这个事件，重连回来时据此重置表现层）
+        private bool m_wasInRoom;
+
         // 功能：告诉调用方是否已握手成功。
         // 入参：无
         // 返回：是否已握手成功
@@ -103,6 +109,7 @@ namespace NBC.Game.Bootstrap
         private void Start()
         {
             m_feed = new PresentationFeed();
+            m_reconnector = new NetReconnector(5, m_dungeonId);
 
             ITransport transport = new CountingTransport(new TcpTransport());
 
@@ -148,6 +155,8 @@ namespace NBC.Game.Bootstrap
             int deltaMs = Mathf.RoundToInt(Time.deltaTime * 1000f);
             m_session.Pump(deltaMs);
 
+            DriveReconnect();
+
             if (m_session.IsOnline && !m_joinRequested)
             {
                 m_joinRequested = true;
@@ -156,8 +165,10 @@ namespace NBC.Game.Bootstrap
                 m_session.JoinRoom(string.Empty, m_dungeonId);
             }
 
-            if (m_session.InRoom)
+            // 必须同时「在线」才发输入：InRoom 只看房间字段，断线后它仍是 true（见 NetSession.InRoom）
+            if (m_session.IsOnline && m_session.InRoom)
             {
+                NoteJoinedNow();
                 PumpInput();
             }
 
@@ -165,6 +176,106 @@ namespace NBC.Game.Bootstrap
             PushStats();
         }
 
+        // 功能：每帧把会话状态喂给重连策略，并执行它给的下一步动作。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没有策略就返回（Start 之前不会发生）
+        //   2) 取策略的下一步动作与放弃原因
+        //   3) 按动作执行：Connect 重连、JoinRoom 回原房、GiveUp 记错误并停手
+        //   4) 阶段变了就打一行日志（只在变化时打，避免刷屏）
+        // 上游：Update（Pump 之后）
+        // 下游：NetSession.Connect / JoinRoom、NetReconnector.Tick
+        // 注意：Connect 用的是同一个 NetSession —— 账号与密码摘要在构造时就固定，不需要也不应该重建会话
+        private void DriveReconnect()
+        {
+            if (m_reconnector == null)
+            {
+                return;
+            }
+
+            bool online = m_session.State == ESessionState.Online;
+            string reason;
+
+            // 把会话状态（而不是布尔「在线」）喂给策略：它要区分「连接进行中」与「连接已失败」，
+            // 否则会对着一个还在 Connecting 的会话重复 Connect，直接抛「已经在连」
+            EReconnectAction action = m_reconnector.Tick(m_session.State, m_session.InRoom, Time.deltaTime, out reason);
+
+            if (action == EReconnectAction.Connect)
+            {
+                Debug.Log("[Reconnect] 第 " + m_reconnector.Attempt + " 次重连：" + m_host + ":" + m_port);
+                m_session.Connect(m_host, m_port);
+            }
+            else if (action == EReconnectAction.JoinRoom)
+            {
+                Debug.Log("[Reconnect] 已重连，回房：" + m_reconnector.LastRoomId);
+                m_session.JoinRoom(m_reconnector.LastRoomId, m_dungeonId);
+            }
+            else if (action == EReconnectAction.Reset)
+            {
+                // 连接卡住超过 3 秒：先断掉，下一帧状态回到 Disconnected 才允许再 Connect
+                Debug.LogWarning("[Reconnect] 连接超时，重置会话后重试");
+                m_session.Disconnect("重连超时，重置连接");
+            }
+            else if (action == EReconnectAction.GiveUp)
+            {
+                m_lastError = reason;
+                Debug.LogWarning("[Reconnect] 放弃重连：" + reason);
+            }
+
+            // 断线期间要把「在房」标记清掉，这样重连回来时才算一次「重新进房」（表现层才重置）。
+            // ⚠️ 判据必须是「是否在线」：InRoom 只看房间字段，断开后它仍然是 true，用它判永远清不掉
+            if (!online)
+            {
+                m_wasInRoom = false;
+            }
+        }
+
+        // 功能：进房成功时把房号记给重连策略，并在「这是重连回来的」时重置表现层。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 房号为空（服务端还没下发 RoomState）就直接返回
+        //   2) 之前已在房里 ⇒ 说明是第一次进房，只记房号
+        //   3) 之前不在房里 ⇒ 这是重连回来：清表现层缓存、让绑定器重建
+        //   4) 记房号（策略据此在下次断线时回原房）
+        // 上游：Update（InRoom 为真时每帧调）
+        // 下游：PresentationFeed.Clear、NetReconnector.NoteJoined
+        // 注意：这里必须清表现层 —— 上一局的帧号与换局计数会让新会话被判成「帧号倒退」或「假分歧」
+        private void NoteJoinedNow()
+        {
+            if (!m_session.InRoom || m_reconnector == null)
+            {
+                return;
+            }
+
+            string roomId = m_session.CurrentRoom == null ? string.Empty : m_session.CurrentRoom.RoomId;
+
+            if (string.IsNullOrEmpty(roomId))
+            {
+                return;
+            }
+
+            if (!m_wasInRoom)
+            {
+                m_wasInRoom = true;
+
+                // 阶段还在重连三态之一 ⇒ 这次进房是重连回来的，必须清表现层
+                EReconnectPhase phase = m_reconnector.Phase;
+                bool rejoined = phase == EReconnectPhase.Waiting
+                    || phase == EReconnectPhase.Connecting
+                    || phase == EReconnectPhase.Joining;
+
+                if (rejoined)
+                {
+                    m_feed.Clear();
+                    m_binder = null;
+                    Debug.Log("[Reconnect] 已回到房间 " + roomId + "，表现层已重置");
+                }
+            }
+
+            m_reconnector.NoteJoined(roomId);
+        }
         // 功能：退订事件、释放会话，并把统计清零。
         // 入参：无
         // 返回：无
@@ -173,6 +284,12 @@ namespace NBC.Game.Bootstrap
         private void OnDestroy()
         {
             m_joinRequested = false;
+            m_wasInRoom = false;
+
+            if (m_reconnector != null)
+            {
+                m_reconnector.NoteIntentionalDisconnect();
+            }
 
             if (m_session != null)
             {
