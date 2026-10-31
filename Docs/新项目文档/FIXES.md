@@ -51,3 +51,13 @@
   `HpBarDemoBehaviour` 的 using 同步改名。**不再用「排除文件」绕过** —— `Game\Net` 应保持引擎无关。
 - 验证：api-probe 0 错/10 警告；net-probe 0 错/0 警告；asmdef 12/12 全绿。
 - 教训：往「被探针整目录收录」的目录里加文件前，先确认它是否引入引擎依赖。
+
+## 2026-10-31 全项目注释规范化收尾（139 个文件）
+
+- 结果：220 个 .cs 中 **139 个已按《项目代码注释规范》规范化**，未规范 0 个；
+  排除：生成代码 22（Protocol / Config\Generated）、受保护 1（SnapshotView.cs）、Tests 58（负责人决定不改）。
+- 范围：Game 42 / Shared 25 / Framework 46 / Framework.UI 7 / Framework.Net 6 / Framework.YooAsset 3 / Editor 7 / Boot 3。
+- 验证手段：每批都做「剥掉注释后逐行比对代码」+ api-probe（0 错/10 警告）+ asmdef（12/12）；net-probe（0 错/8 警告）。
+- 顺带修的真问题：`RuntimeNetDriver` 住在 `Game\Net` 导致 e2e 探针编不过 → 已移到 `Game\Bootstrap`；
+  `Battle.unity` 被 Unity 重存时丢了一处 `m_ApplyRootMotion` 覆盖 → 已还原。
+- 过程教训：手写文件路径清单出过两次错（列出不存在的文件，导致 3 个代理撞同一文件）→ 之后一律先 Get-ChildItem 实测再派发。
