@@ -14,7 +14,7 @@ using UnityEngine;
 namespace NBC.Boot
 {
     // 主要功能：把「资源层初始化 + 打开血条 HUD + 按空格扣血」合成一个演示脚手架，只用于人工验收。
-    // 主要数据成员：m_mode（资源模式）、m_maxHp（最大血）、m_damagePerPress（每次扣多少）。
+    // 主要数据成员：m_mode（资源模式）、m_maxHp（最大血，服务端真血到达前的初始显示）。
     // 主要外部方法：无（挂到场景物体上自动跑）；正式战斗 HUD 接上后本类可删。
     // 谁在用它：只挂在验收场景里。
     // 为什么放在 NBC.Boot 而不是 NBC.Game：它要用 AssetBootstrapper，而 asmdef 的引用方向是
@@ -36,13 +36,15 @@ namespace NBC.Boot
         [SerializeField] private int m_maxHp = 100;
 
         // 每次按空格扣多少血
-        [SerializeField] private int m_damagePerPress = 10;
 
         // 当前血
         private int m_hp;
 
         // 血条面板（打开成功后才有）
         private HpBarPanel m_panel;
+
+        // 运行时网络驱动；HUD 每帧从它读服务端的真实血量（R020）
+        private RuntimeNetDriver m_driver;
 
         // 资源层是否已经装好
         private bool m_assetsReady;
@@ -108,6 +110,7 @@ namespace NBC.Boot
 
         RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
         driver.MonsterPrefab = m_monsterPrefab;
+        m_driver = driver;
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
 
@@ -150,13 +153,17 @@ namespace NBC.Boot
         }
         private void Update()
         {
-            if (!m_assetsReady || m_panel == null || !Input.GetKeyDown(KeyCode.Space))
+            if (!m_assetsReady || m_panel == null || m_driver == null)
             {
                 return;
             }
 
-            m_hp = Mathf.Max(0, m_hp - m_damagePerPress);
-            m_panel.SetHp(m_hp, m_maxHp);
+            // R020：HUD 显示服务端的真实血量；拿到之前（HeroMaxHp == 0）保持面板原样
+            if (m_driver.HeroMaxHp > 0 && m_driver.HeroHp != m_hp)
+            {
+                m_hp = m_driver.HeroHp;
+                m_panel.SetHp(m_driver.HeroHp, m_driver.HeroMaxHp);
+            }
         }
 
         // 功能：找出最新的模拟清单目录，交给资源层安装。

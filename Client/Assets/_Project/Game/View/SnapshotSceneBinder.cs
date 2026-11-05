@@ -4,6 +4,7 @@
 
 using System.Collections.Generic;
 using NBC.Game.Net;
+using NBC.Game.UI;
 using NBC.Protocol;
 using UnityEngine;
 
@@ -52,6 +53,15 @@ namespace NBC.Game.View
         // 朝向偏移，度；模型前向不是 +Z 时用它纠正（R017）
         [SerializeField]
         private float m_facingOffsetDegrees = 0f;
+
+        // 死亡后模型保留多久再隐藏，秒；给死亡动画留时间（R020）
+        private const float DeathLingerSeconds = 1.0f;
+
+        // 受击动画在 controller 里的参数名（狼是 Take Damage）
+        private const string TakeDamageParameter = "Take Damage";
+
+        // 死亡动画参数名（狼是 Die）
+        private const string DieParameter = "Die";
 
         // 判定「在移动」的水平距离阈值，米；停下瞬间的距离抖动靠它挡掉
         [SerializeField]
@@ -276,9 +286,14 @@ namespace NBC.Game.View
 
                 slot.SeenPush = m_pushCount;
 
-                if (slot.Go.activeSelf != e.Alive)
+                ApplyCombatFeedback(slot, e);
+
+                // 死亡后不立刻隐藏：给死亡动画留一点时间（R020）
+                bool visible = e.Alive || (slot.DiedAt > 0f && Time.time - slot.DiedAt < DeathLingerSeconds);
+
+                if (slot.Go.activeSelf != visible)
                 {
-                    slot.Go.SetActive(e.Alive);
+                    slot.Go.SetActive(visible);
                 }
 
                 if (!e.Alive)
@@ -314,6 +329,64 @@ namespace NBC.Game.View
         //   1) 遍历所有槽位，SeenPush 不等于本帧序号就是本帧没出现
         //   2) 只给还显示着的调 SetActive(false)，避免每帧重复写
         //   3) 注意：只隐藏不销毁，单位可能只是这一帧不在，留着下次复用更省
+        // 功能：按快照里的血量与存活状态，驱动血条、伤害飘字、受击与死亡动画。
+        // 入参：slot 槽位；entity 这一帧的快照
+        // 返回：无
+        // 步骤：
+        //   1) 第一次见到这个单位：只记基线（血量/存活/满血血条），不飘字
+        //   2) 之后掉血 ⇒ 飘一个伤害数字 + 触发受击动画
+        //   3) 血条比例跟着血量走
+        //   4) 刚死的这一刻 ⇒ 触发死亡动画并记下时刻（隐藏由调用方延迟处理）
+        // 上游：LateUpdate 遍历实体时
+        // 下游：DamagePopup.Show、Animator.SetTrigger、MonsterHealthBar.SetRatio
+        // 注意：首帧必须只记基线 —— 否则单位一进场就会飘一个「满血」数字
+        private void ApplyCombatFeedback(Slot slot, EntitySnapshot entity)
+        {
+            if (slot.HealthBar == null)
+            {
+                slot.HealthBar = slot.Go.AddComponent<MonsterHealthBar>();
+                slot.HealthBar.Bind(entity.MaxHp);
+            }
+
+            if (!slot.HpKnown)
+            {
+                slot.HpKnown = true;
+                slot.LastHp = entity.Hp;
+                slot.AliveKnown = entity.Alive;
+                return;
+            }
+
+            if (entity.Hp < slot.LastHp)
+            {
+                int amount = slot.LastHp - entity.Hp;
+                Vector3 popupAt = slot.Transform.position + Vector3.up * 1.4f;
+                DamagePopup.Show(popupAt, amount);
+
+                if (slot.HasTakeDamage)
+                {
+                    slot.Animator.SetTrigger(TakeDamageParameter);
+                }
+            }
+
+            slot.LastHp = entity.Hp;
+
+            if (entity.MaxHp > 0)
+            {
+                slot.HealthBar.SetRatio((float)entity.Hp / entity.MaxHp);
+            }
+
+            if (slot.AliveKnown && !entity.Alive)
+            {
+                slot.DiedAt = Time.time;
+
+                if (slot.HasDie)
+                {
+                    slot.Animator.SetTrigger(DieParameter);
+                }
+            }
+
+            slot.AliveKnown = entity.Alive;
+        }
         // 功能：按「到目标的水平距离」驱动走路动画，并按快照朝向转身。
         // 入参：slot 槽位；facingDeg 快照里的朝向（度）；target 本帧目标位置（局部坐标）
         // 返回：无
@@ -617,6 +690,27 @@ namespace NBC.Game.View
             // 是否已经为「缺 Walk 参数」告过警；只报一次，避免每帧刷屏
             public bool WarnedMissingWalk;
 
+            // controller 里有没有受击/死亡触发参数（R020）
+            public readonly bool HasTakeDamage;
+
+            // controller 里有没有死亡触发参数（R020）
+            public readonly bool HasDie;
+
+            // 头顶血条；懒创建（满血值要等第一帧快照才知道）
+            public MonsterHealthBar HealthBar;
+
+            // 上一帧的血量；HpKnown 为 false 时只看不比较（新单位首帧不能飘满血数字）
+            public int LastHp;
+
+            // 是否已经有血量基线
+            public bool HpKnown;
+
+            // 上一帧是否活着；用来识别「刚死」这一刻
+            public bool AliveKnown;
+
+            // 死亡的时刻（Time.time）；0 = 还没死
+            public float DiedAt;
+
             // 功能：缓存物体与它的 Transform。
             // 入参：go 这个单位对应的场景物体
             // 返回：无（构造）
@@ -632,6 +726,8 @@ namespace NBC.Game.View
                 Body = go.GetComponent<Rigidbody>();
                 Animator = go.GetComponentInChildren<Animator>(true);
                 HasWalkParameter = HasBoolParameter(Animator, WalkParameter);
+                HasTakeDamage = HasParameter(Animator, TakeDamageParameter, AnimatorControllerParameterType.Trigger);
+                HasDie = HasParameter(Animator, DieParameter, AnimatorControllerParameterType.Trigger);
             }
 
             // 功能：判断 Animator 上有没有指定名字的 Bool 参数。
@@ -642,6 +738,17 @@ namespace NBC.Game.View
             // 下游：LateUpdate 的 SetBool
             private static bool HasBoolParameter(Animator animator, string parameter)
             {
+                return HasParameter(animator, parameter, AnimatorControllerParameterType.Bool);
+            }
+
+            // 功能：判断 Animator 上有没有指定名字与类型的参数。
+            // 入参：animator 目标动画器（可为空）；parameter 参数名；type 期望类型
+            // 返回：true = 存在且类型一致
+            // 步骤：空就返回 false；否则遍历参数表比对名字与类型
+            // 上游：Slot 构造函数（Walk / Take Damage / Die）
+            // 下游：LateUpdate 的 SetBool / SetTrigger
+            private static bool HasParameter(Animator animator, string parameter, AnimatorControllerParameterType type)
+            {
                 if (animator == null)
                 {
                     return false;
@@ -651,7 +758,7 @@ namespace NBC.Game.View
 
                 for (int i = 0; i < parameters.Length; i++)
                 {
-                    if (parameters[i].name == parameter && parameters[i].type == AnimatorControllerParameterType.Bool)
+                    if (parameters[i].name == parameter && parameters[i].type == type)
                     {
                         return true;
                     }

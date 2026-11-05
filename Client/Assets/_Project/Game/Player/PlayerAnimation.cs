@@ -25,11 +25,26 @@ namespace NBC.Game.Player
         // 攻击动画的触发参数名（Sword_Controller 里的 Trigger）；R014 配的控制器现成有 ATTACK 1/2/3
         public const string AttackTrigger = "ATTACK 1";
 
+        // 受击动画的两个触发参数（Sword_Controller 现成有）；两个交替播，避免看起来像卡住
+        public const string HitLeftTrigger = "HIT L";
+
+        // 受击动画（右侧）的触发参数名
+        public const string HitRightTrigger = "HIT R";
+
         // 目标 Animator：留空时自动在本物体及其子物体里找
         [SerializeField] private Animator m_animator = null;
 
         // 攻击 Trigger 是否已确认可用（确认过就不再查参数）
         private bool m_attackTriggerReady;
+
+        // 受击 Trigger 是否已确认可用
+        private bool m_hitTriggerReady;
+
+        // 是否已经为「缺受击 Trigger」告过警
+        private bool m_hitTriggerWarned;
+
+        // 下一次受击播左边还是右边（交替）
+        private bool m_nextHitIsLeft = true;
 
         // 是否已经为「缺攻击 Trigger」告过警（只报一次）
         private bool m_attackTriggerWarned;
@@ -80,6 +95,47 @@ namespace NBC.Game.Player
             }
 
             m_animator.SetTrigger(AttackTrigger);
+        }
+
+        // 功能：播一次受击动画（左/右交替）。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没有动画器 ⇒ 返回
+        //   2) 第一次调用时确认两个受击 Trigger 是否存在，缺了只告警一次并放弃
+        //   3) 按交替标记 SetTrigger，然后翻转标记
+        // 上游：RuntimeNetDriver（玩家掉血时）
+        // 下游：Animator.SetTrigger
+        // 注意：受击是**表现**，玩家的真实血量以服务端快照为准
+        public void PlayHit()
+        {
+            if (m_animator == null)
+            {
+                return;
+            }
+
+            if (!m_hitTriggerReady)
+            {
+                if (m_hitTriggerWarned)
+                {
+                    return;
+                }
+
+                m_hitTriggerWarned = true;
+
+                if (!ValidateParameter(HitLeftTrigger, AnimatorControllerParameterType.Trigger)
+                    || !ValidateParameter(HitRightTrigger, AnimatorControllerParameterType.Trigger))
+                {
+                    Debug.LogWarning("[PlayerAnimation] controller 里缺少受击 Trigger（" + HitLeftTrigger + " / " +
+                                     HitRightTrigger + "），玩家受击时不会播动作。", this);
+                    return;
+                }
+
+                m_hitTriggerReady = true;
+            }
+
+            m_animator.SetTrigger(m_nextHitIsLeft ? HitLeftTrigger : HitRightTrigger);
+            m_nextHitIsLeft = !m_nextHitIsLeft;
         }
 
         // 功能：接好绑定并做启动校验（必须有 PlayerMove、Animator、两个 Float 参数）。

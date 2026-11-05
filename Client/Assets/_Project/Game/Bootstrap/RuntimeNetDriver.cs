@@ -9,6 +9,7 @@ using NBC.Framework.Net.Adapter;
 using NBC.Game.Net;
 using NBC.Protocol;
 using NBC.Game.Player;
+using NBC.Game.UI;
 using NBC.Game.View;
 using NBC.Shared.Sim;
 using UnityEngine;
@@ -90,6 +91,18 @@ namespace NBC.Game.Bootstrap
 
         // 是否已经找过剑（避免每次都深搜层级）
         private bool m_swordLooked;
+
+        // 本地英雄的当前血量（0 = 还不知道）；HUD 每帧读它（R020）
+        public int HeroHp { get; private set; }
+
+        // 本地英雄的满血值（0 = 还不知道）
+        public int HeroMaxHp { get; private set; }
+
+        // 本地英雄血量基线是否已建立（首帧只记不比）
+        private bool m_heroHpKnown;
+
+        // 上一帧本地英雄的血量
+        private int m_heroLastHp;
 
         // 攻击判定窗口：按下后 [Start, End) 秒内采样剑的碰撞盒；碰到才发请求
         private const float AttackWindowStart = 0.10f;
@@ -660,6 +673,12 @@ namespace NBC.Game.Bootstrap
                 client != null && client.Started,
                 m_session.MatchSerial);
 
+            // R020：玩家侧伤害反馈 + 把血量留给 HUD
+            if (m_feed.View != null)
+            {
+                TrackHeroHealth(m_feed.View.FindHero(m_session.PlayerId));
+            }
+
             if (m_binder == null && m_feed.View != null)
             {
                 m_binder = SnapshotSceneBinder.Ensure(m_feed.View, m_session.PlayerId, m_monsterPrefab);
@@ -680,6 +699,51 @@ namespace NBC.Game.Bootstrap
         // 上游：Update
         // 下游：NetRuntimeStats（HUD 只读它）
         // 注意：不写这里，HUD 会一直显示「离线」—— 它只读静态统计，不认识会话
+        // 功能：盯住本地英雄的血量 —— 掉血时飘伤害数字 + 播受击，并把最新血量留给 HUD。
+        // 入参：hero 本地英雄的快照（可为 null）
+        // 返回：无
+        // 步骤：
+        //   1) 没有数据就返回（还没进房 / 英雄还没生成）
+        //   2) 首帧只记基线，避免一进场就飘一个「满血」数字
+        //   3) 掉血 ⇒ DamagePopup + PlayHit；随后把最新血量写进 HeroHp/HeroMaxHp（HUD 读）
+        // 上游：RefreshPresentation
+        // 下游：DamagePopup.Show、PlayerAnimation.PlayHit、HeroHp / HeroMaxHp
+        // 注意：只处理「血变少」；治疗不飘字（本版不做治疗数字）
+        private void TrackHeroHealth(EntitySnapshot hero)
+        {
+            if (hero == null)
+            {
+                return;
+            }
+
+            HeroHp = hero.Hp;
+            HeroMaxHp = hero.MaxHp;
+
+            if (!m_heroHpKnown)
+            {
+                m_heroHpKnown = true;
+                m_heroLastHp = hero.Hp;
+                return;
+            }
+
+            if (hero.Hp < m_heroLastHp)
+            {
+                int amount = m_heroLastHp - hero.Hp;
+
+                if (m_playerAnimation == null)
+                {
+                    m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
+                }
+
+                if (m_playerAnimation != null)
+                {
+                    DamagePopup.Show(m_playerAnimation.transform.position + Vector3.up * 1.8f, amount);
+                    m_playerAnimation.PlayHit();
+                }
+            }
+
+            m_heroLastHp = hero.Hp;
+        }
         private void PushStats()
         {
             NetRuntimeStats.SetRtt(m_session.RttMs);
