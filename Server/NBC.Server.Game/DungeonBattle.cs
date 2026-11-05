@@ -371,6 +371,10 @@ public sealed class DungeonBattle
       //   注意：本图只有 6 米宽，4 米与 10 米在数值上等价 —— 想「追得更远」得先放大场地（另开需求）。
       public const int BossAggroRangeMm = 4000;
 
+      // R019 调试开关（2026-11-05，负责人要求）：怪物对玩家的伤害暂时关闭，方便测试攻击而不被反杀。
+      //   恢复方法：把它改成 true（伤害逻辑一行没删）。只影响「怪物 → 英雄」；英雄打怪不受影响。
+      public const bool MonstersCanDamageHeroes = false;
+
     /// <summary>BOSS 回位（leash）的松弛量（毫米）：离家没超过它就站着不动，免得原地抖。</summary>
     public const int BossLeashSlackMm = 200;
 
@@ -664,6 +668,13 @@ public sealed class DungeonBattle
             }
 
             reason = $"目标 {targetId} 在射程外（{actualMm}mm > {BasicAttackRangeMm}mm）";
+            return false;
+        }
+
+        // 调试开关：怪物打英雄时直接拒（不扣血、不触发死亡）
+        if (!MonstersCanDamageHeroes && attacker.Kind == 1 && target.Kind == 0)
+        {
+            reason = "调试：怪物对玩家的伤害已关闭（DungeonBattle.MonstersCanDamageHeroes = false）";
             return false;
         }
 
