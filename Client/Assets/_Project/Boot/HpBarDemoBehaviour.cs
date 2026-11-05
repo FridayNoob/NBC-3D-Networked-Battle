@@ -21,6 +21,10 @@ namespace NBC.Boot
     public sealed class HpBarDemoBehaviour : MonoBehaviour
     {
         // 资源模式：编辑器里用 EditorSimulate（免打包，但要先构建过模拟清单）
+        // 敌人用的模型 prefab（R015）；留空 = 表现层用胶囊
+        [SerializeField]
+        private GameObject m_monsterPrefab = null;
+
         [SerializeField] private AssetRuntimeMode m_mode = AssetRuntimeMode.EditorSimulate;
 
         // 最大血：血条满的时候的值
@@ -95,7 +99,8 @@ namespace NBC.Boot
             // R008：资源层与面板都就绪后，才挂运行时网络驱动。
             //   顺序有意义：它一挂上就会建会话，而会话要用 HUD 的统计（NetRuntimeStats）与资源层。
             //   ⚠️ 与 Editor 的「网络调试」窗口不要同时连 —— 会占两个座位。
-            gameObject.AddComponent<RuntimeNetDriver>();
+            RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
+        driver.MonsterPrefab = m_monsterPrefab;
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
 

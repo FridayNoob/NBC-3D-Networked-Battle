@@ -284,3 +284,8 @@ Client/Assets/UnityChan.meta
 # ============================================================================
 Client/Assets/Art/Model/
 Client/Assets/Art/Model.meta
+
+# 素材/演示用 prefab（R015：怪物模型 prefab 放在这里，但它依赖 Art\Model 下不进仓库的网格与贴图）
+# 谁 clone 后看不到狼：把 Art\Model 的素材导进来，再在 HpBarDemo 的 Monster Prefab 里指回去即可
+Client/Assets/Prefabs/
+Client/Assets/Prefabs.meta

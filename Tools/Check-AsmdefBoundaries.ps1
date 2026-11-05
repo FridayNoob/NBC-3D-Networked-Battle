@@ -87,7 +87,8 @@ $engineModules = @(
     'UnityEngine.TextCoreFontEngineModule',
     # R002（走路动画）：`Animator` / `AnimatorControllerParameter` 在 AnimationModule 里，
     # 不在 CoreModule。同一族坑的第三次（Input -> InputLegacyModule、Audio -> AudioModule）。
-    'UnityEngine.AnimationModule'
+    'UnityEngine.AnimationModule',
+    'UnityEngine.PhysicsModule'
 )
 
 function Get-EnginePath([string]$name) {

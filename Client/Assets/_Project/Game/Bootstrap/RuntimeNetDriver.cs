@@ -69,6 +69,9 @@ namespace NBC.Game.Bootstrap
         // 断线重连策略（退避与次数上限都在它里面，本组件只执行它给的动作）
         private NetReconnector m_reconnector;
 
+        // 敌人模型 prefab（由装配者设置；null = 表现层回落胶囊）
+        private GameObject m_monsterPrefab;
+
         // 上一帧是否在房间里（用来识别「重新进房」这个事件，重连回来时据此重置表现层）
         private bool m_wasInRoom;
 
@@ -86,6 +89,18 @@ namespace NBC.Game.Bootstrap
         public bool IsJoined
         {
             get { return m_session != null && m_session.InRoom; }
+        }
+
+        // 功能：设置敌人模型 prefab（必须在本组件 Start 之前设置，或在 Play 前配好）。
+        // 入参：prefab 敌人模型；null = 回落胶囊
+        // 返回：无
+        // 步骤：直接赋值；表现层下次 Bind 时取用
+        // 上游：HpBarDemoBehaviour 装配时
+        // 下游：SnapshotSceneBinder.Ensure
+        public GameObject MonsterPrefab
+        {
+            get { return m_monsterPrefab; }
+            set { m_monsterPrefab = value; }
         }
 
         // 功能：返回最近一次错误描述。
@@ -367,7 +382,12 @@ namespace NBC.Game.Bootstrap
 
             if (m_binder == null && m_feed.View != null)
             {
-                m_binder = SnapshotSceneBinder.Ensure(m_feed.View, m_session.PlayerId);
+                m_binder = SnapshotSceneBinder.Ensure(m_feed.View, m_session.PlayerId, m_monsterPrefab);
+            }
+            else if (m_binder != null)
+            {
+                // 每帧同步玩家编号：绑定只发生一次，而握手完成前它是 0 —— 不同步就永远跳不掉本地英雄
+                m_binder.SetOwnerPlayerId(m_session.PlayerId);
             }
         }
 

@@ -325,6 +325,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d6b9273e82f695b4ba573f7a98031ecd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  m_monsterPrefab: {fileID: 100136, guid: 0594267ae315b2c489534a7b1f400bfe, type: 3}
   m_mode: 0
   m_maxHp: 100
   m_damagePerPress: 10
@@ -572,6 +573,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_move: {fileID: 0}
+  m_debugStateName: Idle
+  m_debugRegistered: 0
 --- !u!1001 &1631205724
 PrefabInstance:
   m_ObjectHideFlags: 0
