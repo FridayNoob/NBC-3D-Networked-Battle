@@ -91,6 +91,24 @@ namespace NBC.Game.Bootstrap
         // 是否已经找过剑（避免每次都深搜层级）
         private bool m_swordLooked;
 
+        // 攻击判定窗口：按下后 [Start, End) 秒内采样剑的碰撞盒；碰到才发请求
+        private const float AttackWindowStart = 0.10f;
+
+        // 窗口结束时间（秒，相对按下时刻）；超过就关窗（这一刀打空）
+        private const float AttackWindowEnd = 0.40f;
+
+        // 窗口是否开着
+        private bool m_attackWindowOpen;
+
+        // 窗口开始的时刻（Time.time）
+        private float m_attackWindowStart;
+
+        // 这一刀是否已经发出去过（一刀只结算一次）
+        private bool m_attackSent;
+
+        // 下一次允许开窗的时刻；防止同一次按键开两次窗
+        private float m_attackNextAllowed;
+
         // 上一帧是否在房间里（用来识别「重新进房」这个事件，重连回来时据此重置表现层）
         private bool m_wasInRoom;
 
@@ -336,19 +354,19 @@ namespace NBC.Game.Bootstrap
             NetRuntimeStats.Reset();
         }
 
-        // 功能：本帧若按下了攻击键，就选最近的怪并把「攻击位 + 目标」发出去，同时播本地攻击动画。
+        // 功能：处理攻击键 —— 按下就播动画并开一个判定窗口；窗口内用剑的碰撞盒采样，**碰到才发请求**。
         // 入参：无
-        // 返回：true = 本帧发了攻击（调用方这一帧就不要再发普通输入了）
+        // 返回：true = 本帧消费了这次按键（调用方这一帧不要再发普通输入，避免把攻击位裸发出去）
         // 步骤：
-        //   1) 读当前输入；没有动作位就直接返回 false
-        //   2) 只有第 0 位（普攻）算攻击 —— 与服务端约定一致
-        //   3) 选最近的活怪；没有目标就不发（免得服务端一直刷「目标 0 不存在」）
-        //   4) 状态同步模式下带 targetId 发送；锁步模式暂不发攻击（动作位处理未确认）
-        //   5) 播本地攻击动画（命中仍由服务端裁决）
+        //   1) 读输入；本帧按下攻击位且不在窗口内 ⇒ 播攻击动画、开窗、返回 true
+        //   2) 窗口开着时，过了起始延迟就开始采样剑的碰撞盒（只采一次，采样到就发）
+        //   3) 碰到怪 ⇒ SendInput(攻击位 + 目标)；没碰到 ⇒ 什么都不发（这一刀打空）
+        //   4) 超过窗口结束时间 ⇒ 关窗
         // 上游：PumpInput
-        // 下游：NetSession.SendInput、PlayerAnimation.PlayAttack
-        // 注意：不能用「按住」判 ——— ActionBits 是「本帧新按下」，按住不会重复置位
-        private bool TrySendAttack()
+        // 下游：PlayerAnimation.PlayAttack、FindSwordHitTarget、NetSession.SendInput
+        // 注意：**没有「剑没碰到就退回最近怪」的兜底** —— 负责人明确要求「没碰到就是没打中」，
+        //       旧版那个兜底会让服务端在剑没接触时也算命中。
+        private bool HandleAttack()
         {
             InputManager input = InputManager.Instance;
 
@@ -358,57 +376,76 @@ namespace NBC.Game.Bootstrap
             }
 
             InputCommand command = input.Current;
+            float now = Time.time;
 
-            if ((command.ActionBits & AttackBitMask) == 0u)
+            // ① 开窗：只在「本帧新按下」且冷却够了的时候
+            if ((command.ActionBits & AttackBitMask) != 0u && now >= m_attackNextAllowed)
+            {
+                m_attackWindowOpen = true;
+                m_attackWindowStart = now;
+                m_attackSent = false;
+                m_attackNextAllowed = now + AttackWindowEnd;
+
+                if (m_playerAnimation == null)
+                {
+                    m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
+                }
+
+                if (m_playerAnimation != null)
+                {
+                    m_playerAnimation.PlayAttack();
+                }
+
+                return true;
+            }
+
+            if (!m_attackWindowOpen)
             {
                 return false;
             }
 
-            // 先用「剑碰到谁」选目标（R019 修订）；剑没碰到任何怪才回落到「最近怪」
-            int targetId = FindSwordHitTarget();
+            float elapsed = now - m_attackWindowStart;
 
-            if (targetId == 0)
+            // ② 判定窗口内采样一次
+            if (!m_attackSent && elapsed >= AttackWindowStart && m_mode != ERuntimeSyncMode.Lockstep)
             {
-                targetId = FindNearestMonster();
+                int targetId = FindSwordHitTarget();
+
+                if (targetId != 0)
+                {
+                    m_session.SendInput(command.MoveX, command.MoveY, AttackBitMask, 0u, targetId);
+                    m_attackSent = true;
+                }
             }
 
-            if (targetId == 0)
+            // ③ 窗口结束就关（打空也算结束）
+            if (elapsed >= AttackWindowEnd)
             {
-                return false;
+                m_attackWindowOpen = false;
             }
 
-            if (m_mode == ERuntimeSyncMode.Lockstep)
-            {
-                // 锁步链的远程攻击还没做（服务端只处理了状态同步的输入）
-                return false;
-            }
-
-            m_session.SendInput(command.MoveX, command.MoveY, command.ActionBits, command.ActionReleaseBits, targetId);
-
-            if (m_playerAnimation == null)
-            {
-                m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
-            }
-
-            if (m_playerAnimation != null)
-            {
-                m_playerAnimation.PlayAttack();
-            }
-
-            return true;
+            return false;
         }
-
+        // 功能：按节流间隔把本地输入发出去（锁步或状态同步二选一）。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 累加时间，不到间隔就不发
+        //   2) 读本地输入（InputManager 每帧自己 Tick，这里只取当前值）
+        //   3) 按模式二选一发上行（两条链不能同时喂，否则权威数据打架）
+        // 上游：Update
+        // 下游：NetSession.SendInput / NetSession.SendLockstepInput
         // 功能：用「剑的碰撞盒」找出这一帧被剑碰到的怪（只决定「打谁」，命中仍由服务端裁决）。
         // 入参：无
         // 返回：被碰到的怪里离玩家最近的那个实体编号；剑不存在或没碰到 ⇒ 0
         // 步骤：
-        //   1) 第一次调用时找武器骨骼并确保它有一个 Trigger BoxCollider
-        //   2) 用该碰撞盒的**当帧世界包围盒**做 OverlapBox
+        //   1) 第一次调用时找武器骨骼并确保它有一个 Trigger 碰撞体
+        //   2) 用该碰撞体的**当帧世界包围盒**做 OverlapBox
         //   3) 对每个相交的碰撞体，往前找 MonsterSlotTag（拿实体编号）
-        //   4) 多个命中时取离玩家最近的（避免一次挥剑打到三只时乱选）
-        // 上游：TrySendAttack
+        //   4) 多个命中时取离玩家最近的
+        // 上游：HandleAttack（判定窗口内）
         // 下游：Physics.OverlapBox、MonsterSlotTag
-        // 注意：只在按下那一帧采样 —— 剑在动画里会大幅摆动，持续检测会把「扫过」也算命中
+        // 注意：只采样一次 —— 剑在动画里会大幅摆动，持续检测会把「扫过」也算命中
         private int FindSwordHitTarget()
         {
             EnsureSwordCollider();
@@ -420,7 +457,7 @@ namespace NBC.Game.Bootstrap
 
             Bounds box = m_swordCollider.bounds;
 
-            // QueryTriggerInteraction.Collide：剑上的碰撞体通常是 Trigger，不显式允许就查不到
+            // QueryTriggerInteraction.Collide：剑上的碰撞体是 Trigger，不显式允许就查不到
             Collider[] hits = Physics.OverlapBox(box.center, box.extents, Quaternion.identity, ~0,
                 QueryTriggerInteraction.Collide);
 
@@ -454,16 +491,18 @@ namespace NBC.Game.Bootstrap
             return bestId;
         }
 
-        // 功能：找到武器骨骼并在它身上准备一个 Trigger BoxCollider（只做一次）。
+        // 功能：找到武器骨骼并准备好一个 Trigger 碰撞体（只做一次）。
         // 入参：无
         // 返回：无
         // 步骤：
         //   1) 找玩家物体（第一个 PlayerAnimation）
-        //   2) 深度搜一个名字含 Weapon_Sword 且激活的骨骼；找不到就退到名字含 hand_r 的骨骼
-        //   3) 该骨骼已有 BoxCollider 就复用；没有就按它下面 Renderer 的包围盒建一个 Trigger 盒
+        //   2) 深度搜名字含 weapon_sword 且激活的骨骼；找不到退到 hand_r
+        //   3) 骨骼上已有碰撞体（负责人会在 prefab 上加）就复用，任意类型都行
+        //   4) 一个都没有才自己按 Renderer 包围盒建一个 Trigger 盒
+        //   5) 无论来源，运行时都保证它是 Trigger（否则会推动带刚体的怪）
         // 上游：FindSwordHitTarget
         // 下游：Physics.OverlapBox
-        // 注意：换模型后若没有这些骨骼，这里会静默留空 —— 选目标回落到「最近怪」，不会崩
+        // 注意：换模型后若没有这些骨骼，这里会静默留空 —— 结果就是「打不到人」，不会崩
         private void EnsureSwordCollider()
         {
             if (m_swordLooked)
@@ -495,7 +534,6 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
-            // 优先用已经挂好的碰撞体（负责人会在 prefab 的 Weapon_Sword 上加），任何类型都接受
             Collider existing = weapon.GetComponent<Collider>();
 
             if (existing == null)
@@ -505,7 +543,6 @@ namespace NBC.Game.Bootstrap
 
             if (existing == null)
             {
-                // 一个都没有才自己建：用骨骼下 Renderer 的包围盒定尺寸，并设成 Trigger（不参与推挤）
                 BoxCollider box = weapon.gameObject.AddComponent<BoxCollider>();
                 box.isTrigger = true;
 
@@ -527,12 +564,10 @@ namespace NBC.Game.Bootstrap
                 existing = box;
             }
 
-            // 剑的碰撞体只用来「查询打到谁」，不能参与推挤：狼是动态刚体，非 Trigger 的剑会把它推走，
-            // 而且骨骼每帧移动的静态碰撞体在物理里开销很大。prefab 里勾没勾都按 Trigger 用。
             if (!existing.isTrigger)
             {
                 existing.isTrigger = true;
-                Debug.Log("[攻击] 剑上的 " + existing.GetType().Name + " 原本不是 Trigger，已在运行时按 Trigger 使用" +
+                Debug.Log("[攻击] 剑上的 " + existing.GetType().Name + " 不是 Trigger，已在运行时按 Trigger 使用" +
                           "（否则会推动带刚体的怪）。要改请在 prefab 上勾 Is Trigger。", existing);
             }
 
@@ -542,7 +577,7 @@ namespace NBC.Game.Bootstrap
         // 功能：在层级里按名字片段找一个激活的骨骼。
         // 入参：root 搜索起点；fragment 名字片段（小写）
         // 返回：第一个命中的 Transform；没有返回 null
-        // 步骤：遍历全部子物体（含隐藏），名字转小写比片段，并要求该物体是激活的
+        // 步骤：遍历全部子物体（含隐藏），名字转小写比片段，并要求该物体在激活层级里
         // 上游：EnsureSwordCollider
         // 下游：无
         private static Transform FindBone(Transform root, string fragment)
@@ -564,74 +599,10 @@ namespace NBC.Game.Bootstrap
 
             return null;
         }
-        // 功能：在表现层的快照里找最近的「活着的怪」（OwnerPlayerId == 0），限定半径内。
-        // 入参：无（半径用常量 AttackTargetRangeMm）
-        // 返回：目标实例编号；没有目标返回 0
-        // 步骤：
-        //   1) 没有数据或没有本地英雄位置 ⇒ 0（无法算距离）
-        //   2) 遍历实体：跳过自己、跳过别人的英雄（OwnerPlayerId != 0）、跳过死的
-        //   3) 算水平距离（毫米），取最近且不超过半径的
-        // 上游：TrySendAttack
-        // 下游：无
-        // 注意：这里只负责「选一个看起来能打到的」，命中判定仍然在服务端（客户端不做预测）
-        private int FindNearestMonster()
-        {
-            if (m_feed == null || m_feed.View == null)
-            {
-                return 0;
-            }
-
-            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
-
-            if (hero == null)
-            {
-                return 0;
-            }
-
-            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
-            int bestId = 0;
-            int bestDistance = int.MaxValue;
-
-            for (int i = 0; i < entities.Count; i++)
-            {
-                EntitySnapshot entity = entities[i];
-
-                if (!entity.Alive || entity.OwnerPlayerId != 0L)
-                {
-                    continue;
-                }
-
-                int dx = entity.PosXMm - hero.PosXMm;
-                int dz = entity.PosZMm - hero.PosZMm;
-                int distance = (int)Math.Sqrt((double)dx * dx + (double)dz * dz);
-
-                if (distance > AttackTargetRangeMm)
-                {
-                    continue;
-                }
-
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    bestId = entity.EntityId;
-                }
-            }
-
-            return bestId;
-        }
-        // 功能：按节流间隔把本地输入发出去（锁步或状态同步二选一）。
-        // 入参：无
-        // 返回：无
-        // 步骤：
-        //   1) 累加时间，不到间隔就不发
-        //   2) 读本地输入（InputManager 每帧自己 Tick，这里只取当前值）
-        //   3) 按模式二选一发上行（两条链不能同时喂，否则权威数据打架）
-        // 上游：Update
-        // 下游：NetSession.SendInput / NetSession.SendLockstepInput
         private void PumpInput()
         {
-            // 攻击：立即发，不套 50ms 节流（按键可能只持续一两帧，套节流会丢手感）
-            if (TrySendAttack())
+            // 攻击：按下开窗 + 窗口内用剑的碰撞盒采样（不套 50ms 节流）
+            if (HandleAttack())
             {
                 m_sendAccumulator = 0f;
                 return;
