@@ -22,8 +22,17 @@ namespace NBC.Game.Player
         // 低于这个速度算静止，米/秒（0.1 足够滤掉浮点抖动）
         public const float WalkThreshold = 0.1f;
 
+        // 攻击动画的触发参数名（Sword_Controller 里的 Trigger）；R014 配的控制器现成有 ATTACK 1/2/3
+        public const string AttackTrigger = "ATTACK 1";
+
         // 目标 Animator：留空时自动在本物体及其子物体里找
         [SerializeField] private Animator m_animator = null;
+
+        // 攻击 Trigger 是否已确认可用（确认过就不再查参数）
+        private bool m_attackTriggerReady;
+
+        // 是否已经为「缺攻击 Trigger」告过警（只报一次）
+        private bool m_attackTriggerWarned;
 
         // SetFloat 的平滑时间（秒）。0 = 不平滑；0.1 让切换不生硬
         [SerializeField] private float m_damping = 0.1f;
@@ -34,6 +43,44 @@ namespace NBC.Game.Player
         // 两个参数名的哈希值（每帧用整数查参数，不拼字符串）
         private int m_speedHash;
         private int m_directionHash;
+
+        // 功能：播一次攻击动画（触发一次 Trigger），供攻击输入调用。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没有动画器或没有该 Trigger 参数 ⇒ 只告警一次，直接返回（不抛、不刷屏）
+        //   2) 有就 SetTrigger
+        // 上游：RuntimeNetDriver（玩家按下攻击键时）
+        // 下游：Animator.SetTrigger
+        // 注意：Trigger 是「一次性」的，连按会重入动画；冷却由服务端裁决，客户端不做节流
+        public void PlayAttack()
+        {
+            if (m_animator == null)
+            {
+                return;
+            }
+
+            if (!m_attackTriggerReady)
+            {
+                if (m_attackTriggerWarned)
+                {
+                    return;
+                }
+
+                m_attackTriggerWarned = true;
+
+                if (!ValidateParameter(AttackTrigger, AnimatorControllerParameterType.Trigger))
+                {
+                    Debug.LogWarning("[PlayerAnimation] controller 里没有 Trigger 参数 " + AttackTrigger +
+                                     "，攻击时不会播动作（战斗逻辑仍由服务端裁决）。", this);
+                    return;
+                }
+
+                m_attackTriggerReady = true;
+            }
+
+            m_animator.SetTrigger(AttackTrigger);
+        }
 
         // 功能：接好绑定并做启动校验（必须有 PlayerMove、Animator、两个 Float 参数）。
         // 入参：无（引擎在开始帧调一次）
@@ -72,8 +119,13 @@ namespace NBC.Game.Player
             m_speedHash = Animator.StringToHash(SpeedParameter);
             m_directionHash = Animator.StringToHash(DirectionParameter);
 
-            if (!ValidateParameter(SpeedParameter) || !ValidateParameter(DirectionParameter))
+            if (!ValidateParameter(SpeedParameter, AnimatorControllerParameterType.Float)
+                || !ValidateParameter(DirectionParameter, AnimatorControllerParameterType.Float))
             {
+                Debug.LogError(
+                    "[PlayerAnimation] Animator Controller 里缺少 Float 参数 " + SpeedParameter +
+                    " 或 " + DirectionParameter + "（现有参数：" + m_animator.parameters.Length +
+                    " 个）。动画不会切换。", this);
                 enabled = false;
             }
         }
@@ -122,20 +174,29 @@ namespace NBC.Game.Player
         // 下游：无
         private bool ValidateParameter(string parameterName)
         {
+            return ValidateParameter(parameterName, AnimatorControllerParameterType.Float);
+        }
+
+        // 功能：检查 Controller 里是否存在指定名字与类型的参数。
+        // 入参：parameterName 参数名；expectedType 期望类型
+        // 返回：true = 存在且类型对；false = 不存在或类型不对（已打过一次 Error）
+        // 步骤：
+        //   1) 遍历 Controller 的参数表
+        //   2) 同名且类型一致就通过
+        //   3) 否则保持静默返回 false —— 是否报错由调用方决定（攻击 Trigger 只告警、移动 Float 才报错）
+        // 上游：Awake（Float）、PlayAttack（Trigger）
+        // 下游：无
+        private bool ValidateParameter(string parameterName, AnimatorControllerParameterType expectedType)
+        {
             AnimatorControllerParameter[] parameters = m_animator.parameters;
 
             for (int i = 0; i < parameters.Length; i++)
             {
-                if (parameters[i].name == parameterName &&
-                    parameters[i].type == AnimatorControllerParameterType.Float)
+                if (parameters[i].name == parameterName && parameters[i].type == expectedType)
                 {
                     return true;
                 }
             }
-
-            Debug.LogError(
-                "[PlayerAnimation] Animator Controller 里没有 Float 参数 " + parameterName +
-                "（现有参数：" + parameters.Length + " 个）。动画不会切换。", this);
 
             return false;
         }

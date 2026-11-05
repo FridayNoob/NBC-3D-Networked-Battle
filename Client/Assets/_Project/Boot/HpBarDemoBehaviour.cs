@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using NBC.Framework.Asset;
+using NBC.Framework.Input;
 using NBC.Framework.UI;
 using NBC.Game.Bootstrap;
 using NBC.Game.UI;
@@ -24,6 +25,10 @@ namespace NBC.Boot
         // 敌人用的模型 prefab（R015）；留空 = 表现层用胶囊
         [SerializeField]
         private GameObject m_monsterPrefab = null;
+
+        // 攻击键（R019）；默认 J。RegisterAttackInput 会把它绑到动作 0 上
+        [SerializeField]
+        private KeyCode m_attackKey = KeyCode.J;
 
         [SerializeField] private AssetRuntimeMode m_mode = AssetRuntimeMode.EditorSimulate;
 
@@ -96,10 +101,12 @@ namespace NBC.Boot
                 null,
                 error => Debug.LogError("[HpBarDemo] 打不开网络面板：" + error.Message));
 
-            // R008：资源层与面板都就绪后，才挂运行时网络驱动。
+        // R008：资源层与面板都就绪后，才挂运行时网络驱动。
             //   顺序有意义：它一挂上就会建会话，而会话要用 HUD 的统计（NetRuntimeStats）与资源层。
             //   ⚠️ 与 Editor 的「网络调试」窗口不要同时连 —— 会占两个座位。
-            RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
+            RegisterAttackInput();
+
+        RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
         driver.MonsterPrefab = m_monsterPrefab;
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
@@ -114,6 +121,33 @@ namespace NBC.Boot
         // 上游：Unity 引擎
         // 下游：HpBarPanel.SetHp
         // 注意：这里只为演示扣血；正式战斗的血量必须来自服务端快照
+        // 功能：把攻击键登记成一个输入动作（动作 0 = 服务端约定的普攻位）。
+        // 入参：无（键位来自 Inspector 的 m_attackKey）
+        // 返回：无
+        // 步骤：
+        //   1) 建一张键位表（构造时自带 WASD 默认键）
+        //   2) 声明动作 0（名字 Attack）并绑到 m_attackKey
+        //   3) 把键位表注入 InputManager，再登记该动作 —— 不登记就永远产不出动作位
+        // 上游：HpBarDemoBehaviour 装配流程
+        // 下游：LegacyInputSource、InputManager.TrackAction、RuntimeNetDriver（读 ActionBits 第 0 位）
+        // 注意：动作 0 是**服务端约定**（RoomBattleService 里 `ActionBits & 1u` 就是普攻），别改成别的编号
+        private void RegisterAttackInput()
+        {
+            if (InputManager.Instance == null)
+            {
+                Debug.LogError("[HpBarDemo] InputManager 还没就绪，攻击键登记失败。");
+                return;
+            }
+
+            InputMapping mapping = new InputMapping();
+            InputActionId attack = InputActionId.Declare(0, "Attack");
+            mapping.Bind(attack, m_attackKey);
+
+            InputManager.Instance.Source = new LegacyInputSource(mapping);
+            InputManager.Instance.TrackAction(attack);
+
+            Debug.Log("[HpBarDemo] 攻击键已登记：" + m_attackKey + "（动作 0 = 普攻）");
+        }
         private void Update()
         {
             if (!m_assetsReady || m_panel == null || !Input.GetKeyDown(KeyCode.Space))

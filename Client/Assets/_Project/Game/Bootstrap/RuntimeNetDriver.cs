@@ -1,10 +1,14 @@
 // 这个文件里有：
 //   ERuntimeSyncMode（枚举）、RuntimeNetDriver（类）：运行时的会话驱动（自动连服/进房/发输入/喂表现）
 
+using System;
+using System.Collections.Generic;
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Framework.Net.Adapter;
 using NBC.Game.Net;
+using NBC.Protocol;
+using NBC.Game.Player;
 using NBC.Game.View;
 using NBC.Shared.Sim;
 using UnityEngine;
@@ -71,6 +75,15 @@ namespace NBC.Game.Bootstrap
 
         // 敌人模型 prefab（由装配者设置；null = 表现层回落胶囊）
         private GameObject m_monsterPrefab;
+
+        // 攻击动作位：服务端约定「第 0 位 = 普攻」（RoomBattleService 里 ActionBits & 1u）
+        private const uint AttackBitMask = 1u;
+
+        // 客户端选目标的半径，毫米；服务端普攻射程 2000，这里留 1 米余量
+        private const int AttackTargetRangeMm = 3000;
+
+        // 本地玩家的动画组件（播攻击用）；只查一次
+        private PlayerAnimation m_playerAnimation;
 
         // 上一帧是否在房间里（用来识别「重新进房」这个事件，重连回来时据此重置表现层）
         private bool m_wasInRoom;
@@ -317,6 +330,117 @@ namespace NBC.Game.Bootstrap
             NetRuntimeStats.Reset();
         }
 
+        // 功能：本帧若按下了攻击键，就选最近的怪并把「攻击位 + 目标」发出去，同时播本地攻击动画。
+        // 入参：无
+        // 返回：true = 本帧发了攻击（调用方这一帧就不要再发普通输入了）
+        // 步骤：
+        //   1) 读当前输入；没有动作位就直接返回 false
+        //   2) 只有第 0 位（普攻）算攻击 —— 与服务端约定一致
+        //   3) 选最近的活怪；没有目标就不发（免得服务端一直刷「目标 0 不存在」）
+        //   4) 状态同步模式下带 targetId 发送；锁步模式暂不发攻击（动作位处理未确认）
+        //   5) 播本地攻击动画（命中仍由服务端裁决）
+        // 上游：PumpInput
+        // 下游：NetSession.SendInput、PlayerAnimation.PlayAttack
+        // 注意：不能用「按住」判 ——— ActionBits 是「本帧新按下」，按住不会重复置位
+        private bool TrySendAttack()
+        {
+            InputManager input = InputManager.Instance;
+
+            if (input == null || !input.IsEnabled)
+            {
+                return false;
+            }
+
+            InputCommand command = input.Current;
+
+            if ((command.ActionBits & AttackBitMask) == 0u)
+            {
+                return false;
+            }
+
+            int targetId = FindNearestMonster();
+
+            if (targetId == 0)
+            {
+                return false;
+            }
+
+            if (m_mode == ERuntimeSyncMode.Lockstep)
+            {
+                // 锁步链的远程攻击还没做（服务端只处理了状态同步的输入）
+                return false;
+            }
+
+            m_session.SendInput(command.MoveX, command.MoveY, command.ActionBits, command.ActionReleaseBits, targetId);
+
+            if (m_playerAnimation == null)
+            {
+                m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
+            }
+
+            if (m_playerAnimation != null)
+            {
+                m_playerAnimation.PlayAttack();
+            }
+
+            return true;
+        }
+
+        // 功能：在表现层的快照里找最近的「活着的怪」（OwnerPlayerId == 0），限定半径内。
+        // 入参：无（半径用常量 AttackTargetRangeMm）
+        // 返回：目标实例编号；没有目标返回 0
+        // 步骤：
+        //   1) 没有数据或没有本地英雄位置 ⇒ 0（无法算距离）
+        //   2) 遍历实体：跳过自己、跳过别人的英雄（OwnerPlayerId != 0）、跳过死的
+        //   3) 算水平距离（毫米），取最近且不超过半径的
+        // 上游：TrySendAttack
+        // 下游：无
+        // 注意：这里只负责「选一个看起来能打到的」，命中判定仍然在服务端（客户端不做预测）
+        private int FindNearestMonster()
+        {
+            if (m_feed == null || m_feed.View == null)
+            {
+                return 0;
+            }
+
+            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
+
+            if (hero == null)
+            {
+                return 0;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+            int bestId = 0;
+            int bestDistance = int.MaxValue;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                EntitySnapshot entity = entities[i];
+
+                if (!entity.Alive || entity.OwnerPlayerId != 0L)
+                {
+                    continue;
+                }
+
+                int dx = entity.PosXMm - hero.PosXMm;
+                int dz = entity.PosZMm - hero.PosZMm;
+                int distance = (int)Math.Sqrt((double)dx * dx + (double)dz * dz);
+
+                if (distance > AttackTargetRangeMm)
+                {
+                    continue;
+                }
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestId = entity.EntityId;
+                }
+            }
+
+            return bestId;
+        }
         // 功能：按节流间隔把本地输入发出去（锁步或状态同步二选一）。
         // 入参：无
         // 返回：无
@@ -328,6 +452,13 @@ namespace NBC.Game.Bootstrap
         // 下游：NetSession.SendInput / NetSession.SendLockstepInput
         private void PumpInput()
         {
+            // 攻击：立即发，不套 50ms 节流（按键可能只持续一两帧，套节流会丢手感）
+            if (TrySendAttack())
+            {
+                m_sendAccumulator = 0f;
+                return;
+            }
+
             m_sendAccumulator += Time.deltaTime;
 
             if (m_sendAccumulator < m_inputSendInterval)
