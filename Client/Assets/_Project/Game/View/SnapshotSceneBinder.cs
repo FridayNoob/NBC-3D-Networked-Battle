@@ -518,6 +518,16 @@ namespace NBC.Game.View
 
             slot = new Slot(go);
 
+            // 记下实体编号：剑的碰撞盒 Overlap 到它时能反查是谁（R019）
+            MonsterSlotTag tag = go.GetComponent<MonsterSlotTag>();
+
+            if (tag == null)
+            {
+                tag = go.AddComponent<MonsterSlotTag>();
+            }
+
+            tag.EntityId = entityId;
+
             if (slot.Body != null)
             {
                 // 刚体默认只按物理步（50Hz）更新视觉，不开插值的话 60fps 下会看到「一跳一跳」

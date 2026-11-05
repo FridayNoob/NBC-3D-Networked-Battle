@@ -85,6 +85,12 @@ namespace NBC.Game.Bootstrap
         // 本地玩家的动画组件（播攻击用）；只查一次
         private PlayerAnimation m_playerAnimation;
 
+        // 剑上的 Trigger 碰撞体（R019：用「剑碰到谁」决定打谁）；只找/建一次
+        private BoxCollider m_swordCollider;
+
+        // 是否已经找过剑（避免每次都深搜层级）
+        private bool m_swordLooked;
+
         // 上一帧是否在房间里（用来识别「重新进房」这个事件，重连回来时据此重置表现层）
         private bool m_wasInRoom;
 
@@ -358,7 +364,13 @@ namespace NBC.Game.Bootstrap
                 return false;
             }
 
-            int targetId = FindNearestMonster();
+            // 先用「剑碰到谁」选目标（R019 修订）；剑没碰到任何怪才回落到「最近怪」
+            int targetId = FindSwordHitTarget();
+
+            if (targetId == 0)
+            {
+                targetId = FindNearestMonster();
+            }
 
             if (targetId == 0)
             {
@@ -386,6 +398,153 @@ namespace NBC.Game.Bootstrap
             return true;
         }
 
+        // 功能：用「剑的碰撞盒」找出这一帧被剑碰到的怪（只决定「打谁」，命中仍由服务端裁决）。
+        // 入参：无
+        // 返回：被碰到的怪里离玩家最近的那个实体编号；剑不存在或没碰到 ⇒ 0
+        // 步骤：
+        //   1) 第一次调用时找武器骨骼并确保它有一个 Trigger BoxCollider
+        //   2) 用该碰撞盒的**当帧世界包围盒**做 OverlapBox
+        //   3) 对每个相交的碰撞体，往前找 MonsterSlotTag（拿实体编号）
+        //   4) 多个命中时取离玩家最近的（避免一次挥剑打到三只时乱选）
+        // 上游：TrySendAttack
+        // 下游：Physics.OverlapBox、MonsterSlotTag
+        // 注意：只在按下那一帧采样 —— 剑在动画里会大幅摆动，持续检测会把「扫过」也算命中
+        private int FindSwordHitTarget()
+        {
+            EnsureSwordCollider();
+
+            if (m_swordCollider == null || !m_swordCollider.enabled)
+            {
+                return 0;
+            }
+
+            Bounds box = m_swordCollider.bounds;
+            Collider[] hits = Physics.OverlapBox(box.center, box.extents, Quaternion.identity);
+
+            if (hits == null || hits.Length == 0)
+            {
+                return 0;
+            }
+
+            Transform player = m_swordCollider.transform.root;
+            int bestId = 0;
+            float bestDistance = float.MaxValue;
+
+            for (int i = 0; i < hits.Length; i++)
+            {
+                MonsterSlotTag tag = hits[i].GetComponentInParent<MonsterSlotTag>();
+
+                if (tag == null || tag.EntityId == 0)
+                {
+                    continue;
+                }
+
+                float distance = Vector3.Distance(player.position, tag.transform.position);
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestId = tag.EntityId;
+                }
+            }
+
+            return bestId;
+        }
+
+        // 功能：找到武器骨骼并在它身上准备一个 Trigger BoxCollider（只做一次）。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 找玩家物体（第一个 PlayerAnimation）
+        //   2) 深度搜一个名字含 Weapon_Sword 且激活的骨骼；找不到就退到名字含 hand_r 的骨骼
+        //   3) 该骨骼已有 BoxCollider 就复用；没有就按它下面 Renderer 的包围盒建一个 Trigger 盒
+        // 上游：FindSwordHitTarget
+        // 下游：Physics.OverlapBox
+        // 注意：换模型后若没有这些骨骼，这里会静默留空 —— 选目标回落到「最近怪」，不会崩
+        private void EnsureSwordCollider()
+        {
+            if (m_swordLooked)
+            {
+                return;
+            }
+
+            m_swordLooked = true;
+
+            if (m_playerAnimation == null)
+            {
+                m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
+            }
+
+            if (m_playerAnimation == null)
+            {
+                return;
+            }
+
+            Transform weapon = FindBone(m_playerAnimation.transform, "weapon_sword");
+
+            if (weapon == null)
+            {
+                weapon = FindBone(m_playerAnimation.transform, "hand_r");
+            }
+
+            if (weapon == null)
+            {
+                return;
+            }
+
+            BoxCollider box = weapon.GetComponent<BoxCollider>();
+
+            if (box == null)
+            {
+                box = weapon.gameObject.AddComponent<BoxCollider>();
+                box.isTrigger = true;
+
+                // 用骨骼下所有 Renderer 的包围盒定尺寸；没有 Renderer 就给一个保守的小盒
+                Renderer[] renderers = weapon.GetComponentsInChildren<Renderer>(true);
+                Bounds local = new Bounds(Vector3.zero, new Vector3(0.3f, 0.3f, 1.0f));
+
+                if (renderers != null && renderers.Length > 0)
+                {
+                    local = renderers[0].bounds;
+
+                    for (int i = 1; i < renderers.Length; i++)
+                    {
+                        local.Encapsulate(renderers[i].bounds);
+                    }
+                }
+
+                box.center = weapon.InverseTransformPoint(local.center);
+                box.size = local.size;
+            }
+
+            m_swordCollider = box;
+        }
+
+        // 功能：在层级里按名字片段找一个激活的骨骼。
+        // 入参：root 搜索起点；fragment 名字片段（小写）
+        // 返回：第一个命中的 Transform；没有返回 null
+        // 步骤：遍历全部子物体（含隐藏），名字转小写比片段，并要求该物体是激活的
+        // 上游：EnsureSwordCollider
+        // 下游：无
+        private static Transform FindBone(Transform root, string fragment)
+        {
+            Transform[] all = root.GetComponentsInChildren<Transform>(true);
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (!all[i].gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+
+                if (all[i].name.ToLower().Contains(fragment))
+                {
+                    return all[i];
+                }
+            }
+
+            return null;
+        }
         // 功能：在表现层的快照里找最近的「活着的怪」（OwnerPlayerId == 0），限定半径内。
         // 入参：无（半径用常量 AttackTargetRangeMm）
         // 返回：目标实例编号；没有目标返回 0
