@@ -86,7 +86,7 @@ namespace NBC.Game.Bootstrap
         private PlayerAnimation m_playerAnimation;
 
         // 剑上的 Trigger 碰撞体（R019：用「剑碰到谁」决定打谁）；只找/建一次
-        private BoxCollider m_swordCollider;
+        private Collider m_swordCollider;
 
         // 是否已经找过剑（避免每次都深搜层级）
         private bool m_swordLooked;
@@ -419,7 +419,10 @@ namespace NBC.Game.Bootstrap
             }
 
             Bounds box = m_swordCollider.bounds;
-            Collider[] hits = Physics.OverlapBox(box.center, box.extents, Quaternion.identity);
+
+            // QueryTriggerInteraction.Collide：剑上的碰撞体通常是 Trigger，不显式允许就查不到
+            Collider[] hits = Physics.OverlapBox(box.center, box.extents, Quaternion.identity, ~0,
+                QueryTriggerInteraction.Collide);
 
             if (hits == null || hits.Length == 0)
             {
@@ -492,14 +495,20 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
-            BoxCollider box = weapon.GetComponent<BoxCollider>();
+            // 优先用已经挂好的碰撞体（负责人会在 prefab 的 Weapon_Sword 上加），任何类型都接受
+            Collider existing = weapon.GetComponent<Collider>();
 
-            if (box == null)
+            if (existing == null)
             {
-                box = weapon.gameObject.AddComponent<BoxCollider>();
+                existing = weapon.GetComponentInChildren<Collider>(true);
+            }
+
+            if (existing == null)
+            {
+                // 一个都没有才自己建：用骨骼下 Renderer 的包围盒定尺寸，并设成 Trigger（不参与推挤）
+                BoxCollider box = weapon.gameObject.AddComponent<BoxCollider>();
                 box.isTrigger = true;
 
-                // 用骨骼下所有 Renderer 的包围盒定尺寸；没有 Renderer 就给一个保守的小盒
                 Renderer[] renderers = weapon.GetComponentsInChildren<Renderer>(true);
                 Bounds local = new Bounds(Vector3.zero, new Vector3(0.3f, 0.3f, 1.0f));
 
@@ -515,9 +524,19 @@ namespace NBC.Game.Bootstrap
 
                 box.center = weapon.InverseTransformPoint(local.center);
                 box.size = local.size;
+                existing = box;
             }
 
-            m_swordCollider = box;
+            // 剑的碰撞体只用来「查询打到谁」，不能参与推挤：狼是动态刚体，非 Trigger 的剑会把它推走，
+            // 而且骨骼每帧移动的静态碰撞体在物理里开销很大。prefab 里勾没勾都按 Trigger 用。
+            if (!existing.isTrigger)
+            {
+                existing.isTrigger = true;
+                Debug.Log("[攻击] 剑上的 " + existing.GetType().Name + " 原本不是 Trigger，已在运行时按 Trigger 使用" +
+                          "（否则会推动带刚体的怪）。要改请在 prefab 上勾 Is Trigger。", existing);
+            }
+
+            m_swordCollider = existing;
         }
 
         // 功能：在层级里按名字片段找一个激活的骨骼。
