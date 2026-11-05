@@ -28,6 +28,9 @@ namespace NBC.Game.View
         // 没有刚体时（胶囊兜底）的摆放高度，米；胶囊高 2 ⇒ 半高 0.5 让它站在地面上
         private const float HalfHeight = 0.5f;
 
+        // 怪物 controller 里的走路参数名（Bool）；狼的 controller 就是靠它从 Idle 切到 Walk
+        private const string WalkParameter = "Walk";
+
         // 表现层读的那一份数据；null = 还没绑定，LateUpdate 直接返回
         private SnapshotView m_view;
 
@@ -45,6 +48,14 @@ namespace NBC.Game.View
         // 敌人用的模型 prefab；为空 = 回落成胶囊（可回退，R015）
         [SerializeField]
         private GameObject m_monsterPrefab;
+
+        // 朝向偏移，度；模型前向不是 +Z 时用它纠正（R017）
+        [SerializeField]
+        private float m_facingOffsetDegrees = 0f;
+
+        // 判定「在移动」的水平距离阈值，米；停下瞬间的距离抖动靠它挡掉
+        [SerializeField]
+        private float m_moveAnimationThreshold = 0.05f;
 
         // 实例编号到槽位的复用表；稳态容量等于见过的单位数，不每帧 new
         private readonly Dictionary<int, Slot> m_slots = new Dictionary<int, Slot>();
@@ -281,6 +292,7 @@ namespace NBC.Game.View
                 // 目标位置（局部坐标）；y 取槽位自己的「脚底到轴心」偏移 —— 模型与胶囊的轴心差别很大，不能写死
                 Vector3 target = new Vector3(e.PosXMm * MmToUnit, 0f, e.PosZMm * MmToUnit);
 
+                DriveAnimation(slot, e.FacingDeg, target);
                 MoveSlotTo(slot, target);
                 slot.Transform.localScale = new Vector3(scale, scale, scale);
             }
@@ -302,6 +314,43 @@ namespace NBC.Game.View
         //   1) 遍历所有槽位，SeenPush 不等于本帧序号就是本帧没出现
         //   2) 只给还显示着的调 SetActive(false)，避免每帧重复写
         //   3) 注意：只隐藏不销毁，单位可能只是这一帧不在，留着下次复用更省
+        // 功能：按「到目标的水平距离」驱动走路动画，并按快照朝向转身。
+        // 入参：slot 槽位；facingDeg 快照里的朝向（度）；target 本帧目标位置（局部坐标）
+        // 返回：无
+        // 步骤：
+        //   1) 算当前到目标的水平距离（只算 X/Z），超过阈值就算「在移动」
+        //   2) 有 Animator 且 controller 有 Walk(Bool) ⇒ SetBool
+        //   3) 没有 Walk 参数 ⇒ 只告警一次（不同怪物参数名可能不同，不能每帧刷屏）
+        //   4) 按 FacingDeg + 偏移写 localRotation
+        // 上游：LateUpdate 遍历实体时
+        // 下游：Animator.SetBool、Transform.localRotation
+        // 注意：用「到目标的距离」判移动，不用刚体速度 —— 速度有噪声，停下瞬间会抖
+        // 注意：刚体若冻结了旋转（freezeRotation），写 transform 旋转是安全的（物理不会覆盖）
+        private void DriveAnimation(Slot slot, int facingDeg, Vector3 target)
+        {
+            Vector3 current = slot.Transform.localPosition;
+            float distance = Vector3.Distance(
+                new Vector3(current.x, 0f, current.z),
+                new Vector3(target.x, 0f, target.z));
+
+            bool moving = distance > m_moveAnimationThreshold;
+
+            if (slot.Animator != null)
+            {
+                if (slot.HasWalkParameter)
+                {
+                    slot.Animator.SetBool(WalkParameter, moving);
+                }
+                else if (!slot.WarnedMissingWalk)
+                {
+                    slot.WarnedMissingWalk = true;
+                    Debug.LogWarning("[视图接管] 怪物 controller 里没有 Bool 参数 " + WalkParameter +
+                                     "，这只怪不会播走路动画（位置与朝向仍正常）。", slot.Go);
+                }
+            }
+
+            slot.Transform.localRotation = Quaternion.Euler(0f, facingDeg + m_facingOffsetDegrees, 0f);
+        }
         // 功能：把槽位朝目标位置推进 —— 有刚体走物理速度，无刚体直接写位置；必要时直接归位。
         // 入参：slot 槽位；target 本帧快照给的目标位置（局部坐标，米，只用 X/Z）
         // 返回：无
@@ -475,6 +524,12 @@ namespace NBC.Game.View
                 slot.Body.interpolation = RigidbodyInterpolation.Interpolate;
             }
 
+            if (slot.Animator != null)
+            {
+                // 一定要关：狼的 controller 里有「With Root Motion」那套状态，开着会与 velocity 叠加把模型推飞
+                slot.Animator.applyRootMotion = false;
+            }
+
             m_slots.Add(entityId, slot);
             m_created++;
             return slot;
@@ -543,6 +598,15 @@ namespace NBC.Game.View
             // 模型自带的刚体；非空表示 Y 由物理（重力）负责，本组件只写 X/Z
             public readonly Rigidbody Body;
 
+            // 子物体上的 Animator；为空表示这个槽位没有动画
+            public readonly Animator Animator;
+
+            // controller 里有没有 Walk(Bool) 参数；不同怪物参数名可能不同，先查再设
+            public readonly bool HasWalkParameter;
+
+            // 是否已经为「缺 Walk 参数」告过警；只报一次，避免每帧刷屏
+            public bool WarnedMissingWalk;
+
             // 功能：缓存物体与它的 Transform。
             // 入参：go 这个单位对应的场景物体
             // 返回：无（构造）
@@ -556,6 +620,34 @@ namespace NBC.Game.View
                 Go = go;
                 Transform = go.transform;
                 Body = go.GetComponent<Rigidbody>();
+                Animator = go.GetComponentInChildren<Animator>(true);
+                HasWalkParameter = HasBoolParameter(Animator, WalkParameter);
+            }
+
+            // 功能：判断 Animator 上有没有指定名字的 Bool 参数。
+            // 入参：animator 目标动画器（可为空）；parameter 参数名
+            // 返回：true = 存在且是 Bool
+            // 步骤：空就返回 false；否则遍历 parameters 比对名字与类型
+            // 上游：Slot 构造函数
+            // 下游：LateUpdate 的 SetBool
+            private static bool HasBoolParameter(Animator animator, string parameter)
+            {
+                if (animator == null)
+                {
+                    return false;
+                }
+
+                AnimatorControllerParameter[] parameters = animator.parameters;
+
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    if (parameters[i].name == parameter && parameters[i].type == AnimatorControllerParameterType.Bool)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
         }
     }

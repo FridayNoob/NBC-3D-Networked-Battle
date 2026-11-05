@@ -365,7 +365,11 @@ public sealed class DungeonBattle
     /// <para>⚠️ TODO(M4+)：它应该是 `Dungeon` 表的一列（和 `Monster.moveSpeed` 一样待补）。
     /// 现在先用常量并在此记明 —— **别让它悄悄变成"没人知道的魔法数"**。</para>
     /// </summary>
-    public const int BossAggroRangeMm = 2200;
+    // R018（2026-11-05）：2200 → 4000（4 米）。
+      //   依据：副本 1001 的 spawnRadiusMm = 3000（场地半径 3 米），4 米略大于场地 ⇒ 玩家进副本就会被追，
+      //   不再出现「贴脸才动」。leash 语义不变：超出这个距离仍视为没有目标、走回出生点。
+      //   注意：本图只有 6 米宽，4 米与 10 米在数值上等价 —— 想「追得更远」得先放大场地（另开需求）。
+      public const int BossAggroRangeMm = 4000;
 
     /// <summary>BOSS 回位（leash）的松弛量（毫米）：离家没超过它就站着不动，免得原地抖。</summary>
     public const int BossLeashSlackMm = 200;

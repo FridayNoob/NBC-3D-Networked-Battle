@@ -1912,7 +1912,7 @@ namespace NBC.NetProbe
         /// <para>⚠️ 这条规则是因为负责人实测"老是被 BOSS 打死、没法测"才补的 ——
         /// 原来 BOSS 无脑全图锁人，副本里"先清小怪再打 BOSS"根本做不到。</para>
         /// </summary>
-        private static void Boss_ChasesTheHero()
+private static void Boss_ChasesTheHero()
         {
             using (var h = new Harness())
             {
@@ -1923,50 +1923,32 @@ namespace NBC.NetProbe
                 BattleEntity boss = FindBoss(battle)!;
                 BattleEntity hero = h.HeroOf(a)!;
 
-                // ① 出生点必须在仇恨范围**外**（否则一进房就被贴脸）
+                // R018（2026-11-05）：语义反转 —— 出生点就在仇恨圈内（2.5 米 < 4 米），
+                //   一进副本就该被追。原来那条「出生点必须在圈外」的断言按设计不再成立。
                 int spawnDistance = DungeonBattle.DistanceMm(boss, hero);
+                Check("BOSS AI：出生点就在仇恨圈内（R018 之后：一进副本就会被追）",
+                    spawnDistance < DungeonBattle.BossAggroRangeMm,
+                    $"出生距离 {spawnDistance}mm < 仇恨范围 {DungeonBattle.BossAggroRangeMm}mm");
 
-                Check("BOSS AI：出生点不在 BOSS 的仇恨范围内（进房是安全的）",
-                    spawnDistance > DungeonBattle.BossAggroRangeMm,
-                    $"出生点距离 {spawnDistance}mm > 仇恨范围 {DungeonBattle.BossAggroRangeMm}mm");
-
-                // ② 站着不动若干帧：BOSS 既不追也不动（站桩）
-                int idleBefore = DungeonBattle.DistanceMm(boss, hero);
-                h.SendIdleInputFor(a, 20);
-                int idleAfter = DungeonBattle.DistanceMm(boss, hero);
-
-                Check("BOSS AI：英雄在圈外时 BOSS **不追**（距离不变、状态站桩）",
-                    idleBefore == idleAfter && battle.Brains[0].StateName == "站桩",
-                    $"距离 {idleBefore}mm → {idleAfter}mm，状态={battle.Brains[0].StateName}");
-
-                // ③ 英雄往 -x 走（朝 BOSS 去）进圈 → BOSS 必须**有反应**
-                //    ⚠️ 断言不能只写"距离变小"：英雄这一走很可能**直接落进射程**（2000mm），
-                //       那时 BOSS 的行为是"打"而不是"走近"，距离当然不变 —— 我第一版就是这么误判的。
-                //       正确的判据是：**进圈了** 且 **状态机切到追击/攻击** 且 **确实发生了交战**
-                //       （拉近距离，或者你已经在掉血）。
-                h.MoveFor(a, moveX: -1000, moveY: 0, ticks: 4);
-
+                // 英雄站着不动，BOSS 也应该主动压上来（拉近距离，或已经能打到你）
                 int before = DungeonBattle.DistanceMm(boss, hero);
-                int heroHpBefore = hero.Hp;
+                int hpBefore = hero.Hp;
                 h.SendIdleInputFor(a, 20);
                 int after = DungeonBattle.DistanceMm(boss, hero);
 
-                bool inAggro = before <= DungeonBattle.BossAggroRangeMm;
                 bool engaged = battle.Brains[0].StateName == "追击" || battle.Brains[0].StateName == "攻击";
-                bool closing = after < before;
-                bool takingHits = hero.Hp < heroHpBefore;
+                bool closing = after < before || hero.Hp < hpBefore;
 
-                Check("BOSS AI：英雄进圈之后 BOSS 有反应（拉近距离，或已经能打到你）",
-                    inAggro && engaged && (closing || takingHits),
-                    $"进圈距离 {before}mm（仇恨 {DungeonBattle.BossAggroRangeMm}mm），20 帧后 {after}mm；" +
-                    $"状态={battle.Brains[0].StateName}；英雄 HP {heroHpBefore} → {hero.Hp}");
+                Check("BOSS AI：英雄站着不动 BOSS 也会主动过来（R018 新行为）",
+                    engaged && closing,
+                    $"距离 {before}mm → {after}mm；状态={battle.Brains[0].StateName}；HP {hpBefore} → {hero.Hp}");
             }
         }
 
         /// <summary>
         /// BOSS 的 **leash（回位）**：英雄跑出仇恨范围后，BOSS 走回自己的出生点。
         /// </summary>
-        private static void Boss_ReturnsHomeAfterLosingAggro()
+private static void Boss_ReturnsHomeAfterLosingAggro()
         {
             using (var h = new Harness())
             {
@@ -1978,9 +1960,7 @@ namespace NBC.NetProbe
                 BattleEntity boss = FindBoss(battle)!;
                 BattleEntity hero = h.HeroOf(a)!;
 
-                // 先把 BOSS 从家里**挪开**（不依赖"风筝"那套操作）：
-                // ⚠️ 原来我用"把英雄引出来让 BOSS 追"来制造位移，结果 BOSS 一进射程就**打人而不是追人**，
-                //    只挪了 90mm（一个 tick），用例前提压根没成立。造场面就用造场面的手段。
+                // 造场面：把 BOSS 从家里挪开
                 for (int i = 0; i < 12; i++)
                 {
                     battle.MoveTowardsPoint(boss, brain.HomeXmm + 2000, 0);
@@ -1988,17 +1968,21 @@ namespace NBC.NetProbe
 
                 int strayed = DungeonBattle.DistanceMmToPoint(boss, brain.HomeXmm, brain.HomeZmm);
 
-                // 再让英雄往反方向跑掉（+x），跑到仇恨圈外
-                h.MoveFor(a, moveX: 1000, moveY: 0, ticks: 30);
+                // R018（2026-11-05）：仇恨范围放大到 4 米，靠"英雄走 30 帧"已跑不出圈（场地只有 ±5 米）。
+                //   这里直接把英雄挪到远处 —— 造场面就用造场面的手段（与该用例原来的注释同一原则）。
+                for (int i = 0; i < 120; i++)
+                {
+                    battle.MoveTowardsPoint(hero, 5000, 0);
+                }
 
                 int heroDistance = DungeonBattle.DistanceMm(boss, hero);
 
                 // 给 BOSS 足够帧数走回家
-                h.SendIdleInputFor(a, 60);
+                h.SendIdleInputFor(a, 80);
 
                 int homeDistance = DungeonBattle.DistanceMmToPoint(boss, brain.HomeXmm, brain.HomeZmm);
 
-                Check("BOSS AI：英雄跑出仇恨范围后，BOSS **走回出生点**（leash）",
+                Check("BOSS AI：英雄跑出仇恨范围后，BOSS 走回出生点（leash）",
                     strayed > DungeonBattle.BossLeashSlackMm
                     && heroDistance > DungeonBattle.BossAggroRangeMm
                     && homeDistance <= DungeonBattle.BossLeashSlackMm
@@ -2009,28 +1993,19 @@ namespace NBC.NetProbe
         }
 
         /// <summary>四个席位的出生点**都在 BOSS 仇恨圈外**（用真实表的 `spawnRadiusMm` 算）。</summary>
-        private static void Boss_SpawnPointsAreOutsideAggroRange()
+private static void Boss_SpawnPointsAreOutsideAggroRange()
         {
             using (var h = new Harness())
             {
                 int radius = h.Tables.FindDungeon(1001)!.Value.SpawnRadiusMm;
-                int bossX = -radius;            // `FromDungeon` 里 BOSS 摆在 -radius
-                int nearest = int.MaxValue;
+                int limit = radius * 3 / 2;
 
-                for (int seat = 0; seat < 4; seat++)
-                {
-                    (int x, int z) = DungeonBattle.HeroSpawnPoint(seat);
-                    int distance = Math.Max(Math.Abs(x - bossX), Math.Abs(z - 0));
-
-                    if (distance < nearest)
-                    {
-                        nearest = distance;
-                    }
-                }
-
-                Check("BOSS AI：四个席位的出生点都在仇恨圈外（用表里的 `spawnRadiusMm` 算）",
-                    nearest > DungeonBattle.BossAggroRangeMm,
-                    $"BOSS 在 x={bossX}；最近的席位出生点距它 {nearest}mm > 仇恨范围 {DungeonBattle.BossAggroRangeMm}mm");
+                // R018（2026-11-05）：这条用例的**意图**改了。
+                //   原意：英雄出生点在仇恨圈外（2.5 米 > 2.2 米）—— 半径改 4 米后按设计不再成立。
+                //   新意：仇恨半径不许超过场地半径的 1.5 倍（保住"别跨图追"这条设计约束）。
+                Check("BOSS AI：仇恨半径不超过场地半径的 1.5 倍（别跨图追；R018 改判据）",
+                    DungeonBattle.BossAggroRangeMm <= limit,
+                    $"仇恨范围 {DungeonBattle.BossAggroRangeMm}mm <= 上限 {limit}mm（场地半径 {radius}mm）");
             }
         }
 
