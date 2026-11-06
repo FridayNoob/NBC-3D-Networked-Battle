@@ -837,16 +837,17 @@ namespace NBC.Framework.UI
             }
         }
 
-        // 功能：把面板实例挂到指定层，并把它的 RectTransform 铺满。
+        // 功能：把面板实例挂到指定层；默认铺满，挂了 KeepPrefabTransform 的则保留 prefab 变换。
         // 入参：instance 面板实例；panelName 面板名（只用于报错）；layer 目标层
         // 返回：无；根节点不是 RectTransform 或层配置有问题时抛异常
         // 步骤：
         //   1) 先检查根节点是 RectTransform —— 不是就点名报错，不要等后面空引用
         //   2) 按层取父节点，配置有问题时 UILayers 会抛带人话的异常
-        //   3) SetParent 必须传 worldPositionStays: false，再清零 localPosition / localScale / offset
+        //   3) SetParent 必须传 worldPositionStays: false；没挂 KeepPrefabTransform 的才清零 localPosition / localScale / offset
         // 上游：ShowPanel（池中复活）、OnPanelLoaded
         // 下游：UILayers.Get
         // 注意：SetParent 不传 false 时 Unity 会为保持世界坐标反算 localScale，界面会被拉伸或缩小。
+        // 注意：挂了 KeepPrefabTransform 的面板（R021）只挂载不归零 —— 那是给 HUD 小面板用的。
         private void AttachToLayer(GameObject instance, string panelName, UILayer layer)
         {
             RectTransform rect = instance.transform as RectTransform;
@@ -863,7 +864,14 @@ namespace NBC.Framework.UI
             // 取层：配置有问题时 Get 会抛出带人话的异常（见 UILayers）。
             Transform parent = m_layers.Get(layer);
 
+            // SetParent 必须传 false：默认参数会为保持世界坐标反算 localScale，界面会被拉伸变形（R021 也不许改）。
             rect.SetParent(parent, false);
+
+            // 挂了 KeepPrefabTransform 的面板（HUD 小面板）保留 prefab 里摆好的位置与尺寸，不归零。
+            if (instance.GetComponent<KeepPrefabTransform>() != null)
+            {
+                return;
+            }
 
             rect.localPosition = Vector3.zero;
             rect.localScale = Vector3.one;

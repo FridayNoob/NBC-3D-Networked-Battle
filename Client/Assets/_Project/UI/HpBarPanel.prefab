@@ -34,7 +34,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 24, y: -2}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 329, y: 24}
   m_Pivot: {x: 0, y: 1}
 --- !u!1 &1865285486988395501
@@ -102,7 +102,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 10907, guid: 0000000000000000f000000000000000, type: 0}
+  m_Sprite: {fileID: 0}
   m_Type: 3
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -124,6 +124,7 @@ GameObject:
   - component: {fileID: 6804923467955832973}
   - component: {fileID: 5404238027878870779}
   - component: {fileID: 6674345408854039728}
+  - component: {fileID: 5792017559614631431}
   m_Layer: 5
   m_Name: HpBarPanel
   m_TagString: Untagged
@@ -149,8 +150,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 24, y: -24}
-  m_SizeDelta: {x: 320, y: 24}
+  m_AnchoredPosition: {x: 125.6, y: -83.5}
+  m_SizeDelta: {x: 330, y: 25}
   m_Pivot: {x: 0, y: 1}
 --- !u!222 &6804923467955832973
 CanvasRenderer:
@@ -200,6 +201,18 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1da02ab227af702408cd80176891b169, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &5792017559614631431
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1923291594723163745}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1ec4b4236a423aa428670881a7110110, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 --- !u!1 &3812077660268945278
