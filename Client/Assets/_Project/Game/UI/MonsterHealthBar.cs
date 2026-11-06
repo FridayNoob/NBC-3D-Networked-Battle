@@ -10,6 +10,7 @@ namespace NBC.Game.UI
     // 主要外部方法：Bind（建条）、SetRatio（喂比例）。
     // 谁在用它：SnapshotSceneBinder 建槽位时 Bind，每帧 SetRatio。
     // 注意：不用 UI Canvas —— 两个 SpriteRenderer 更便宜、不依赖 UI 程序集，也不需要 EventSystem。
+    [DefaultExecutionOrder(200)]        // 必须晚于 SnapshotSceneBinder（它在本帧末尾写槽位朝向）
     public sealed class MonsterHealthBar : MonoBehaviour
     {
         // 血条离地面高度，米（按狼约 1 米高定的；其它体型靠父节点缩放也能用）
@@ -109,10 +110,12 @@ namespace NBC.Game.UI
         // 功能：让血条始终正对相机（billboard）。
         // 入参：无（引擎每帧调）
         // 返回：无
-        // 步骤：没有相机就告警一次并跳过；有就把自己的旋转设成相机的旋转
-        // 上游：引擎
+        // 步骤：没有相机就告警一次并跳过；有就把自己的世界旋转设成相机的旋转
+        // 上游：引擎（LateUpdate）
         // 下游：Transform.rotation
-        private void Update()
+        // 注意：必须放 LateUpdate 且执行顺序晚于 SnapshotSceneBinder —— 它会在本帧末尾写槽位朝向，
+        //       写在 Update 里会被它盖掉，血条看起来是歪的（R020 验收踩到）。
+        private void LateUpdate()
         {
             Camera camera = Camera.main;
 

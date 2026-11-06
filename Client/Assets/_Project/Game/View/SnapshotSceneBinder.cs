@@ -5,6 +5,7 @@
 using System.Collections.Generic;
 using NBC.Game.Net;
 using NBC.Game.UI;
+using NBC.Game.Player;
 using NBC.Protocol;
 using UnityEngine;
 
@@ -205,9 +206,13 @@ namespace NBC.Game.View
         {
             bool playing = Application.isPlaying;
 
+            // 场景里已经有专门的跟随相机（FollowCamera）时，本组件不写相机：
+            // 两个脚本每帧抢写会让画面抖，而且这里用的是 30Hz 快照坐标，抖得更明显。
+            bool dedicatedFollow = UnityEngine.Object.FindObjectOfType<FollowCamera>() != null;
+
             if (m_camera != null)
             {
-                m_cameraFollow = m_cameraCreated || playing;
+                m_cameraFollow = m_cameraCreated || (playing && !dedicatedFollow);
                 return;
             }
 
@@ -218,7 +223,7 @@ namespace NBC.Game.View
                 m_camera = existing;
                 m_cameraCreated = false;
 
-                m_cameraFollow = playing;
+                m_cameraFollow = playing && !dedicatedFollow;
 
                 if (m_cameraFollow)
                 {
