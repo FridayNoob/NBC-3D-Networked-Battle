@@ -1,0 +1,38 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements">
+    <!-- 行为树编辑器布局：顶部工具栏 + 左中右三栏 + 底部状态栏（R023） -->
+    <ui:VisualElement name="root" class="bt-root">
+        <ui:VisualElement class="bt-toolbar">
+            <ui:TextField name="tree-id" label="TreeId" class="bt-tree-id" />
+            <ui:Button name="btn-import" text="导入JSON" class="bt-toolbar-button" />
+            <ui:Button name="btn-export" text="导出JSON" class="bt-toolbar-button" />
+            <ui:VisualElement class="bt-toolbar-spacer" />
+            <ui:Button name="btn-preview" text="▶ 预览" class="bt-toolbar-button bt-button-primary" />
+            <ui:Button name="btn-stop" text="■ 停止预览" class="bt-toolbar-button" />
+            <ui:VisualElement class="bt-toolbar-spacer" />
+            <ui:Button name="btn-duplicate" text="复制节点" class="bt-toolbar-button" />
+            <ui:Button name="btn-delete" text="删除节点" class="bt-toolbar-button" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="bt-body">
+            <!-- 左：节点库（内容由 BTGraphView/窗口按注册表生成） -->
+            <ui:VisualElement class="bt-left">
+                <ui:Label text="节点库" class="bt-panel-title" />
+                <ui:ScrollView name="palette-slot" class="bt-panel-scroll" />
+            </ui:VisualElement>
+
+            <!-- 中：画布占位（GraphView 由 C# 塞进来，UXML 不能直接声明 GraphView） -->
+            <ui:VisualElement name="canvas-slot" class="bt-canvas" />
+
+            <!-- 右：属性面板 + 黑板 -->
+            <ui:VisualElement class="bt-right">
+                <ui:Label text="属性" class="bt-panel-title" />
+                <ui:ScrollView name="inspector-slot" class="bt-panel-scroll" />
+                <ui:Label text="黑板（仅供预览）" class="bt-panel-title" />
+                <ui:VisualElement name="blackboard-slot" class="bt-blackboard" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- 底：状态栏 -->
+        <ui:Label name="status" text="就绪" class="bt-status" />
+    </ui:VisualElement>
+</ui:UXML>

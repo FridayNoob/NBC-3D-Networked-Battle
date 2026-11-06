@@ -1,0 +1,169 @@
+/* 行为树编辑器样式（R023）
+   只负责编辑器窗口的观感；与游戏内 UI 无关（本文件只在编辑器程序集里被引用）。 */
+
+.bt-root {
+    flex-grow: 1;
+    flex-direction: column;
+    background-color: #232323;
+}
+
+/* ---------------- 顶部工具栏 ---------------- */
+
+.bt-toolbar {
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 6px;
+    background-color: #2d2d2d;
+    border-bottom-width: 1px;
+    border-bottom-color: #1a1a1a;
+}
+
+.bt-tree-id {
+    width: 220px;
+    margin-right: 6px;
+}
+
+.bt-toolbar-button {
+    margin-left: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.bt-button-primary {
+    background-color: #2f6f3f;
+    border-color: #1f4f2b;
+}
+
+.bt-toolbar-spacer {
+    flex-grow: 1;
+}
+
+/* ---------------- 三栏 ---------------- */
+
+.bt-body {
+    flex-grow: 1;
+    flex-direction: row;
+}
+
+.bt-left {
+    width: 240px;
+    border-right-width: 1px;
+    border-right-color: #1a1a1a;
+    background-color: #262626;
+}
+
+.bt-right {
+    width: 300px;
+    border-left-width: 1px;
+    border-left-color: #1a1a1a;
+    background-color: #262626;
+}
+
+.bt-canvas {
+    flex-grow: 1;
+}
+
+.bt-panel-title {
+    padding: 6px 8px 2px 8px;
+    -unity-font-style: bold;
+    color: #cfcfcf;
+}
+
+.bt-panel-scroll {
+    flex-grow: 1;
+    padding: 4px;
+}
+
+.bt-blackboard {
+    padding: 4px 8px;
+}
+
+/* ---------------- 节点库条目 ---------------- */
+
+.bt-palette-header {
+    margin-top: 6px;
+    color: #8fb7ff;
+    -unity-font-style: bold;
+}
+
+.bt-palette-item {
+    margin: 2px 0;
+    padding: 3px 6px;
+    -unity-text-align: middle-left;
+    background-color: #333333;
+    border-width: 1px;
+    border-color: #3f3f3f;
+}
+
+.bt-palette-item:hover {
+    background-color: #3d3d3d;
+}
+
+/* ---------------- 属性面板 ---------------- */
+
+.bt-inspector {
+    padding: 2px;
+}
+
+.bt-inspector-title {
+    margin-bottom: 4px;
+    -unity-font-style: bold;
+    color: #ffffff;
+}
+
+.bt-inspector-hint {
+    color: #9a9a9a;
+    white-space: normal;
+}
+
+/* ---------------- 画布节点（GraphView.Node 扩展类） ---------------- */
+
+.bt-node {
+    border-width: 2px;
+    border-color: #4a4a4a;
+    background-color: #303030;
+    min-width: 140px;
+}
+
+.bt-node-composite {
+    border-color: #4a7fd4;
+}
+
+.bt-node-condition {
+    border-color: #d4a24a;
+}
+
+.bt-node-action {
+    border-color: #4ad48f;
+}
+
+.bt-node-subtitle {
+    color: #a9a9a9;
+    font-size: 10px;
+}
+
+/* 预览三色：成功 / 失败 / 运行中 */
+.bt-status-success {
+    border-color: #35c759;
+    background-color: #23402c;
+}
+
+.bt-status-failure {
+    border-color: #e34b4b;
+    background-color: #402323;
+}
+
+.bt-status-running {
+    border-color: #e3c24b;
+    background-color: #403823;
+}
+
+/* ---------------- 状态栏 ---------------- */
+
+.bt-status {
+    padding: 4px 8px;
+    background-color: #1d1d1d;
+    border-top-width: 1px;
+    border-top-color: #111111;
+    color: #c9c9c9;
+}
