@@ -540,8 +540,11 @@ namespace NBC.EditorTools.BehaviorTree
                 }
             }
 
-            // 单子：同一个输出口只留一条
-            if (source.connections.Any())
+            // 多子还是单子由节点定义决定：组合节点（MaxChildren = -1 或 >1）允许连多个子节点；
+            // 只有显式声明 MaxChildren == 1 的节点才「一个输出只留一条」。
+            int maxChildren = from.Define == null ? 1 : from.Define.MaxChildren;
+
+            if (maxChildren == 1 && source.connections.Any())
             {
                 foreach (Edge existing in source.connections.ToList())
                 {
@@ -623,8 +626,10 @@ namespace NBC.EditorTools.BehaviorTree
                         }
                     }
 
-                    // 单子：同一个输出口只能连一个子节点，先断掉旧的
-                    if (from.OutputPort != null && from.OutputPort.connections.Any())
+                    // 只有 MaxChildren == 1 的节点才强制「一个输出一条子连线」；组合节点允许多子
+                    int maxChildren = from.Define == null ? 1 : from.Define.MaxChildren;
+
+                    if (maxChildren == 1 && from.OutputPort != null && from.OutputPort.connections.Any())
                     {
                         foreach (Edge existing in from.OutputPort.connections.ToList())
                         {
