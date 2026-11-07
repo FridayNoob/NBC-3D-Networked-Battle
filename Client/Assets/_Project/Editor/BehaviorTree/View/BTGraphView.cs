@@ -499,9 +499,26 @@ namespace NBC.EditorTools.BehaviorTree
         // 注意：需求要求"根节点不能有输入端口"，所以这一步是视觉效果也是规则体现
         private void RefreshRoots()
         {
+            List<BTNodeView> roots = new List<BTNodeView>();
+
             foreach (KeyValuePair<string, BTNodeView> pair in m_nodeViews)
             {
-                pair.Value.ApplyRootState(IsRootNode(pair.Value));
+                if (IsRootNode(pair.Value))
+                {
+                    roots.Add(pair.Value);
+                }
+            }
+
+            // 只有一个根时才打徽标；多个根说明树还没连好（导出会被 Validate 拦下）
+            for (int i = 0; i < roots.Count; i++)
+            {
+                roots[i].ApplyRootState(roots.Count == 1);
+            }
+
+            if (roots.Count > 1)
+            {
+                Debug.LogWarning("[BT] 当前有 " + roots.Count + " 个根节点（" + roots.Count +
+                                 " 个没有父节点）。一棵树只能有一个根，导出前请把多余的连到树上。");
             }
         }
 

@@ -167,3 +167,19 @@
     border-top-color: #111111;
     color: #c9c9c9;
 }
+
+/* 「根」徽标：标出当前唯一的根节点 */
+.bt-root-badge {
+    margin-left: 4px;
+    padding: 0 4px;
+    background-color: #4a7fd4;
+    color: #ffffff;
+    border-radius: 3px;
+    font-size: 10px;
+}
+
+/* 端口命中区域放大一点，鼠标好点 */
+.bt-node .port {
+    width: 14px;
+    height: 14px;
+}

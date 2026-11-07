@@ -34,6 +34,9 @@ namespace NBC.EditorTools.BehaviorTree
         // 标题下面那行小字（显示参数摘要）
         private readonly Label m_subtitle;
 
+        // 「根」徽标：标出当前这棵树的根节点（没有父节点的那个）
+        private readonly Label m_rootBadge;
+
         // 功能：构造节点视图。
         // 入参：nodeId 节点 id；data 节点数据；define 节点定义；isRoot 是否作为根创建
         // 返回：无
@@ -53,14 +56,12 @@ namespace NBC.EditorTools.BehaviorTree
             AddToClassList("bt-node");
             AddToClassList("bt-node-" + (define != null ? define.Category.ToString().ToLowerInvariant() : "action"));
 
-            // 输入端口：根节点不建（需求：根节点不能有输入端口）
-            if (!isRoot)
-            {
-                InputPort = Port.Create<Edge>(Orientation.Horizontal, Direction.Input, Port.Capacity.Single,
-                    typeof(bool));
-                InputPort.portName = "in";
-                inputContainer.Add(InputPort);
-            }
+            // 输入端口：**始终创建**。节点刚拖进来时没有父节点，如果这时就把端口删掉，用户根本没法连线。
+            // 「只能有一个根」改为：用标题上的「根」徽标标出当前根 + 导出前校验根的数量（见 RefreshRoots）。
+            InputPort = Port.Create<Edge>(Orientation.Horizontal, Direction.Input, Port.Capacity.Single,
+                typeof(bool));
+            InputPort.portName = "in";
+            inputContainer.Add(InputPort);
 
             // 输出端口：只有组合节点才有子节点
             if (define == null || define.MaxChildren != 0)
@@ -75,36 +76,31 @@ namespace NBC.EditorTools.BehaviorTree
             m_subtitle.AddToClassList("bt-node-subtitle");
             titleContainer.Add(m_subtitle);
 
+            m_rootBadge = new Label("根");
+            m_rootBadge.AddToClassList("bt-root-badge");
+            m_rootBadge.style.display = DisplayStyle.None;
+            titleContainer.Add(m_rootBadge);
+
             UpdateSubtitle();
             RefreshExpandedState();
             RefreshPorts();
         }
 
-        // 功能：把节点标成根/非根（导入数据后统一处理端口）。
+        // 功能：把节点标成根/非根（只改「根」徽标）。
         // 入参：isRoot 是否是根
         // 返回：无
-        // 步骤：根要没有输入端口；非根要补一个
+        // 步骤：显示或隐藏标题旁的「根」徽标
         // 上游：BTGraphView.ImportData / 唯一根校验后
         // 下游：无
         public void ApplyRootState(bool isRoot)
         {
-            if (isRoot && InputPort != null)
+            // 只改徽标，**不动端口** —— 端口常驻，否则节点没连上之前就没法连。
+            if (m_rootBadge == null)
             {
-                InputPort.DisconnectAll();
-                inputContainer.Remove(InputPort);
-                InputPort = null;
-                RefreshPorts();
                 return;
             }
 
-            if (!isRoot && InputPort == null)
-            {
-                InputPort = Port.Create<Edge>(Orientation.Horizontal, Direction.Input, Port.Capacity.Single,
-                    typeof(bool));
-                InputPort.portName = "in";
-                inputContainer.Add(InputPort);
-                RefreshPorts();
-            }
+            m_rootBadge.style.display = isRoot ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
         // 功能：设置预览状态配色。
