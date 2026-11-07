@@ -236,7 +236,7 @@ namespace NBC.EditorTools.BehaviorTree
             Register(new BTNodeDefine
             {
                 TypeName = "HPBelow",
-                DisplayName = "HPBelow（血量低于）",
+                DisplayName = "HPBelow（血量 < 阈值）",
                 Category = BTNodeCategory.Condition,
                 MaxChildren = 0,
                 Params = new[]

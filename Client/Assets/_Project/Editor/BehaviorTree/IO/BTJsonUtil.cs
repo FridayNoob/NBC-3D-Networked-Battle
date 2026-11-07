@@ -658,6 +658,7 @@ namespace NBC.EditorTools.BehaviorTree
             }
 
             node.EnsureDefaults(define);
+            CoerceParamsToDefinition(node, define);
 
             BtJsonValue children = value.Get("Children");
 
@@ -679,6 +680,50 @@ namespace NBC.EditorTools.BehaviorTree
             return node;
         }
 
+        // 功能：把已读到的参数值强制转成**节点定义里声明的类型**。
+        // 入参：node 节点数据；define 节点定义
+        // 返回：无
+        // 步骤：遍历定义里的参数，类型不一致就按定义转换
+        // 上游：ReadNode
+        // 下游：BTParamValue.FromXxx
+        // 注意：JSON 里 `1` 和 `1.0` 在文本上都可能被写成 `1`（我导出浮点时用 "R"，
+        //      整数值的 float 也会写成 `1`），所以**不能靠小数点猜类型**，必须以节点定义为准。
+        private static void CoerceParamsToDefinition(BTNodeData node, BTNodeDefine define)
+        {
+            if (define == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < define.Params.Length; i++)
+            {
+                BTParamDefine paramDefine = define.Params[i];
+
+                if (!node.Params.TryGetValue(paramDefine.Key, out BTParamValue value) || value.Type == paramDefine.Type)
+                {
+                    continue;
+                }
+
+                switch (paramDefine.Type)
+                {
+                    case BTParamType.Int:
+                        node.Params[paramDefine.Key] = BTParamValue.FromInt(value.AsInt());
+                        break;
+
+                    case BTParamType.Bool:
+                        node.Params[paramDefine.Key] = BTParamValue.FromBool(value.AsBool());
+                        break;
+
+                    case BTParamType.String:
+                        node.Params[paramDefine.Key] = BTParamValue.FromString(value.AsString());
+                        break;
+
+                    default:
+                        node.Params[paramDefine.Key] = BTParamValue.FromFloat(value.AsFloat());
+                        break;
+                }
+            }
+        }
         // 功能：读一个参数值，并尽量按定义里的类型还原。
         // 入参：key 参数键；value JSON 值
         // 返回：参数值
