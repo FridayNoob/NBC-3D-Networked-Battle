@@ -219,6 +219,9 @@ namespace NBC.EditorTools.BehaviorTree
 
             string id = m_data.NextNodeId();
             BTNodeData data = define.CreateNodeData();
+
+            // 避免和已有节点完全重叠：重叠会把旧节点盖住，用户会以为「只有一个节点」
+            position = AvoidOverlap(position);
             data.PosX = position.x;
             data.PosY = position.y;
 
@@ -234,6 +237,71 @@ namespace NBC.EditorTools.BehaviorTree
             return view;
         }
 
+        // 功能：落点上已有节点时，把新节点往右下错开，直到不重叠。
+        // 入参：position 期望位置
+        // 返回：可用位置
+        // 步骤：循环比较已有节点位置，太近就偏移 (32, 32)，最多试 40 次
+        // 上游：CreateNode
+        // 下游：无
+        // 注意：只比位置不比尺寸 —— 够用，也不会因节点尺寸变化而抖动
+        private Vector2 AvoidOverlap(Vector2 position)
+        {
+            const float MinDistance = 24f;
+            const float Step = 32f;
+            Vector2 candidate = position;
+
+            for (int guard = 0; guard < 40; guard++)
+            {
+                bool conflict = false;
+
+                foreach (KeyValuePair<string, BTNodeView> pair in m_nodeViews)
+                {
+                    Rect other = pair.Value.GetPosition();
+
+                    if (Mathf.Abs(other.x - candidate.x) < MinDistance &&
+                        Mathf.Abs(other.y - candidate.y) < MinDistance)
+                    {
+                        conflict = true;
+                        break;
+                    }
+                }
+
+                if (!conflict)
+                {
+                    return candidate;
+                }
+
+                candidate += new Vector2(Step, Step);
+            }
+
+            return candidate;
+        }
+
+        // 功能：选中并框选指定节点（预览失败时，把「多余的根」指给用户看）。
+        // 入参：nodeIds 节点 id 列表
+        // 返回：无
+        // 步骤：清空选择 → 逐个加入 → 框选
+        // 上游：BehaviorTreeEditorWindow.OnPreview 失败分支
+        // 下游：GraphView.FrameSelection
+        public void FocusNodes(IEnumerable<string> nodeIds)
+        {
+            ClearSelection();
+            bool any = false;
+
+            foreach (string id in nodeIds)
+            {
+                if (m_nodeViews.TryGetValue(id, out BTNodeView view))
+                {
+                    AddToSelection(view);
+                    any = true;
+                }
+            }
+
+            if (any)
+            {
+                FrameSelection();
+            }
+        }
         // 功能：给所有节点上色（预览回传状态后调用）。
         // 入参：status 节点 id → 三态
         // 返回：无

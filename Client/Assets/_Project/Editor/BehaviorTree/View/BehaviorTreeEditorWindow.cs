@@ -440,6 +440,14 @@ namespace NBC.EditorTools.BehaviorTree
 
             if (!m_runner.Start(data, out string error))
             {
+                // 根节点不唯一时，把多余的根选中并框选，用户一眼能看到它在哪
+                List<string> roots = data.FindRootIds();
+
+                if (roots.Count > 1)
+                {
+                    m_graphView.FocusNodes(roots);
+                }
+
                 SetStatus("❌ 无法预览：" + error);
                 Debug.LogWarning("[BT] 无法预览：" + error);
                 return;
