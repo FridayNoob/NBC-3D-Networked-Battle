@@ -73,6 +73,15 @@ namespace NBC.EditorTools.BehaviorTree
             VisualElement root = rootVisualElement;
             root.Clear();
 
+            // 样式表必须加在**窗口根节点**上：只加给 GraphView 的话，工具栏/三栏的 flex 规则全部不生效，
+            // 界面会塌成竖排、画布高度变成 0（第一次验收就是这样）。
+            StyleSheet sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(BTEditorPaths.StyleSheetPath);
+
+            if (sheet != null && !root.styleSheets.Contains(sheet))
+            {
+                root.styleSheets.Add(sheet);
+            }
+
             VisualTreeAsset layout = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(BTEditorPaths.LayoutPath);
 
             if (layout != null)
