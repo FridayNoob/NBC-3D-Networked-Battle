@@ -837,6 +837,23 @@ namespace NBC.EditorTools.BehaviorTree
         {
             Vector2 local = this.WorldToLocal(evt.mousePosition);
 
+            // 右键点在节点上 ⇒ 给「节点级」操作；点在空白 ⇒ 给「新建节点」菜单
+            BTNodeView node = FindNodeAt(evt.mousePosition);
+
+            if (node != null)
+            {
+                BTNodeView target = node;
+                evt.menu.AppendAction("设为根（断开父连线）", _ => SetAsRoot(target));
+                evt.menu.AppendAction("复制此节点", _ =>
+                {
+                    ClearSelection();
+                    AddToSelection(target);
+                    DuplicateSelection();
+                });
+                evt.menu.AppendAction("删除此节点", _ => RemoveNode(target));
+                return;
+            }
+
             IReadOnlyList<BTNodeDefine> defines = BTNodeRegistry.All;
 
             for (int i = 0; i < defines.Count; i++)
@@ -845,6 +862,58 @@ namespace NBC.EditorTools.BehaviorTree
                 string label = defines[i].Category + "/" + defines[i].DisplayName;
                 evt.menu.AppendAction(label, _ => CreateNode(typeName, local));
             }
+        }
+
+        // 功能：把某个节点设为根（断开它和父节点之间的连线）。
+        // 入参：node 目标节点
+        // 返回：无
+        // 步骤：断开该节点的所有输入连线 → 刷新根徽标
+        // 上游：右键菜单「设为根」
+        // 下游：RefreshRoots
+        // 注意：一棵树只能有一个根；如果之前有别的根，它必须已经被连到树上，否则导出校验仍会报错。
+        private void SetAsRoot(BTNodeView node)
+        {
+            if (node == null || node.InputPort == null)
+            {
+                return;
+            }
+
+            foreach (Edge edge in node.InputPort.connections.ToList())
+            {
+                edge.input.Disconnect(edge);
+                RemoveElement(edge);
+            }
+
+            RefreshRoots();
+            Debug.Log("[BT] 已把 " + node.NodeId + "（" + node.Data.NodeType + "）设为根。");
+        }
+
+        // 功能：按面板坐标找节点视图。
+        // 入参：panelPosition 鼠标位置（面板坐标）
+        // 返回：节点视图；没有返回 null
+        // 步骤：panel.Pick → 沿父链找 BTNodeView
+        // 上游：OnContextMenu
+        // 下游：无
+        private BTNodeView FindNodeAt(Vector2 panelPosition)
+        {
+            if (panel == null)
+            {
+                return null;
+            }
+
+            VisualElement cursor = panel.Pick(panelPosition);
+
+            while (cursor != null)
+            {
+                if (cursor is BTNodeView node)
+                {
+                    return node;
+                }
+
+                cursor = cursor.parent;
+            }
+
+            return null;
         }
     }
 

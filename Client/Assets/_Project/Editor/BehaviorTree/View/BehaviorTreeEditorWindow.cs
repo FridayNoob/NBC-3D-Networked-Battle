@@ -433,6 +433,9 @@ namespace NBC.EditorTools.BehaviorTree
         // 下游：BTPreviewRunner.Start
         private void OnPreview()
         {
+            // 先把面板上的值同步进黑板 —— 否则用户改过的值可能还没写进黑板（例如刚重开窗口/刚清空过）
+            SyncBlackboardFromFields();
+
             BTGraphData data = m_graphView.ExportData(m_treeIdField != null ? m_treeIdField.value : "preview");
 
             if (!m_runner.Start(data, out string error))
@@ -446,6 +449,42 @@ namespace NBC.EditorTools.BehaviorTree
             SetStatus("▶ 预览中（200ms 一帧）：绿=成功 红=失败 黄=运行中。改黑板数值看条件变化。");
         }
 
+        // 功能：把黑板面板上当前显示的值写进运行时黑板（预览开始前调用）。
+        // 入参：无
+        // 返回：无
+        // 步骤：遍历已记录的控件，按类型读值写黑板
+        // 上游：OnPreview
+        // 下游：BTBlackboard.Set
+        // 注意：黑板是"单一事实来源"应该是面板；运行时只读，所以每次开预览都对齐一次。
+        private void SyncBlackboardFromFields()
+        {
+            if (m_runner == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, VisualElement> pair in m_blackboardFields)
+            {
+                switch (pair.Value)
+                {
+                    case IntegerField intField:
+                        m_runner.Blackboard.Set(pair.Key, BTParamValue.FromInt(intField.value));
+                        break;
+
+                    case FloatField floatField:
+                        m_runner.Blackboard.Set(pair.Key, BTParamValue.FromFloat(floatField.value));
+                        break;
+
+                    case Toggle toggle:
+                        m_runner.Blackboard.Set(pair.Key, BTParamValue.FromBool(toggle.value));
+                        break;
+
+                    case TextField textField:
+                        m_runner.Blackboard.Set(pair.Key, BTParamValue.FromString(textField.value));
+                        break;
+                }
+            }
+        }
         // 功能：停止预览并清颜色。
         // 入参：无
         // 返回：无

@@ -363,18 +363,18 @@ namespace NBC.EditorTools.BehaviorTree
             return true;
         }
 
-        // 功能：停止预览并清空状态。
+        // 功能：停止预览并清空运行状态（**不动黑板**）。
         // 入参：无
         // 返回：无
-        // 步骤：丢根、清状态与黑板
+        // 步骤：丢根、清状态与计时
         // 上游：窗口的【停止预览】按钮 / OnDisable
         // 下游：无
+        // 注意：黑板是用户填的测试值，停预览不该清 —— 清了会出现「面板显示 100，条件读到 0」。
         public void Stop()
         {
             m_root = null;
             m_status.Clear();
             m_accumulator = 0f;
-            m_blackboard.Clear();
         }
 
         // 功能：按 200ms 间隔推进一帧（窗口每帧调它，内部自己限流）。
