@@ -36,6 +36,18 @@ namespace NBC.EditorTools.BehaviorTree
         // 选中节点变化（窗口用来刷新右侧属性面板）
         public event Action<BTNodeView> NodeSelected;
 
+        // 拖拽连线的起点端口（null = 没在拖）
+        private Port m_dragSourcePort;
+
+        // 拖拽时那根预备线的可视元素
+        private VisualElement m_dragLine;
+
+        // 预备线的起点与当前点（面板坐标，绘制时再转局部）
+        private Vector2 m_dragStart;
+
+        // 预备线的当前端点
+        private Vector2 m_dragCurrent;
+
         // 树数据（只读用；导出请走 ExportData）
         public BTGraphData Data => m_data;
 
@@ -72,6 +84,13 @@ namespace NBC.EditorTools.BehaviorTree
             }
 
             graphViewChanged += OnGraphViewChanged;
+
+            // 自己实现拖拽连线：GraphView 自带的 EdgeConnector 在「节点 + 自定义端口」组合下不认目标端口，
+            // 实测拖出线但落点连不上；这里改成鼠标按下端口 → 移动 → 松开时命中端口/节点即可连。
+            // TrickleDown：先于目标元素（端口）收到事件 —— 端口自己的 MouseUp 可能 StopPropagation，
+            // 用冒泡阶段就收不到，表现为「松手没反应」。
+            RegisterCallback<MouseMoveEvent>(OnConnectDragMove, TrickleDown.TrickleDown);
+            RegisterCallback<MouseUpEvent>(OnConnectDragEnd, TrickleDown.TrickleDown);
 
             RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
             RegisterCallback<DragPerformEvent>(OnDragPerform);
@@ -110,6 +129,7 @@ namespace NBC.EditorTools.BehaviorTree
                 view.SetPosition(new Rect(pair.Value.PosX, pair.Value.PosY, 180f, 100f));
                 AddElement(view);
                 m_nodeViews[pair.Key] = view;
+                HookPorts(view);
             }
 
             foreach (KeyValuePair<string, BTNodeData> pair in m_data.Nodes)
@@ -208,6 +228,7 @@ namespace NBC.EditorTools.BehaviorTree
             view.SetPosition(new Rect(position.x, position.y, 180f, 100f));
             AddElement(view);
             m_nodeViews[id] = view;
+            HookPorts(view);
 
             RefreshRoots();
             return view;
@@ -323,6 +344,240 @@ namespace NBC.EditorTools.BehaviorTree
             return copy;
         }
 
+        // 功能：给一个节点的端口挂上「按下开始连线」的钩子（TrickleDown，抢在 GraphView 自带连接器之前）。
+        // 入参：view 节点视图
+        // 返回：无
+        // 步骤：输入/输出端口各挂一个 MouseDown
+        // 上游：CreateNode / ImportData
+        // 下游：OnConnectDragStart
+        private void HookPorts(BTNodeView view)
+        {
+            if (view.InputPort != null)
+            {
+                view.InputPort.RegisterCallback<MouseDownEvent>(OnConnectDragStart, TrickleDown.TrickleDown);
+            }
+
+            if (view.OutputPort != null)
+            {
+                view.OutputPort.RegisterCallback<MouseDownEvent>(OnConnectDragStart, TrickleDown.TrickleDown);
+            }
+        }
+
+        // 功能：在端口上按下左键 → 开始拉线。
+        // 入参：evt 鼠标按下事件
+        // 返回：无
+        // 步骤：记下源端口与起点、建预备线、吃掉事件（不让 GraphView 自带连接器介入）
+        // 上游：端口 MouseDown（TrickleDown）
+        // 下游：OnConnectDragMove / OnConnectDragEnd
+        private void OnConnectDragStart(MouseDownEvent evt)
+        {
+            if (evt.button != 0 || !(evt.currentTarget is Port port))
+            {
+                return;
+            }
+
+            m_dragSourcePort = port;
+            m_dragStart = port.worldBound.center;
+            m_dragCurrent = m_dragStart;
+
+            if (m_dragLine == null)
+            {
+                m_dragLine = new VisualElement();
+                m_dragLine.pickingMode = PickingMode.Ignore;
+                m_dragLine.style.position = Position.Absolute;
+                m_dragLine.style.left = 0f;
+                m_dragLine.style.top = 0f;
+                m_dragLine.style.right = 0f;
+                m_dragLine.style.bottom = 0f;
+                m_dragLine.generateVisualContent += OnDrawDragLine;
+            }
+
+            contentContainer.Add(m_dragLine);
+            m_dragLine.MarkDirtyRepaint();
+            evt.StopPropagation();
+        }
+
+        // 功能：拖拽移动时刷新预备线。
+        // 入参：evt 鼠标移动事件
+        // 返回：无
+        // 步骤：更新端点并重绘
+        // 上游：鼠标移动
+        // 下游：OnDrawDragLine
+        private void OnConnectDragMove(MouseMoveEvent evt)
+        {
+            if (m_dragSourcePort == null)
+            {
+                return;
+            }
+
+            m_dragCurrent = evt.mousePosition;
+            m_dragLine?.MarkDirtyRepaint();
+        }
+
+        // 功能：松开鼠标 → 找落点端口/节点 → 校验 → 连上。
+        // 入参：evt 鼠标松开事件
+        // 返回：无
+        // 步骤：
+        //   1) 没有源端口就返回（没在拖）
+        //   2) 用 panel.Pick 找落点元素，往上找最近的 Port（找不到就找 BTNodeView 的输入口）
+        //   3) 校验方向、自连、成环、单父/单子
+        //   4) 连上并清预备线
+        // 上游：鼠标松开
+        // 下游：CompleteConnection
+        private void OnConnectDragEnd(MouseUpEvent evt)
+        {
+            if (m_dragSourcePort == null)
+            {
+                return;
+            }
+
+            Port source = m_dragSourcePort;
+            m_dragSourcePort = null;
+
+            if (m_dragLine != null)
+            {
+                m_dragLine.RemoveFromHierarchy();
+            }
+
+            Port target = FindPortAt(evt.mousePosition);
+
+            if (target == null)
+            {
+                return;
+            }
+
+            CompleteConnection(source, target);
+            evt.StopPropagation();
+        }
+
+        // 功能：把面板坐标下的落点换算成端口（找不到端口就退而用落点所在节点的输入口）。
+        // 入参：panelPosition 鼠标位置（面板坐标）
+        // 返回：端口；没有返回 null
+        // 步骤：panel.Pick → 沿父链找 Port；退化为找 BTNodeView
+        // 上游：OnConnectDragEnd
+        // 下游：无
+        private Port FindPortAt(Vector2 panelPosition)
+        {
+            if (panel == null)
+            {
+                return null;
+            }
+
+            VisualElement picked = panel.Pick(panelPosition);
+            VisualElement cursor = picked;
+
+            while (cursor != null)
+            {
+                if (cursor is Port port)
+                {
+                    return port;
+                }
+
+                if (cursor is BTNodeView nodeView)
+                {
+                    return nodeView.InputPort;
+                }
+
+                cursor = cursor.parent;
+            }
+
+            return null;
+        }
+
+        // 功能：校验并建立一条连线（输出口 → 输入口），同时做单父/单子与成环检查。
+        // 入参：source 源端口；target 目标端口
+        // 返回：无
+        // 步骤：
+        //   1) 方向必须是 out → in
+        //   2) 不能自己连自己
+        //   3) 不能成环（目标是源的祖先）
+        //   4) 目标已有父、源已有子 ⇒ 先断开旧的
+        //   5) ConnectTo + AddElement
+        // 上游：OnConnectDragEnd
+        // 下游：BTNodeView 的端口
+        private void CompleteConnection(Port source, Port target)
+        {
+            if (source.direction != Direction.Output || target.direction != Direction.Input)
+            {
+                // 允许从输入口反向拖到输出口（用户体验更宽容）
+                if (source.direction == Direction.Input && target.direction == Direction.Output)
+                {
+                    Port swap = source;
+                    source = target;
+                    target = swap;
+                }
+                else
+                {
+                    Debug.LogWarning("[BT] 连线必须从输出口连到输入口。");
+                    return;
+                }
+            }
+
+            if (!(source.node is BTNodeView from) || !(target.node is BTNodeView to))
+            {
+                return;
+            }
+
+            if (from == to)
+            {
+                Debug.LogWarning("[BT] 不能把节点连到自己。");
+                return;
+            }
+
+            if (IsAncestor(from, to))
+            {
+                Debug.LogWarning("[BT] 这样连会形成环（" + to.NodeId + " 是 " + from.NodeId + " 的祖先）。");
+                return;
+            }
+
+            // 单父：目标已连父的，先断
+            if (target.connections.Any())
+            {
+                foreach (Edge existing in target.connections.ToList())
+                {
+                    existing.input.Disconnect(existing);
+                    RemoveElement(existing);
+                }
+            }
+
+            // 单子：同一个输出口只留一条
+            if (source.connections.Any())
+            {
+                foreach (Edge existing in source.connections.ToList())
+                {
+                    existing.output.Disconnect(existing);
+                    RemoveElement(existing);
+                }
+            }
+
+            Edge edge = source.ConnectTo(target);
+            AddElement(edge);
+            RefreshRoots();
+        }
+
+        // 功能：画拖拽时的预备线。
+        // 入参：painter 绘制器
+        // 返回：无
+        // 步骤：把两个面板坐标转成元素局部坐标后画一条黄线
+        // 上游：m_dragLine.generateVisualContent
+        // 下游：无
+        private void OnDrawDragLine(MeshGenerationContext context)
+        {
+            if (m_dragLine == null)
+            {
+                return;
+            }
+
+            Painter2D painter = context.painter2D;
+            Vector2 from = m_dragLine.WorldToLocal(m_dragStart);
+            Vector2 to = m_dragLine.WorldToLocal(m_dragCurrent);
+            painter.strokeColor = new Color(1f, 0.85f, 0.2f);
+            painter.lineWidth = 2f;
+            painter.BeginPath();
+            painter.MoveTo(from);
+            painter.LineTo(to);
+            painter.Stroke();
+        }
         // 功能：图结构变化的总校验入口（GraphView 的所有增删都会经过这里）。
         // 入参：change 变化描述
         // 返回：修正后的变化（返回 null 表示不应用）
