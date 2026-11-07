@@ -11,6 +11,7 @@
             <ui:VisualElement class="bt-toolbar-spacer" />
             <ui:Button name="btn-duplicate" text="复制节点" class="bt-toolbar-button" />
             <ui:Button name="btn-delete" text="删除节点" class="bt-toolbar-button" />
+            <ui:Button name="btn-clear" text="清空画布" class="bt-toolbar-button" />
         </ui:VisualElement>
 
         <ui:VisualElement class="bt-body">

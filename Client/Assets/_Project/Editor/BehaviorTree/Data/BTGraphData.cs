@@ -107,6 +107,20 @@ namespace NBC.EditorTools.BehaviorTree
         // 下游：无
         public string FindRootId()
         {
+            List<string> roots = FindRootIds();
+            return roots.Count == 1 ? roots[0] : string.Empty;
+        }
+
+        // 功能：列出所有根节点 id（没有父节点引用的那些）。
+        // 入参：无
+        // 返回：根 id 列表（可能是 0 个、1 个或多个）
+        // 步骤：
+        //   1) 把所有 Children 里的 id 收进集合
+        //   2) 遍历 Nodes，不在集合里的就是根
+        // 上游：FindRootId / Validate（报错要列出是哪几个）
+        // 下游：无
+        public List<string> FindRootIds()
+        {
             HashSet<string> referenced = new HashSet<string>();
 
             foreach (KeyValuePair<string, BTNodeData> pair in Nodes)
@@ -117,19 +131,17 @@ namespace NBC.EditorTools.BehaviorTree
                 }
             }
 
-            string root = string.Empty;
-            int rootCount = 0;
+            List<string> roots = new List<string>();
 
             foreach (KeyValuePair<string, BTNodeData> pair in Nodes)
             {
                 if (!referenced.Contains(pair.Key))
                 {
-                    root = pair.Key;
-                    rootCount++;
+                    roots.Add(pair.Key);
                 }
             }
 
-            return rootCount == 1 ? root : string.Empty;
+            return roots;
         }
 
         // 功能：生成下一个可用的节点 id（n1、n2…）。
@@ -177,7 +189,17 @@ namespace NBC.EditorTools.BehaviorTree
 
             if (string.IsNullOrEmpty(root))
             {
-                error = "必须恰好有一个根节点（当前根的数量不是 1）。检查是否漏连线或连成了环。";
+                List<string> roots = FindRootIds();
+                StringBuilder list = new StringBuilder();
+
+                for (int i = 0; i < roots.Count; i++)
+                {
+                    if (i > 0) { list.Append(", "); }
+                    list.Append(roots[i]).Append('(').Append(Nodes[roots[i]].NodeType).Append(')');
+                }
+
+                error = "必须恰好有一个根节点，当前有 " + roots.Count + " 个：" + list +
+                        "。把多余的节点连到树上，或删掉它们。";
                 return false;
             }
 

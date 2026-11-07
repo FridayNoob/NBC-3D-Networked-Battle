@@ -334,6 +334,7 @@ namespace NBC.EditorTools.BehaviorTree
             root.Q<Button>("btn-stop")?.RegisterCallback<ClickEvent>(_ => OnStopPreview());
             root.Q<Button>("btn-delete")?.RegisterCallback<ClickEvent>(_ => OnDelete());
             root.Q<Button>("btn-duplicate")?.RegisterCallback<ClickEvent>(_ => OnDuplicate());
+            root.Q<Button>("btn-clear")?.RegisterCallback<ClickEvent>(_ => OnClear());
         }
 
         // 功能：导出当前树为 JSON 文件。
@@ -493,6 +494,19 @@ namespace NBC.EditorTools.BehaviorTree
             SetStatus("已复制为 " + copy.NodeId);
         }
 
+        // 功能：清空画布（重新开始一棵树）。
+        // 入参：无
+        // 返回：无
+        // 步骤：停止预览 → 用空数据 ImportData → 清属性面板
+        // 上游：工具栏【清空画布】
+        // 下游：BTGraphView.ImportData
+        private void OnClear()
+        {
+            OnStopPreview();
+            m_graphView.ImportData(new BTGraphData { TreeId = m_treeIdField != null ? m_treeIdField.value : "new_tree" });
+            m_inspector.Bind(null);
+            SetStatus("画布已清空。");
+        }
         // 功能：更新状态栏文字。
         // 入参：text 文案
         // 返回：无
