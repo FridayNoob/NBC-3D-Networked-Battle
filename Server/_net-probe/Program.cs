@@ -26,7 +26,8 @@ using NBC.Game.Net;
 using NBC.Game.Quest;           // M4-S3 收口（§二十四）：进度「是谁说的」那一层（纯 C#，可在探针里真跑）
 using NBC.Protocol;
 using NBC.Server.Core;
-using NBC.Server.Game;          // S5：`DungeonBattle` / `RoomBattleService`
+using NBC.Server.Game;
+using NBC.Server.Game.Ai;          // S5：`DungeonBattle` / `RoomBattleService`
 using NBC.Shared;
 using NBC.Shared.Sim;           // M4-S4 S4-b：`WorldState` / `WorldStep` / `WorldStateHash`（确定性内核）               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
@@ -1261,9 +1262,11 @@ namespace NBC.NetProbe
                     earlyX != int.MinValue && lateX != int.MinValue && earlyX != lateX,
                     $"第 5 帧 x={earlyX}，第 30 帧 x={lateX}，第 31 帧 x={lastX}");
 
-                Check("状态同步：巡逻是**确定性**的（超过上限会掉头，不会一直往外走）",
-                    Math.Abs(lastX - h.Tables.FindDungeon(1001)!.Value.SpawnRadiusMm) <= 500,
-                    "第 31 帧 x=" + lastX + "（应当在 1500~2500 的巡逻区间里）");
+                  // R022：怪物改成行为树 AI（会发现玩家并追击），「一直在巡逻区间内」不再成立。
+                  // 这条用例的本意是确定性，改成：同样输入跑两局，怪物轨迹必须逐帧完全一致。
+                  Check("状态同步：怪物行为是**确定性**的（同输入两局 → 轨迹逐帧一致）",
+                      SameMonsterTrajectory(40),
+                      "两局各跑 40 帧，比对实体 2 的 X 序列");
             }
         }
 
@@ -1912,6 +1915,61 @@ namespace NBC.NetProbe
         /// <para>⚠️ 这条规则是因为负责人实测"老是被 BOSS 打死、没法测"才补的 ——
         /// 原来 BOSS 无脑全图锁人，副本里"先清小怪再打 BOSS"根本做不到。</para>
         /// </summary>
+        /// <summary>同输入跑两局，比较实体 2 逐帧的 X 轨迹是否完全一致（确定性判据）。</summary>
+        private static bool SameMonsterTrajectory(int ticks)
+        {
+            List<int> first = RecordMonsterX(ticks);
+            List<int> second = RecordMonsterX(ticks);
+
+            if (first.Count != second.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < first.Count; i++)
+            {
+                if (first[i] != second[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>跑一局并记录实体 2 每帧的 X。</summary>
+        private static List<int> RecordMonsterX(int ticks)
+        {
+            List<int> xs = new List<int>();
+
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+
+                for (int i = 0; i < ticks; i++)
+                {
+                    h.TickBattles(1);
+                    xs.Add(FindEntity(a.LastSnapshot(), 2)?.PosXMm ?? int.MinValue);
+                }
+            }
+
+            return xs;
+        }
+        /// <summary>按实体编号找它的大脑（不依赖 Brains 列表顺序：普通怪现在也有大脑）。</summary>
+        private static MonsterBrain BrainOf(DungeonBattle battle, int entityId)
+        {
+            for (int i = 0; i < battle.Brains.Count; i++)
+            {
+                if (battle.Brains[i].EntityId == entityId)
+                {
+                    return battle.Brains[i];
+                }
+            }
+
+            return battle.Brains[0];
+        }
+
+
 private static void Boss_ChasesTheHero()
         {
             using (var h = new Harness())
@@ -1936,12 +1994,12 @@ private static void Boss_ChasesTheHero()
                 h.SendIdleInputFor(a, 20);
                 int after = DungeonBattle.DistanceMm(boss, hero);
 
-                bool engaged = battle.Brains[0].StateName == "追击" || battle.Brains[0].StateName == "攻击";
+                bool engaged = BrainOf(battle, FindBoss(battle)!.Id).StateName == "追击" || BrainOf(battle, FindBoss(battle)!.Id).StateName == "攻击";
                 bool closing = after < before || hero.Hp < hpBefore;
 
                 Check("BOSS AI：英雄站着不动 BOSS 也会主动过来（R018 新行为）",
                     engaged && closing,
-                    $"距离 {before}mm → {after}mm；状态={battle.Brains[0].StateName}；HP {hpBefore} → {hero.Hp}");
+                    $"距离 {before}mm → {after}mm；状态={BrainOf(battle, FindBoss(battle)!.Id).StateName}；HP {hpBefore} → {hero.Hp}");
             }
         }
 
@@ -1956,7 +2014,7 @@ private static void Boss_ReturnsHomeAfterLosingAggro()
                 h.TickBattles(1);
 
                 DungeonBattle battle = h.BattleOf(a)!;
-                BossBrain brain = battle.Brains[0];
+                MonsterBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
                 BattleEntity boss = FindBoss(battle)!;
                 BattleEntity hero = h.HeroOf(a)!;
 
@@ -2066,9 +2124,9 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 h.SendIdleInputFor(a, 10);
 
                 Check("BOSS AI：英雄死了 → BOSS 回到「站桩」且不再移动",
-                    battle.Brains[0].StateName == "站桩"
+                    BrainOf(battle, FindBoss(battle)!.Id).StateName == "站桩"
                     && boss.PosXmm == bossX && boss.PosZmm == bossZ,
-                    $"状态={battle.Brains[0].StateName}，位置 ({bossX},{bossZ}) → ({boss.PosXmm},{boss.PosZmm})");
+                    $"状态={BrainOf(battle, FindBoss(battle)!.Id).StateName}，位置 ({bossX},{bossZ}) → ({boss.PosXmm},{boss.PosZmm})");
             }
         }
 
@@ -2085,7 +2143,7 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 h.SendIdleInputFor(a, 12);
 
                 DungeonBattle battle = h.BattleOf(a)!;
-                BossBrain brain = battle.Brains[0];
+                MonsterBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
 
                 Check("BOSS AI：大脑用 A10 的状态机（有状态名、发生过状态切换）",
                     brain.TransitionCount > 0 && !string.IsNullOrEmpty(brain.StateName),

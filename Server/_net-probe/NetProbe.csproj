@@ -134,4 +134,8 @@
     </Reference>
   </ItemGroup>
 
+  <!-- R022：行为树 JSON（从服务端项目拷过来，供确定性探针走 JSON 加载路径） -->
+  <ItemGroup>
+    <None Include="..\NBC.Server.Game\BehaviorTrees\*.json" Link="BehaviorTrees\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

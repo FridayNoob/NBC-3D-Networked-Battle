@@ -1,0 +1,90 @@
+{
+  "TreeId": "boss",
+  "RootNodeId": "n1",
+  "Nodes": {
+    "n1": {
+      "NodeType": "Selector",
+      "Pos": { "x": 360, "y": 80 },
+      "Params": { },
+      "Children": ["n2", "n5", "n9", "n12", "n13"]
+    },
+    "n2": {
+      "NodeType": "IsDead",
+      "Pos": { "x": 120, "y": 200 },
+      "Params": { },
+      "Children": []
+    },
+    "n5": {
+      "NodeType": "Sequence",
+      "Pos": { "x": 360, "y": 200 },
+      "Params": { },
+      "Children": ["n6", "n7", "n8", "n11"]
+    },
+    "n6": {
+      "NodeType": "HasTarget",
+      "Pos": { "x": 240, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n7": {
+      "NodeType": "InAttackRange",
+      "Pos": { "x": 400, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n8": {
+      "NodeType": "AttackReady",
+      "Pos": { "x": 560, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n11": {
+      "NodeType": "BasicAttack",
+      "Pos": { "x": 720, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n9": {
+      "NodeType": "Sequence",
+      "Pos": { "x": 600, "y": 200 },
+      "Params": { },
+      "Children": ["n3", "n4"]
+    },
+    "n3": {
+      "NodeType": "HasTarget",
+      "Pos": { "x": 600, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n4": {
+      "NodeType": "Chase",
+      "Pos": { "x": 760, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n12": {
+      "NodeType": "Sequence",
+      "Pos": { "x": 840, "y": 200 },
+      "Params": { },
+      "Children": ["n14", "n15"]
+    },
+    "n14": {
+      "NodeType": "HomeFar",
+      "Pos": { "x": 840, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n15": {
+      "NodeType": "ReturnHome",
+      "Pos": { "x": 1000, "y": 320 },
+      "Params": { },
+      "Children": []
+    },
+    "n13": {
+      "NodeType": "Idle",
+      "Pos": { "x": 1000, "y": 200 },
+      "Params": { },
+      "Children": []
+    }
+  }
+}

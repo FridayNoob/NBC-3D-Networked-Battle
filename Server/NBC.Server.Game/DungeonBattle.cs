@@ -41,6 +41,7 @@
 
 using System.Collections.Generic;
 using NBC.Protocol;
+using NBC.Server.Game.Ai;
 using NBC.Shared.Battle;
 using NBC.Shared.Condition;
 using NBC.Shared.Net;
@@ -82,6 +83,9 @@ public sealed class BattleEntity
 
     /// <summary>还活着吗。</summary>
     public bool Alive => Hp > 0;
+
+    /// <summary>这一帧是否由行为树接管移动（true ⇒ Step 跳过自己的巡逻位移）。</summary>
+    public bool Chasing { get; set; }
 
     /// <summary>巡逻速度（毫米/帧；0 = 不动的单位）。</summary>
     public int PatrolSpeedMmPerTick { get; }
@@ -150,7 +154,8 @@ public sealed class BattleEntity
             AttackCooldownTicksLeft--;
         }
 
-        if (!Alive || PatrolSpeedMmPerTick == 0)
+        // 行为树接管移动时不走巡逻（否则会出现「一边追一边被巡逻拉回」）
+        if (!Alive || Chasing || PatrolSpeedMmPerTick == 0)
         {
             return;
         }
@@ -384,7 +389,7 @@ public sealed class DungeonBattle
     private readonly List<BattleEntity> _entities = new();
 
     /// <summary>BOSS 大脑（每 tick 想一次，见 `BossBrain`）。</summary>
-    private readonly List<BossBrain> _brains = new();
+    private readonly List<MonsterBrain> _brains = new();
 
     /// <summary>待广播的服务端事件（掉落等；由 `RoomBattleService` 每帧取走，S7）。</summary>
     private readonly List<DropEvent> _pendingDrops = new();
@@ -476,7 +481,7 @@ public sealed class DungeonBattle
     }
 
     /// <summary>本局所有 BOSS 大脑（探针/调试面板看 AI 状态用）。</summary>
-    public IReadOnlyList<BossBrain> Brains => _brains;
+    public IReadOnlyList<MonsterBrain> Brains => _brains;
 
     /// <summary>BOSS 数量（`Kind == 1` 且配置号等于 `Dungeon.bossId` 的单位）。</summary>
     public int BossCount
@@ -1242,11 +1247,14 @@ public sealed class DungeonBattle
             int spawnX = radius;
 
             battle.AttachTables(tables);
-        battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
+        BattleEntity normal = battle.AddEntity(monster.Value.Id, 1, monster.Value.Hp, spawnX, z,
                              patrolSpeedMmPerTick: MonsterMoveMmPerTick,
                              patrolMinMm: spawnX - 500, patrolMaxMm: spawnX + 500,
                              attackDamage: monster.Value.Attack,
                              moveSpeedMmPerTick: MonsterMoveMmPerTick);
+
+        // 普通怪也走行为树（wolf 树 + Melee 参数）
+        battle._brains.Add(new MonsterBrain(normal, DefaultAiTrees.WolfAiKind, MonsterAiProfile.Melee));
         }
 
         // BOSS：摆在对面（x = -radius），把"血量厚、攻击高"从表里带出来
@@ -1264,7 +1272,7 @@ public sealed class DungeonBattle
                                                   moveSpeedMmPerTick: BossMoveMmPerTick);
 
         // BOSS 由状态机驱动（见 `BossBrain`：Idle / Chase / Attack）
-        battle._brains.Add(new BossBrain(bossEntity));
+        battle._brains.Add(new MonsterBrain(bossEntity, DefaultAiTrees.BossAiKind, MonsterAiProfile.Boss));
 
         return battle;
     }

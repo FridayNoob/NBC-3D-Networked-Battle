@@ -56,4 +56,8 @@
     </Reference>
   </ItemGroup>
 
+  <!-- R022：行为树 JSON（由 R023 编辑器导出后放这里；会被拷到输出目录供服务端加载） -->
+  <ItemGroup>
+    <None Include="BehaviorTrees\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
