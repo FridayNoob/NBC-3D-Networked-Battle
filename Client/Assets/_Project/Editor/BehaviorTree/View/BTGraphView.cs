@@ -167,6 +167,8 @@ namespace NBC.EditorTools.BehaviorTree
         // 下游：BTJsonUtil.Export
         public BTGraphData ExportData(string treeId)
         {
+            PruneDetachedViews();
+
             BTGraphData result = new BTGraphData
             {
                 TreeId = string.IsNullOrEmpty(treeId) ? m_data.TreeId : treeId
@@ -337,6 +339,45 @@ namespace NBC.EditorTools.BehaviorTree
             }
         }
 
+        // 功能：把「已经从画布上消失、但还留在字典里」的幽灵节点清掉。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 本组件自己不在面板上时不动（窗口正在关闭/重建）
+        //   2) 找 panel == null 的视图，从 m_nodeViews 与 m_data 里移除
+        // 上游：ExportData（导出前兜底）
+        // 下游：无
+        // 注意：这是**兜底**，不是主要清理路径 —— 主要路径是重写 DeleteSelection。
+        private void PruneDetachedViews()
+        {
+            if (panel == null || m_nodeViews.Count == 0)
+            {
+                return;
+            }
+
+            List<string> stale = null;
+
+            foreach (KeyValuePair<string, BTNodeView> pair in m_nodeViews)
+            {
+                if (pair.Value.panel == null)
+                {
+                    stale ??= new List<string>();
+                    stale.Add(pair.Key);
+                }
+            }
+
+            if (stale == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < stale.Count; i++)
+            {
+                Debug.LogWarning("[BT] 清理幽灵节点：" + stale[i] + "（已不在画布上，但数据里还留着）。");
+                m_nodeViews.Remove(stale[i]);
+                m_data.Nodes.Remove(stale[i]);
+            }
+        }
         // 功能：取选中的第一个节点（没有就 null）。
         // 入参：无
         // 返回：节点视图
@@ -360,9 +401,9 @@ namespace NBC.EditorTools.BehaviorTree
         // 入参：无
         // 返回：无
         // 步骤：逐个判断是不是根；不是就从画布与数据里移除
-        // 上游：窗口的 Delete 按钮 / Delete 键
+        // 上游：窗口的 Delete 按钮
         // 下游：RemoveNode
-        public void DeleteSelection()
+        public void DeleteSelectedNodes()
         {
             List<BTNodeView> targets = new List<BTNodeView>();
 
@@ -378,6 +419,49 @@ namespace NBC.EditorTools.BehaviorTree
             {
                 RemoveNode(targets[i]);
             }
+        }
+
+        // 功能：删除当前选中内容（**接管 GraphView 的内建删除**）。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 节点走 RemoveNode（会同时清 m_nodeViews 与 m_data）
+        //   2) 连线直接 RemoveElement
+        //   3) 刷新根徽标与选中状态
+        // 上游：GraphView 的 Delete 键 / 内建右键 Delete / 工具栏【删除节点】
+        // 下游：RemoveNode
+        // 注意：**必须重写**：GraphView 内建删除走 DeleteElements，它**不触发 graphViewChanged**，
+        //       不接管的话字典里会留下"看不见但还在"的幽灵节点（预览会报多个根）。
+        public override EventPropagation DeleteSelection()
+        {
+            List<BTNodeView> nodes = new List<BTNodeView>();
+            List<GraphElement> others = new List<GraphElement>();
+
+            foreach (ISelectable selectable in selection)
+            {
+                if (selectable is BTNodeView node)
+                {
+                    nodes.Add(node);
+                }
+                else if (selectable is GraphElement element)
+                {
+                    others.Add(element);
+                }
+            }
+
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                RemoveNode(nodes[i]);
+            }
+
+            for (int i = 0; i < others.Count; i++)
+            {
+                RemoveElement(others[i]);
+            }
+
+            RefreshRoots();
+            NotifySelection();
+            return EventPropagation.Stop;
         }
 
         // 功能：复制当前选中的节点（参数与位置都拷，右上偏移一点）。

@@ -514,7 +514,7 @@ namespace NBC.EditorTools.BehaviorTree
         // 下游：BTGraphView.DeleteSelection
         private void OnDelete()
         {
-            m_graphView.DeleteSelection();
+            m_graphView.DeleteSelectedNodes();
             m_inspector.Bind(null);
             SetStatus("已删除选中节点（根节点不会被删除）。");
         }
