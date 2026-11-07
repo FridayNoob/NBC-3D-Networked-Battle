@@ -1,0 +1,62 @@
+# 项目规则（AI 必读 —— 每次会话开场先读这一页）
+
+> 本文件是**硬规则摘要**，详细规则见 `Docs/00-项目工作规则.md`。
+> 之所以单独放一份在仓库根：普通文档只有"主动去读"才进上下文，长会话里容易丢；这一页短、位置固定，供每次开场快速对齐。
+
+## 0. 唯一硬门禁（优先级最高，违反即为流程错误）
+
+需求走 8 步，一步一篇文档：
+
+```
+01 技术预研 → 02 需求 → 03 方案设计 → 04 代码实现 → 05 自动测试 → 06 手工验收 → 07 评审迭代 → 08 文档沉淀
+```
+
+- **一次只交付一篇文档；交付后必须停下，等负责人明确回复「通过」才能进入下一步。**
+- 没有「通过」时：**不写下一篇文档、不写代码、不跑测试、不提交**。
+- 负责人说「跳过」才跳；说「改」就只改当前这一篇，改完继续等「通过」。
+- 遇到需要决策的点（取值、边界、取舍）→ 用提问收敛，不要自己替负责人拍板。
+
+## 1. 真值来源（冲突时以这些为准）
+
+| 内容 | 位置 |
+| --- | --- |
+| 详细工作规则 | `Docs/00-项目工作规则.md` |
+| 需求索引 + 编号规则 | `Docs/新项目文档/需求索引.md` |
+| 注释规范 | `Docs/新项目文档/项目代码注释规范.md` |
+| 已知修复/调试开关记录 | `Docs/新项目文档/FIXES.md` |
+| 未完成需求分解 | `Docs/新项目文档/未完成需求分解.md` |
+| 项目目标与 DoD | `Docs/01-项目需求文档.md` |
+
+编号规则：M4 = `R001~R099`、M5 = `R100~R199`、M6 = `R200~R299`、杂项 = `R300~`。
+
+## 2. 每次改完必跑的四道闸门
+
+```powershell
+dotnet build Server\_api-probe\ApiProbe.csproj -m:1 -t:Rebuild     # 期望 0 错 / 10 警告
+.\Tools\Check-AsmdefBoundaries.ps1                                  # 期望 12/12 全绿
+.\Tools\Check-DocTables.ps1                                         # 期望 0 问题
+.\Tools\Check-ScriptEncoding.ps1                                    # 期望 0 问题
+```
+
+服务端改动额外跑探针：`dotnet run --project Server\_net-probe\NetProbe.csproj -m:1`（期望全绿）。
+
+## 3. 不可动的东西
+
+- **保护文件**：`RoomRegistry`、`RoomService`、`RoomBattleService`、`ProgressBroadcaster`、`SnapshotView.cs`
+- **生成代码不手改**：`Client/Assets/_Project/Game/Config/Generated/**`、`NBC.Protocol`（改源头再重新生成）
+- **素材不进仓库**：`Client/Assets/Art/Model/**`、`Client/Assets/Prefabs/**`
+
+## 4. 编码与文档约定
+
+- `.cs`：UTF-8 **无 BOM** + LF；文件头 `// 这个文件里有：`；类头四句；方法注释五段（功能/入参/返回/步骤/上游下游）
+- `.ps1` 含中文必须带 **BOM**
+- Markdown 表格：表头 + 分隔行 + 空行分隔；一篇文档固定最后一节是「产出物检查清单」
+- 注释里不要 `**`、反引号、`====` 这类装饰；不要写需求编号当解释
+
+## 5. 环境事实（容易踩的）
+
+- Unity 2022.3.62f3c1 + URP 14；服务端 .NET 8；MySQL 本机
+- 服务端是**纯 .NET**：跑不了 Unity 插件（Behavior Designer 只能在客户端）；行为树/数值逻辑必须纯 C#
+- `dotnet run` 在本环境要配 `--no-build`（隐式构建会失败）
+- 编译报 `MSB3027/MSB3021 文件被占用` = 有进程在跑（服务端/探针），先停进程，不是代码错
+- 编辑器工具与 UXML/USS 放 `Client/Assets/_Project/Editor/**`（`NBC.Editor`，只在编辑器编译）
