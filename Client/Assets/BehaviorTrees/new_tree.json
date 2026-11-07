@@ -1,0 +1,28 @@
+{
+  "TreeId": "new_tree",
+  "RootNodeId": "n1",
+  "Nodes": {
+    "n1": {
+      "NodeType": "Selector",
+      "Pos": { "x": 200, "y": 185 },
+      "Params": { },
+      "Children": ["n2", "n3"]
+    },
+    "n2": {
+      "NodeType": "HPBelow",
+      "Pos": { "x": 69, "y": 339 },
+      "Params": {
+        "hpThreshold": 30
+      },
+      "Children": []
+    },
+    "n3": {
+      "NodeType": "Wait",
+      "Pos": { "x": 370, "y": 339 },
+      "Params": {
+        "seconds": 1
+      },
+      "Children": []
+    }
+  }
+}
