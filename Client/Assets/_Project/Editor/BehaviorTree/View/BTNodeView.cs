@@ -151,7 +151,15 @@ namespace NBC.EditorTools.BehaviorTree
         // 下游：m_subtitle
         public void UpdateSubtitle()
         {
-            if (m_subtitle == null || Define == null)
+            if (m_subtitle == null)
+            {
+                return;
+            }
+
+            // 按注册表取最新定义（SO 改动后节点视图上缓存的 Define 可能已过期）
+            BTNodeDefine define = BTNodeRegistry.Find(Data.NodeType) ?? Define;
+
+            if (define == null)
             {
                 return;
             }
@@ -159,9 +167,9 @@ namespace NBC.EditorTools.BehaviorTree
             System.Text.StringBuilder builder = new System.Text.StringBuilder();
             int shown = 0;
 
-            for (int i = 0; i < Define.Params.Length && shown < 3; i++)
+            for (int i = 0; i < define.Params.Length && shown < 3; i++)
             {
-                BTParamDefine param = Define.Params[i];
+                BTParamDefine param = define.Params[i];
 
                 if (!Data.Params.TryGetValue(param.Key, out BTParamValue value))
                 {

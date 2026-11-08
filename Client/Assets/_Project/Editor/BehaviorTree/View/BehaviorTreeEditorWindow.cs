@@ -39,6 +39,9 @@ namespace NBC.EditorTools.BehaviorTree
         // 树名输入框
         private TextField m_treeIdField;
 
+        // 窗口根元素（刷新左栏时用；CreateGUI 里赋值）
+        private VisualElement m_root;
+
         // 黑板输入框（键 → 控件），用于预览时读值
         private readonly Dictionary<string, VisualElement> m_blackboardFields =
             new Dictionary<string, VisualElement>();
@@ -71,6 +74,7 @@ namespace NBC.EditorTools.BehaviorTree
         public void CreateGUI()
         {
             VisualElement root = rootVisualElement;
+            m_root = root;
             root.Clear();
 
             // 样式表必须加在**窗口根节点**上：只加给 GraphView 的话，工具栏/三栏的 flex 规则全部不生效，
@@ -578,6 +582,46 @@ namespace NBC.EditorTools.BehaviorTree
             m_graphView.ImportData(new BTGraphData { TreeId = m_treeIdField != null ? m_treeIdField.value : "new_tree" });
             m_inspector.Bind(null);
             SetStatus("画布已清空。");
+        }
+        // 功能：通知所有已打开的行为树窗口：节点定义变了，重建左栏并刷新属性面板。
+        // 入参：无
+        // 返回：无
+        // 步骤：用 Resources.FindObjectsOfTypeAll 找窗口（含未聚焦的），逐个刷
+        // 上游：BTNodeDefinitionsWatcher（SO 改动后）
+        // 下游：RefreshAfterDefinitionsChanged
+        public static void RefreshAllWindows()
+        {
+            BehaviorTreeEditorWindow[] windows =
+                Resources.FindObjectsOfTypeAll<BehaviorTreeEditorWindow>();
+
+            for (int i = 0; i < windows.Length; i++)
+            {
+                windows[i].RefreshAfterDefinitionsChanged();
+            }
+        }
+
+        // 功能：节点定义变化后，重建左栏节点库并让属性面板按新定义重建。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 左栏重建（BuildPalette 读的是 BTNodeRegistry.All）
+        //   2) 属性面板重绑当前选中节点（这样新加的参数会立刻出现）
+        //   3) 状态栏提示
+        // 上游：RefreshAllWindows
+        // 下游：BuildPalette / BTInspectorView.Bind
+        private void RefreshAfterDefinitionsChanged()
+        {
+            if (m_root == null)
+            {
+                return;
+            }
+
+            BuildPalette(m_root);
+
+            BTNodeView selected = m_graphView != null ? m_graphView.GetSelectedNode() : null;
+            m_inspector?.Bind(selected);
+
+            SetStatus("节点定义已更新：左栏与属性面板已刷新。");
         }
         // 功能：更新状态栏文字。
         // 入参：text 文案

@@ -51,7 +51,17 @@ namespace NBC.EditorTools.BehaviorTree
             m_node = node;
             m_slot.Clear();
 
-            if (node == null || node.Define == null)
+            if (node == null)
+            {
+                ShowPlaceholder();
+                return;
+            }
+
+            // 每次绑定都从注册表重新取定义：策划改了 SO 之后，新加的参数/新默认值要立刻反映到面板上
+            // （节点视图里缓存的 Define 可能是改动之前的旧对象）
+            BTNodeDefine define = BTNodeRegistry.Find(node.Data.NodeType) ?? node.Define;
+
+            if (define == null)
             {
                 ShowPlaceholder();
                 return;
@@ -68,7 +78,7 @@ namespace NBC.EditorTools.BehaviorTree
                 m_slot.Add(idLabel);
             }
 
-            if (node.Define.Params.Length == 0)
+            if (define.Params.Length == 0)
             {
                 Label none = new Label("该节点没有可配置参数。");
                 none.AddToClassList("bt-inspector-hint");
@@ -76,9 +86,9 @@ namespace NBC.EditorTools.BehaviorTree
                 return;
             }
 
-            for (int i = 0; i < node.Define.Params.Length; i++)
+            for (int i = 0; i < define.Params.Length; i++)
             {
-                AddField(node, node.Define.Params[i]);
+                AddField(node, define.Params[i]);
             }
         }
 
