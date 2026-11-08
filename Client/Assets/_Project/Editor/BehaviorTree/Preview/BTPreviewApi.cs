@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using UnityEngine;
 
 namespace NBC.EditorTools.BehaviorTree
 {
@@ -74,7 +75,8 @@ namespace NBC.EditorTools.BehaviorTree
     }
 
     // 把求值器挂到某个配方上
-    [AttributeUsage(AttributeTargets.Class)]
+    // Inherited = false：子类不继承这个特性，避免「继承出一个类又自动注册一次」的隐蔽重复
+    [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
     public sealed class BtPreviewKindAttribute : Attribute
     {
         // 这个求值器负责的配方
@@ -174,6 +176,14 @@ namespace NBC.EditorTools.BehaviorTree
                 }
 
                 BTPreviewKind kind = attribute.Kind;
+
+                // 重复注册：警告并**保留先登记的**（先到先得，保证结果确定；静默覆盖会让"谁生效"取决于扫描顺序）
+                if (s_factories.ContainsKey(kind))
+                {
+                    Debug.LogWarning("[BT] 预览配方 " + kind + " 被多个类注册，已忽略后出现的：" + type.FullName);
+                    continue;
+                }
+
                 s_factories[kind] = () => (IBtPreviewNode)Activator.CreateInstance(type);
             }
         }
