@@ -364,7 +364,7 @@ $refs | Where-Object { -not (Test-Path $_) }
 它需要真实的中文路径 `Docs\01-项目需求文档.md` 才能定位需求文档，所以它**不能是全 ASCII 脚本**。
 按规则 W7b，它**保存为 UTF-8 with BOM**（PS 5.1 才能正确解码）。
 
-**改它之后要补回 BOM** —— 编辑工具会按无 BOM 回写。自检命令见 `Docs\00-项目工作规则.md` 的
+**改它之后要补回 BOM** —— 编辑工具会按无 BOM 回写。自检命令见 `AGENTS.md` 的
 「PowerShell 脚本编码自检」小节。
 
 ---
@@ -467,7 +467,7 @@ $b = [System.IO.File]::ReadAllBytes($p)
 
 ### 相关规则
 
-这条已写入 `Docs/00-项目工作规则.md` 的「代码书写附加条款」（条款 W7 / W8）。
+这条已写入 `AGENTS.md` 的「代码书写附加条款」（条款 W7 / W8）。
 
 ---
 

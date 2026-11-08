@@ -67,7 +67,7 @@ npm install @mermaid-js/mermaid-cli --no-audit --no-fund
 
 **规则**：脚本里要写中文 → 用 `[System.IO.File]::WriteAllText(路径, 文本, [System.Text.UTF8Encoding]::new($true))`
 写成**带 BOM**；仓库里既有的 `Tools\Check-DocLinks.ps1` 就是这么存的。
-⚠️ 这条**不是新规则**：`Docs\00-项目工作规则.md` 的 **W7 / W7b / W7c** 早就写了
+⚠️ 这条**不是新规则**：`AGENTS.md` 的 **W7 / W7b / W7c** 早就写了
 （"含非 ASCII 的 `.ps1` 必须 UTF-8 with BOM"、"用编辑器改过带 BOM 的脚本后必须补回 BOM"）。
 我这次的问题是**没去套用它**，而且旧自检只扫 `Tools\*.ps1`、漏掉了 `Docs\图\` ——
 所以补的是**检查覆盖范围**（`Tools\Check-ScriptEncoding.ps1` 扫全仓库 + 走真实 `Parser::ParseFile`），不是新规则。

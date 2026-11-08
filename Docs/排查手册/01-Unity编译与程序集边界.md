@@ -134,7 +134,7 @@ Select-String -Path 'Client\Logs\unity-batch-compile.log' -Pattern 'error CS|Scr
 
 1. `AsmdefReferenceGuardTests`：改了 asmdef 就会有一条用例盯着（含阳性/阴性对照）。
 2. `ApiProbe` 的关键引用处都写了**"这是第几次撞同一条规律"**的注释（现在是第 8 次），下次加引用时能直接抄。
-3. **规则**（`Docs\00`）：**改 asmdef、或跨程序集使用类型时，必须有一次 Unity 编译兜底**；闸门只能证明"API 与语法没问题"。
+3. **规则**（`AGENTS.md`）：**改 asmdef、或跨程序集使用类型时，必须有一次 Unity 编译兜底**；闸门只能证明"API 与语法没问题"。
 
 ---
 

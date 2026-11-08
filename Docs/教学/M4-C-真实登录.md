@@ -1,7 +1,7 @@
 # M4-C · 真正的登录（"你是谁"这件事，终于有了答案）
 
 > 对应切片：**M4-S3 / SRV-06 收口（账号登录：`IAccountStore` + `AccountDirectory` + 登录审计 + 协议新增字段）**
-> 留档日期：2026-09-27 · 七段式 · 写法按 `Docs\00` §15.3.1.1「说人话」
+> 留档日期：2026-09-27 · 七段式 · 写法按 `AGENTS.md` §15.3.1.1「说人话」
 > 对应代码：`Server\NBC.Server.Core\IAccountStore.cs`、`Server\NBC.Server.Data\AccountDirectory.cs` / `AccountDao.cs` / `LoginAuditWriter.cs`、`Client\Assets\_Project\Shared\Auth\PasswordDigest.cs`、`Server\NBC.Server.Core\ServerMessageRouter.cs`、`Client\Assets\_Project\Game\Net\NetSession.cs`
 > 对应测试：`Server\_net-probe`【十五】**13 条**（共 106）、`Server\_db-probe`【八】**25 条**（共 103）、**跨进程登录 4 条**（`--session=9000 --login=test01:123456`）
 > 对应文档：`Docs\27-M4开工清单.md` §十九、`Docs\08c-数据库迁移-M4S3-登录摘要.sql`
@@ -112,7 +112,7 @@ LoginResult Login(string account, string digest) {
 > 📌 **写假实现时先问一句**：「它和被测代码**共享**了什么？」
 > 共享的那部分就**绝对验不出来** —— 必须另找**外部真源**
 > （真库里的行、源 CSV、真 socket 对端、官方工具）。
-> 这条已记进 `Docs\00` 的 **W14**。
+> 这条已记进 `AGENTS.md` 的 **W14**。
 
 ### 坑 3：**握手在网络泵里 ⇒ 登录绝对不能查库**
 
@@ -330,7 +330,7 @@ if (playerId <= 0) { continue; }              // 游客的输入全被丢
 if (playerId == 0) { continue; }
 ```
 
-> 📌 **判据（`Docs\00` W15）**：**改一个字段的取值范围之前，先 grep 出所有拿它和 0 比较的地方，
+> 📌 **判据（`AGENTS.md` W15）**：**改一个字段的取值范围之前，先 grep 出所有拿它和 0 比较的地方，
 > 逐个问"这里想表达的是哪一个意思"。**
 >
 > 这类 bug 三连：**编译通过** / **不报错** / **只在"新取值"这条路径上出现** ——
@@ -345,7 +345,7 @@ if (playerId == 0) { continue; }
 | `player_id > 0` 却查不到档案 | ⚠️ **数据不一致** | `❌ 有 N 个玩家的战绩没写进库`（要响） |
 
 > 不分的话，"游客不记明细"（每局都有）会把"某人的战绩丢了"（故障）**淹掉**。
-> 同一个道理在 `Docs\00` 里有另一条：**同一句日志不许同时表示正常和故障**。
+> 同一个道理在 `AGENTS.md` 里有另一条：**同一句日志不许同时表示正常和故障**。
 
 ### 8.5 自测（本补丁）
 

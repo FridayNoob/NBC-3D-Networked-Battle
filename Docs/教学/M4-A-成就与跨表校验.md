@@ -1,7 +1,7 @@
 # M4-A · 成就与跨表校验（"成就和任务到底差在哪"）
 
 > 对应切片：**M4-S2（成就）+ ConfigKit 跨表检查 CFG0023**
-> 留档日期：2026-09-26 · 七段式 · 写法按 `Docs\00` §15.3.1.1「说人话」
+> 留档日期：2026-09-26 · 七段式 · 写法按 `AGENTS.md` §15.3.1.1「说人话」
 > 对应代码：`Client\Assets\_Project\Game\Achievement\`（3 文件）、`Tools\ConfigKit\src\ConfigKit.Core\CrossTableChecks.cs`
 > 对应测试：`Tests\EditMode\Game\AchievementRuntimeTests.cs`（15 条）、`Server\_condition-probe`（47 全绿）
 > 对应文档：`Docs\27-M4开工清单.md` §十

@@ -51,7 +51,7 @@ param(
 
     # Repo root (null = parent of this script's folder; resolved lazily -
     # $PSScriptRoot is EMPTY inside param() defaults under Windows
-    # PowerShell 5.1, which is this machine's shell; see Docs\00 section 5).
+    # PowerShell 5.1, which is this machine's shell; see AGENTS.md section 5).
     [string] $Root = $null
 )
 

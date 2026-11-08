@@ -1,6 +1,6 @@
 # ============================================================================
 #  Check-ScriptEncoding.ps1 - read-only encoding/syntax check for .ps1 scripts
-#  Rule: W7 / W7a / W7b / W7c (see Docs\00, the project rules document)
+#  Rule: W7 / W7a / W7b / W7c (see AGENTS.md, the project rules document)
 #
 #  ---------------------------------------------------------------------------
 #  Why this file is pure ASCII (no Chinese at all)
@@ -18,7 +18,7 @@
 #  I created the diagram folder's render.ps1 (Chinese comments/messages) WITHOUT
 #  a BOM. PowerShell read it as GBK -> string literals mangled -> some mangled
 #  bytes formed invalid tokens -> "Array index expression is missing or not valid."
-#  The old self-check in Docs\00 only swept `Tools\*.ps1`, so it never looked
+#  The old self-check in AGENTS.md only swept `Tools\*.ps1`, so it never looked
 #  at the new file. This script sweeps the WHOLE repo, and also runs the real
 #  PowerShell parser (that is what actually failed), instead of trusting my eyes.
 #
@@ -35,7 +35,7 @@
 param(
     # Directory to sweep recursively. Defaults to the repo root (parent of Tools).
     #
-    # NOTE (measured 2026-09-27; recorded in Docs\00 section 5, env cheatsheet):
+    # NOTE (measured 2026-09-27; recorded in AGENTS.md section 5, env cheatsheet):
     # do NOT write `[string] $Root = (Split-Path -Parent $PSScriptRoot)` here.
     # Inside a param() DEFAULT, $PSScriptRoot is EMPTY under Windows PowerShell
     # 5.1 (this machine's shell; PowerShell 7 sets it, so the bug hides on 7),

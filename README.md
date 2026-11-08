@@ -195,7 +195,7 @@ Asset Store **Commercial License（按席位授权）**，**许可不允许再�
 
 | 文档 | 内容 |
 | --- | --- |
-| [`Docs/00-项目工作规则.md`](Docs/00-项目工作规则.md) | 本项目的工作规则（含第三方依赖例外清单 E1~E5、工具边界） |
+| [`AGENTS.md`](AGENTS.md) | 本项目的工作规则（含第三方依赖例外清单 E1~E5、工具边界） |
 | [`Docs/01-项目需求文档.md`](Docs/01-项目需求文档.md) | **需求基准（Single Source of Truth）**：13 条需求收敛、优先级、验收标准、里程碑、风险 |
 | [`Docs/02-架构设计文档.md`](Docs/02-架构设计文档.md) | 架构与 **ADR**：分层与依赖方向、**ADR-001 `AssetManager` 接口定稿**（含被否决的备选方案） |
 | [`Docs/05-依赖清单.md`](Docs/05-依赖清单.md) | 第三方依赖登记（版本 / 来源 / 许可 / 用途 / 是否例外）；含 **YooAsset 3.0.5 v3 API 实测对照表** |
@@ -204,7 +204,7 @@ Asset Store **Commercial License（按席位授权）**，**许可不允许再�
 | [`Docs/10-M0手动操作手册.md`](Docs/10-M0手动操作手册.md) | M0 逐步操作手册 |
 | [`Docs/11-环境配置说明.md`](Docs/11-环境配置说明.md) | 环境速查、protoc 生成、**不开 Unity 也能核对 Unity API 的编译闸门** |
 | [`Docs/16-M1开工清单.md`](Docs/16-M1开工清单.md) | M1 任务拆分 / 验收 V1~V13 / **手动验证操作单** / 工具说明（Test Runner 是什么） |
-| [`Docs/教学/README.md`](Docs/教学/README.md) | ★ **模块教学留档**：每个模块收关后讲一遍并留成一篇（`A7-输入管理.md`…），供随时复习 —— 见 `Docs/00` §15.3.1 |
+| [`Docs/教学/README.md`](Docs/教学/README.md) | ★ **模块教学留档**：每个模块收关后讲一遍并留成一篇（`A7-输入管理.md`…），供随时复习 —— 见 `AGENTS.md` §15.3.1 |
 | [`ClientStaging/README.md`](ClientStaging/README.md) | 客户端暂存文件的搬运说明 + D17 验证流程 |
 | `DeepSeekOutput/` | 开发过程知识点总结（含踩坑记录与新概念复习） |
 

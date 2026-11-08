@@ -1,7 +1,7 @@
 # M4-B · 持久化与写回缓存（"进度真的存进数据库"是怎么做的）
 
 > 对应切片：**M4-S3（持久化：`IConditionProgressStore` 的 MySQL 实现 + 落库时机 + 防重复发奖台账）**
-> 留档日期：2026-09-27 · 七段式 · 写法按 `Docs\00` §15.3.1.1「说人话」
+> 留档日期：2026-09-27 · 七段式 · 写法按 `AGENTS.md` §15.3.1.1「说人话」
 > 对应代码：`Server\NBC.Server.Data\`（6 文件）、`Client\Assets\_Project\Shared\Reward\`、`Docs\08b-数据库迁移-M4S3-进度表.sql`
 > 对应测试：`Server\_db-probe`（**51 全绿**）、`AchievementRuntimeTests`（**22 条**，含 7 条台账用例）
 > 对应文档：`Docs\27-M4开工清单.md` §十一 / §十三

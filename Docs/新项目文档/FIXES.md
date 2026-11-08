@@ -25,7 +25,7 @@
 ## 2026-10-30 代码注释规范化（方法改五段式，含「功能」）
 
 - 规范变更：方法注释从四段改为五段 —— 功能 → 入参 → 步骤 → 返回 → 上游/下游（负责人要求「先说这个方法干什么」）。
-  已同步 `csharp-code-comment` 技能（含 description 与自检三问）与 `Docs\00` 注释规范第 4 条。
+  已同步 `csharp-code-comment` 技能（含 description 与自检三问）与 `AGENTS.md` 注释规范第 4 条。
 - 已落地 13 个文件（56 个方法）：`PlayerMove` / `PlayerAnimation` / `FollowCamera` / `HpBarPanel` / `NetHudPanel` /
   `RuntimeNetDriver` / `NetRuntimeStats` / `CountingTransport` / `HpBarDemoBehaviour` / `IQuestRewardSink` /
   `IQuestStateAuthority` / `IConfigSource` / `WorldEvents`。
