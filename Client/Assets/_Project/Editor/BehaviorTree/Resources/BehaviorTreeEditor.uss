@@ -183,3 +183,10 @@
     width: 14px;
     height: 14px;
 }
+
+/* 未实现（灰）：定义了节点但还没有预览求值器，不算失败 */
+.bt-status-notpreviewed {
+    border-color: #8a8a8a;
+    background-color: #333333;
+    opacity: 0.75;
+}

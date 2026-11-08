@@ -164,6 +164,12 @@ namespace NBC.EditorTools.BehaviorTree
             if (m_runner.Tick(delta))
             {
                 m_graphView.ApplyStatus(m_runner.Status);
+
+                // 有「未实现」的节点就提示（定义先行、行为后补时很常见）
+                if (m_runner.HasNotPreviewed)
+                {
+                    SetStatus("▶ 预览中：有节点显示灰色 —— 该类型还没有预览求值器（不影响导出）。");
+                }
             }
         }
 
@@ -274,6 +280,8 @@ namespace NBC.EditorTools.BehaviorTree
             AddBlackboardInt(slot, "hp", "玩家血量", 100);
             AddBlackboardInt(slot, "targetId", "目标 id（0=没有）", 0);
             AddBlackboardFloat(slot, "skillCd", "技能冷却（秒）", 0f);
+            AddBlackboardBool(slot, "inRange", "在射程内", false);
+            AddBlackboardBool(slot, "homeFar", "离家太远", false);
         }
 
         // 功能：加一个整数黑板项。
@@ -312,6 +320,23 @@ namespace NBC.EditorTools.BehaviorTree
             m_runner?.Blackboard.Set(key, BTParamValue.FromFloat(defaultValue));
         }
 
+        // 功能：加一个布尔黑板项（给 Flag 类条件用：inRange / homeFar）。
+        // 入参：slot 容器；key 键；label 显示名；defaultValue 默认值
+        // 返回：无
+        // 步骤：建 Toggle → 注册回调写黑板 → 加进容器
+        // 上游：BuildBlackboard
+        // 下游：BTBlackboard.Set
+        private void AddBlackboardBool(VisualElement slot, string key, string label, bool defaultValue)
+        {
+            Toggle field = new Toggle(label) { value = defaultValue };
+            field.RegisterValueChangedCallback(evt =>
+            {
+                m_runner?.Blackboard.Set(key, BTParamValue.FromBool(evt.newValue));
+            });
+            slot.Add(field);
+            m_blackboardFields[key] = field;
+            m_runner?.Blackboard.Set(key, BTParamValue.FromBool(defaultValue));
+        }
         // 功能：接好工具栏按钮与树名输入框。
         // 入参：root 根元素
         // 返回：无
@@ -454,7 +479,7 @@ namespace NBC.EditorTools.BehaviorTree
             }
 
             m_lastTickTime = EditorApplication.timeSinceStartup;
-            SetStatus("▶ 预览中（200ms 一帧）：绿=成功 红=失败 黄=运行中。改黑板数值看条件变化。");
+            SetStatus("▶ 预览中（200ms 一帧）：绿=成功 红=失败 黄=运行中 灰=未实现。");
         }
 
         // 功能：把黑板面板上当前显示的值写进运行时黑板（预览开始前调用）。

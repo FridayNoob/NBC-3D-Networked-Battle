@@ -1,0 +1,275 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 819da24a738e3394ebc1e2851bbce9f0, type: 3}
+  m_Name: BTNodeDefinitions
+  m_EditorClassIdentifier: 
+  Nodes:
+  - TypeName: Selector
+    DisplayName: "Selector\uFF08\u9009\u62E9\uFF09"
+    Category: 0
+    MaxChildren: -1
+    PreviewKind: 7
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Sequence
+    DisplayName: "Sequence\uFF08\u987A\u5E8F\uFF09"
+    Category: 0
+    MaxChildren: -1
+    PreviewKind: 8
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Parallel
+    DisplayName: "Parallel\uFF08\u5E76\u884C\uFF09"
+    Category: 0
+    MaxChildren: -1
+    PreviewKind: 9
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: IsDead
+    DisplayName: "IsDead\uFF08\u5DF2\u6B7B\u4EA1\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 3
+    PreviewKey: hp
+    CompareOp: 1
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: InAttackRange
+    DisplayName: "InAttackRange\uFF08\u5728\u5C04\u7A0B\u5185\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 5
+    PreviewKey: inRange
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params:
+    - Key: rangeMm
+      Label: "\u5C04\u7A0B\uFF080=\u9ED8\u8BA4\uFF09"
+      Type: 1
+      Default: 0
+  - TypeName: AttackReady
+    DisplayName: "AttackReady\uFF08\u51B7\u5374\u597D\u4E86\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 4
+    PreviewKey: skillCd
+    CompareOp: 1
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params:
+    - Key: skillId
+      Label: "\u6280\u80FD\u7F16\u53F7\uFF080=\u666E\u653B\uFF09"
+      Type: 1
+      Default: 0
+  - TypeName: HPBelow
+    DisplayName: "HPBelow\uFF08\u8840\u91CF < \u9608\u503C\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 3
+    PreviewKey: hp
+    CompareOp: 0
+    CompareParamKey: hpThreshold
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params:
+    - Key: hpThreshold
+      Label: "\u8840\u91CF\u9608\u503C"
+      Type: 1
+      Default: 30
+    - Key: percentOfMax
+      Label: "\u6309\u767E\u5206\u6BD4"
+      Type: 2
+      Default: false
+  - TypeName: HasTarget
+    DisplayName: "HasTarget\uFF08\u6709\u76EE\u6807\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 3
+    PreviewKey: targetId
+    CompareOp: 2
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: HomeFar
+    DisplayName: "HomeFar\uFF08\u79BB\u5BB6\u592A\u8FDC\uFF09"
+    Category: 1
+    MaxChildren: 0
+    PreviewKind: 5
+    PreviewKey: homeFar
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Chase
+    DisplayName: "Chase\uFF08\u8FFD\u51FB\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 2
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: BasicAttack
+    DisplayName: "BasicAttack\uFF08\u666E\u653B/\u591A\u6BB5\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 1
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params:
+    - Key: hits
+      Label: "\u6BB5\u6570"
+      Type: 1
+      Default: 1
+    - Key: intervalTicks
+      Label: "\u6BB5\u95F4\u9694\uFF08\u5E27\uFF09"
+      Type: 1
+      Default: 5
+  - TypeName: CastSkill
+    DisplayName: "CastSkill\uFF08\u91CA\u653E\u6280\u80FD\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 1
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: skillCd
+    WriteBackParamKey: cooldownSeconds
+    WriteBackConstFloat: 0
+    Params:
+    - Key: skillId
+      Label: "\u6280\u80FD\u7F16\u53F7"
+      Type: 1
+      Default: 1
+    - Key: cooldownSeconds
+      Label: "\u51B7\u5374\u79D2\u6570"
+      Type: 0
+      Default: 2
+  - TypeName: ReturnHome
+    DisplayName: "ReturnHome\uFF08\u56DE\u4F4D\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 2
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Patrol
+    DisplayName: "Patrol\uFF08\u5DE1\u903B\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 1
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Idle
+    DisplayName: "Idle\uFF08\u7AD9\u6869\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 1
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params: []
+  - TypeName: Wait
+    DisplayName: "Wait\uFF08\u7B49\u5F85\uFF09"
+    Category: 2
+    MaxChildren: 0
+    PreviewKind: 6
+    PreviewKey: 
+    CompareOp: 0
+    CompareParamKey: 
+    CompareConstInt: 0
+    CompareConstFloat: 0
+    WriteBackKey: 
+    WriteBackParamKey: 
+    WriteBackConstFloat: 0
+    Params:
+    - Key: seconds
+      Label: "\u79D2\u6570"
+      Type: 0
+      Default: 1

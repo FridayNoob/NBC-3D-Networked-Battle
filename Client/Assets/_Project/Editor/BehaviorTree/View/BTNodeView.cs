@@ -115,6 +115,7 @@ namespace NBC.EditorTools.BehaviorTree
             RemoveFromClassList("bt-status-success");
             RemoveFromClassList("bt-status-failure");
             RemoveFromClassList("bt-status-running");
+            RemoveFromClassList("bt-status-notpreviewed");
 
             if (status == null)
             {
@@ -131,8 +132,13 @@ namespace NBC.EditorTools.BehaviorTree
                     AddToClassList("bt-status-failure");
                     break;
 
-                default:
+                case BTPreviewStatus.Running:
                     AddToClassList("bt-status-running");
+                    break;
+
+                default:
+                    // 未实现：灰，不算失败
+                    AddToClassList("bt-status-notpreviewed");
                     break;
             }
         }
