@@ -28,6 +28,7 @@ using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;
 using NBC.Server.Game.Ai;          // S5：`DungeonBattle` / `RoomBattleService`
+using Bt = NBC.Server.Game.Ai.Bt; // R022-1：新行为树内核（用别名，避免与旧 Ai.BtNode 冲突）
 using NBC.Shared;
 using NBC.Shared.Sim;           // M4-S4 S4-b：`WorldState` / `WorldStep` / `WorldStateHash`（确定性内核）               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
@@ -151,6 +152,10 @@ namespace NBC.NetProbe
             Boss_AttacksInRange();
             Boss_StopsWhenNoHeroIsAlive();
             Boss_BrainRunsOnTheStateMachine();
+
+            Console.WriteLine();
+            Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
+            Bt_KernelAndConditions();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -375,6 +380,10 @@ namespace NBC.NetProbe
             Boss_BrainRunsOnTheStateMachine();
 
             Console.WriteLine();
+            Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
+            Bt_KernelAndConditions();
+
+            Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
             //    结果那几轮的探针输出里**没有通过数**，只是我没注意。补回来，并记着：
             //    **改替换锚点时要确认没把别的东西一起吃掉**（回读输出）。
@@ -527,6 +536,10 @@ namespace NBC.NetProbe
             Boss_AttacksInRange();
             Boss_StopsWhenNoHeroIsAlive();
             Boss_BrainRunsOnTheStateMachine();
+
+            Console.WriteLine();
+            Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
+            Bt_KernelAndConditions();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -1969,6 +1982,254 @@ namespace NBC.NetProbe
             return battle.Brains[0];
         }
 
+
+        /// <summary>R022-1 的测试桩：可按脚本返回任意状态的节点（并记账被 Tick 了几次）。</summary>
+        private sealed class ProbeNode : Bt.BtNode
+        {
+            private readonly Func<Bt.BtContext, Bt.BtStatus> m_body;
+
+            private readonly string m_name;
+
+            public int TickCount;
+
+            public ProbeNode(string name, Func<Bt.BtContext, Bt.BtStatus> body)
+            {
+                m_name = name;
+                m_body = body;
+            }
+
+            public override string TypeName => m_name;
+
+            public override Bt.BtStatus Tick(Bt.BtContext ctx)
+            {
+                TickCount++;
+                return m_body(ctx);
+            }
+        }
+
+        /// <summary>R022-1 的参数桩：把字典喂给节点读。</summary>
+        private sealed class ProbeParams : Bt.IBtParamSource
+        {
+            private readonly Dictionary<string, string> m_values = new Dictionary<string, string>();
+
+            public ProbeParams Set(string key, string value)
+            {
+                m_values[key] = value;
+                return this;
+            }
+
+            public bool TryGetInt(string key, out int value)
+            {
+                value = 0;
+                return m_values.TryGetValue(key, out string raw) && int.TryParse(raw, out value);
+            }
+
+            public bool TryGetBool(string key, out bool value)
+            {
+                value = false;
+                return m_values.TryGetValue(key, out string raw) && bool.TryParse(raw, out value);
+            }
+
+            public bool TryGetFloat(string key, out float value)
+            {
+                value = 0f;
+                return m_values.TryGetValue(key, out string raw)
+                       && float.TryParse(raw, System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out value);
+            }
+        }
+
+        /// <summary>R022-1：行为树内核（3 组合 + 6 条件）—— 语义、边界值、零分配。</summary>
+        private static void Bt_KernelAndConditions()
+        {
+            // ① 组合：短路语义（不需要真世界，给 null 上下文即可）
+            var spyA = new ProbeNode("spyA", _ => Bt.BtStatus.Success);
+            var spyB = new ProbeNode("spyB", _ => Bt.BtStatus.Success);
+
+            var selector = new Bt.BtSelector();
+            selector.AddChild(new ProbeNode("f1", _ => Bt.BtStatus.Failure));
+            selector.AddChild(new ProbeNode("s1", _ => Bt.BtStatus.Success));
+            selector.AddChild(spyA);
+            Bt.BtStatus selectorStatus = selector.Tick(null);
+            Check("BT 组合：Selector 第一个非 Failure 就赢，后面的子节点不再执行",
+                selectorStatus == Bt.BtStatus.Success && spyA.TickCount == 0,
+                "结果=" + selectorStatus + "，第三个子节点被 Tick 次数=" + spyA.TickCount);
+
+            var allFail = new Bt.BtSelector();
+            allFail.AddChild(new ProbeNode("f2", _ => Bt.BtStatus.Failure));
+            allFail.AddChild(new ProbeNode("f3", _ => Bt.BtStatus.Failure));
+            Check("BT 组合：Selector 全部失败才是 Failure",
+                allFail.Tick(null) == Bt.BtStatus.Failure, "结果=" + allFail.Tick(null));
+
+            var sequence = new Bt.BtSequence();
+            sequence.AddChild(new ProbeNode("s2", _ => Bt.BtStatus.Success));
+            sequence.AddChild(new ProbeNode("r1", _ => Bt.BtStatus.Running));
+            sequence.AddChild(spyB);
+            Bt.BtStatus sequenceStatus = sequence.Tick(null);
+            Check("BT 组合：Sequence 遇 Running 立即短路，后面的子节点不再执行",
+                sequenceStatus == Bt.BtStatus.Running && spyB.TickCount == 0,
+                "结果=" + sequenceStatus + "，第三个子节点被 Tick 次数=" + spyB.TickCount);
+
+            var parallelFail = new Bt.BtParallel();
+            parallelFail.AddChild(new ProbeNode("ps1", _ => Bt.BtStatus.Success));
+            parallelFail.AddChild(new ProbeNode("pf1", _ => Bt.BtStatus.Failure));
+            parallelFail.AddChild(new ProbeNode("ps2", _ => Bt.BtStatus.Success));
+            Check("BT 组合：Parallel 有 Failure 即 Failure",
+                parallelFail.Tick(null) == Bt.BtStatus.Failure, "结果=" + parallelFail.Tick(null));
+
+            var parallelRunning = new Bt.BtParallel();
+            parallelRunning.AddChild(new ProbeNode("ps3", _ => Bt.BtStatus.Success));
+            parallelRunning.AddChild(new ProbeNode("pr1", _ => Bt.BtStatus.Running));
+            Check("BT 组合：Parallel 无失败但有 Running → Running",
+                parallelRunning.Tick(null) == Bt.BtStatus.Running, "结果=" + parallelRunning.Tick(null));
+
+            // ② 条件：用真战斗世界
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+                h.TickBattles(1);
+
+                DungeonBattle battle = h.BattleOf(a)!;
+                BattleEntity boss = FindBoss(battle)!;
+                BattleEntity hero = h.HeroOf(a)!;
+                int distance = DungeonBattle.DistanceMm(boss, hero);
+
+                Bt.BtContext NewHeroCtx() => new Bt.BtContext
+                {
+                    World = battle,
+                    Self = hero,
+                    HomeXmm = hero.PosXmm,
+                    HomeZmm = hero.PosZmm,
+                    Target = boss,
+                    Tick = 0,
+                    Profile = Bt.MonsterAiProfile.Melee
+                };
+
+                Bt.BtContext NewCtx() => new Bt.BtContext
+                {
+                    World = battle,
+                    Self = boss,
+                    HomeXmm = boss.PosXmm,
+                    HomeZmm = boss.PosZmm,
+                    Target = hero,
+                    Tick = 0,
+                    Profile = Bt.MonsterAiProfile.Boss
+                };
+
+                Check("BT 条件：IsDead 活着时是 Failure",
+                    new Bt.IsDeadCondition().Tick(NewCtx()) == Bt.BtStatus.Failure, "HP=" + boss.Hp);
+
+                Check("BT 条件：HasTarget 有活目标 → Success",
+                    new Bt.HasTargetCondition().Tick(NewCtx()) == Bt.BtStatus.Success, "目标=" + hero.Id);
+
+                var inRangeExact = new Bt.InAttackRangeCondition();
+                inRangeExact.Configure(new ProbeParams().Set("rangeMm", distance.ToString()));
+                Check("BT 条件：InAttackRange 距离等于射程算「在」",
+                    inRangeExact.Tick(NewCtx()) == Bt.BtStatus.Success, "距离=" + distance + "，射程=" + distance);
+
+                var inRangeShort = new Bt.InAttackRangeCondition();
+                inRangeShort.Configure(new ProbeParams().Set("rangeMm", Math.Max(1, distance - 1).ToString()));
+                Check("BT 条件：InAttackRange 差 1mm 就是「不在」",
+                    inRangeShort.Tick(NewCtx()) == Bt.BtStatus.Failure, "距离=" + distance + "，射程=" + (distance - 1));
+
+                var inRangeDefault = new Bt.InAttackRangeCondition();
+                inRangeDefault.Configure(new ProbeParams());
+                Check("BT 条件：InAttackRange 不填 rangeMm 时用默认 2000",
+                    inRangeDefault.Tick(NewCtx()) == (distance <= 2000 ? Bt.BtStatus.Success : Bt.BtStatus.Failure),
+                    "距离=" + distance + "，默认射程=2000");
+
+                // 百分比测试放在最前：必须用满血对手（伤害只能扣不能加，先扣到 360 才是 30%）
+                var hpPercent = new Bt.HpBelowCondition();
+                hpPercent.Configure(new ProbeParams().Set("hpThreshold", "30").Set("percentOfMax", "true"));
+
+                int thirtyPercent = hero.MaxHp * 30 / 100;
+                battle.ApplyDamage(hero.Id, hero.Hp - thirtyPercent, 0);
+                Bt.BtStatus atPercent = hpPercent.Tick(NewHeroCtx());
+                battle.ApplyDamage(hero.Id, 1, 0);
+                Bt.BtStatus belowPercent = hpPercent.Tick(NewHeroCtx());
+
+                Check("BT 条件：HPBelow 按百分比（30% 不算低，低于 30% 才算）",
+                    atPercent == Bt.BtStatus.Failure && belowPercent == Bt.BtStatus.Success,
+                    "最大血=" + hero.MaxHp + "，30%=" + thirtyPercent + "，等于时=" + atPercent + "，少 1 时=" + belowPercent);
+
+                // 绝对值：继续扣到正好 30（30 < 30 不成立），再扣 1 到 29（成立）
+                var hpAbs = new Bt.HpBelowCondition();
+                hpAbs.Configure(new ProbeParams().Set("hpThreshold", "30").Set("percentOfMax", "false"));
+
+                battle.ApplyDamage(hero.Id, Math.Max(0, hero.Hp - 30), 0);
+                Bt.BtStatus atThirty = hpAbs.Tick(NewHeroCtx());
+                battle.ApplyDamage(hero.Id, 1, 0);
+                Bt.BtStatus atTwentyNine = hpAbs.Tick(NewHeroCtx());
+
+                Check("BT 条件：HPBelow 严格小于（30 < 30 不成立，29 < 30 成立）",
+                    atThirty == Bt.BtStatus.Failure && atTwentyNine == Bt.BtStatus.Success,
+                    "HP=30 时=" + atThirty + "，HP=29 时=" + atTwentyNine);
+
+                var homeFar = new Bt.HomeFarCondition();
+                Bt.BtContext homeSame = NewCtx();
+                Check("BT 条件：HomeFar 离家 0mm 是 Failure",
+                    homeFar.Tick(homeSame) == Bt.BtStatus.Failure, "离家=0mm");
+
+                Bt.BtContext homeFarCtx = NewCtx();
+                homeFarCtx.HomeXmm = boss.PosXmm + 5000;
+                homeFarCtx.HomeZmm = boss.PosZmm;
+                Check("BT 条件：HomeFar 离家 5000mm 超过 BOSS 的 200mm 回位半径",
+                    homeFar.Tick(homeFarCtx) == Bt.BtStatus.Success, "离家=5000mm，半径=200mm");
+
+                var attackReadyBasic = new Bt.AttackReadyCondition();
+                attackReadyBasic.Configure(new ProbeParams().Set("skillId", "0"));
+                Check("BT 条件：AttackReady(skillId=0) 冷却为 0 → Success",
+                    attackReadyBasic.Tick(NewCtx()) == Bt.BtStatus.Success,
+                    "冷却=" + boss.AttackCooldownTicksLeft + " 帧");
+
+                var attackReadySkill = new Bt.AttackReadyCondition();
+                attackReadySkill.Configure(new ProbeParams().Set("skillId", "1001"));
+                Check("BT 条件：AttackReady(skillId>0) 技能未实现 → Failure（且只告警一次）",
+                    attackReadySkill.Tick(NewCtx()) == Bt.BtStatus.Failure, "skillId=1001");
+
+                // ③ 零分配：连跑 1000 帧
+                var root = new Bt.BtSelector();
+                var below = new Bt.BtSequence();
+                below.AddChild(new Bt.HasTargetCondition());
+                below.AddChild(inRangeExact);
+                root.AddChild(new Bt.IsDeadCondition());
+                root.AddChild(below);
+                root.AddChild(new ProbeNode("patrol", _ => Bt.BtStatus.Success));
+
+                Bt.BtContext loopCtx = NewCtx();
+                root.Tick(loopCtx);
+                long before = GC.GetAllocatedBytesForCurrentThread();
+
+                for (int i = 0; i < 1000; i++)
+                {
+                    root.Tick(loopCtx);
+                }
+
+                long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Check("BT 内核：连跑 1000 帧不产生每帧堆分配",
+                    allocated < 4096, "1000 帧共分配 " + allocated + " 字节");
+
+                // ④ 确定性：同输入两遍，结果序列完全一致
+                string first = RunBtSequence(root, NewCtx(), 30);
+                string second = RunBtSequence(root, NewCtx(), 30);
+                Check("BT 内核：同输入两遍结果一致（无随机/无真实时间）",
+                    first == second, "第一遍=" + first + "，第二遍=" + second);
+            }
+        }
+
+        /// <summary>连跑 n 帧并把每帧结果拼成字符串（确定性比对用）。</summary>
+        private static string RunBtSequence(Bt.BtNode root, Bt.BtContext ctx, int ticks)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < ticks; i++)
+            {
+                ctx.Tick = i;
+                sb.Append((int)root.Tick(ctx));
+            }
+
+            return sb.ToString();
+        }
 
 private static void Boss_ChasesTheHero()
         {
