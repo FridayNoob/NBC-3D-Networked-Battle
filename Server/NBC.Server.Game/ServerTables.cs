@@ -61,17 +61,38 @@ public readonly struct MonsterRow
     /// <summary>攻击力（点）。</summary>
     public readonly int Attack;
 
+    /// <summary>仇恨范围（毫米）。</summary>
+    public readonly int AggroRangeMm;
+
+    /// <summary>普攻射程（毫米）。</summary>
+    public readonly int AttackRangeMm;
+
+    /// <summary>追击移速（毫米/逻辑帧）。</summary>
+    public readonly int MoveSpeedMmPerTick;
+
+    /// <summary>回位半径（毫米）。</summary>
+    public readonly int LeashRadiusMm;
+
     /// <summary>记一行。</summary>
     /// <param name="id">编号。</param>
     /// <param name="name">名称。</param>
     /// <param name="hp">生命值。</param>
     /// <param name="attack">攻击力。</param>
-    public MonsterRow(int id, string name, int hp, int attack)
+    /// <param name="aggroRangeMm">仇恨范围（毫米）。</param>
+    /// <param name="attackRangeMm">普攻射程（毫米）。</param>
+    /// <param name="moveSpeedMmPerTick">追击移速（毫米/逻辑帧）。</param>
+    /// <param name="leashRadiusMm">回位半径（毫米）。</param>
+    public MonsterRow(int id, string name, int hp, int attack,
+        int aggroRangeMm, int attackRangeMm, int moveSpeedMmPerTick, int leashRadiusMm)
     {
         Id = id;
         Name = name;
         Hp = hp;
         Attack = attack;
+        AggroRangeMm = aggroRangeMm;
+        AttackRangeMm = attackRangeMm;
+        MoveSpeedMmPerTick = moveSpeedMmPerTick;
+        LeashRadiusMm = leashRadiusMm;
     }
 }
 
@@ -446,7 +467,11 @@ public sealed class ServerTables
                                 sheet.Int(r, "id"),
                                 sheet.Str(r, "name"),
                                 sheet.Int(r, "hp"),
-                                sheet.Int(r, "attack"));
+                                sheet.Int(r, "attack"),
+                                sheet.IntOr(r, "aggroRangeMm", 4000),
+                                sheet.IntOr(r, "attackRangeMm", 2000),
+                                sheet.IntOr(r, "moveSpeedMmPerTick", 40),
+                                sheet.IntOr(r, "leashRadiusMm", 100000));
                             result._monsters[row.Id] = row;
                         }
 
@@ -644,6 +669,42 @@ internal sealed class CsvSheet
 
         return value;
     }
+
+    /// <summary>取一个整数字段**或兜底值**（列缺失 / 空 / 非整数都回落，不抛异常）。</summary>
+    /// <param name="row">行下标（0 起）。</param>
+    /// <param name="column">列名。</param>
+    /// <param name="fallback">兜底值。</param>
+    /// <returns>值（读不到就是兜底值）。</returns>
+    public int IntOr(int row, string column, int fallback)
+    {
+        if (!_columns.TryGetValue(column, out int index))
+        {
+            WarnMissingColumn(column);
+            return fallback;
+        }
+
+        string[] fields = _rows[row];
+
+        if (index >= fields.Length)
+        {
+            return fallback;
+        }
+
+        return int.TryParse(fields[index], out int value) ? value : fallback;
+    }
+
+    /// <summary>缺列时只提示一次（同表同列），避免每行刷屏。</summary>
+    /// <param name="column">列名。</param>
+    private void WarnMissingColumn(string column)
+    {
+        if (WarnedColumns.Add(column))
+        {
+            Console.WriteLine($"[配置表] {TableName}.csv 缺少列 `{column}`，改用兜底值。");
+        }
+    }
+
+    /// <summary>已经提示过缺列的集合（同表实例内有效）。</summary>
+    private readonly HashSet<string> WarnedColumns = new HashSet<string>();
 
     /// <summary>取一个字符串字段。</summary>
     /// <param name="row">行下标。</param>

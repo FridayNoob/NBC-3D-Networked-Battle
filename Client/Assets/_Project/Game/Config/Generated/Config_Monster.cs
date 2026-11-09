@@ -15,5 +15,9 @@ namespace NBC.Game.Config
         public int hp;  // 生命值（点）（int）
         public int attack;  // 攻击力（点）（int）
         public int[] skillIds;  // 技能列表（ref:Skill[]）
+        public int aggroRangeMm;  // 仇恨范围（毫米）（int）
+        public int attackRangeMm;  // 普攻射程（毫米）（int）
+        public int moveSpeedMmPerTick;  // 追击移速（毫米/帧）（int）
+        public int leashRadiusMm;  // 回位半径（毫米）（int）
     }
 }

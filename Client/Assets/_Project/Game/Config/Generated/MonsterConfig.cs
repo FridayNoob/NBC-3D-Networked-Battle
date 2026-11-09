@@ -93,6 +93,10 @@ namespace NBC.Game.Config
                 row.hp = ParseInt(Cell(cells, header, "hp"));
                 row.attack = ParseInt(Cell(cells, header, "attack"));
                 row.skillIds = ParseIntArray(Cell(cells, header, "skillIds"));
+                row.aggroRangeMm = ParseInt(Cell(cells, header, "aggroRangeMm"));
+                row.attackRangeMm = ParseInt(Cell(cells, header, "attackRangeMm"));
+                row.moveSpeedMmPerTick = ParseInt(Cell(cells, header, "moveSpeedMmPerTick"));
+                row.leashRadiusMm = ParseInt(Cell(cells, header, "leashRadiusMm"));
 
                 rows.Add(row);
             }

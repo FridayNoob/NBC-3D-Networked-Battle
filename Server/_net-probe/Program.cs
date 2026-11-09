@@ -28,7 +28,8 @@ using NBC.Protocol;
 using NBC.Server.Core;
 using NBC.Server.Game;
 using NBC.Server.Game.Ai;          // S5：`DungeonBattle` / `RoomBattleService`
-using Bt = NBC.Server.Game.Ai.Bt; // R022-1：新行为树内核（用别名，避免与旧 Ai.BtNode 冲突）
+using Bt = NBC.Server.Game.Ai.Bt;
+using BtBrain = NBC.Server.Game.Ai.Bt.MonsterBrain; // R022-1：新行为树内核（用别名，避免与旧 Ai.BtNode 冲突）
 using NBC.Shared;
 using NBC.Shared.Sim;           // M4-S4 S4-b：`WorldState` / `WorldStep` / `WorldStateHash`（确定性内核）               // M4-S4 S4-a：`Fix64` / `FixMath` / `FixVector3`（共享层确定性数学）
 using NBC.Shared.Auth;          // M4-S3：账号登录的摘要配方（**双端同一份实现**）
@@ -1969,7 +1970,7 @@ namespace NBC.NetProbe
             return xs;
         }
         /// <summary>按实体编号找它的大脑（不依赖 Brains 列表顺序：普通怪现在也有大脑）。</summary>
-        private static MonsterBrain BrainOf(DungeonBattle battle, int entityId)
+        private static BtBrain BrainOf(DungeonBattle battle, int entityId)
         {
             for (int i = 0; i < battle.Brains.Count; i++)
             {
@@ -2275,7 +2276,7 @@ private static void Boss_ReturnsHomeAfterLosingAggro()
                 h.TickBattles(1);
 
                 DungeonBattle battle = h.BattleOf(a)!;
-                MonsterBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
+                BtBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
                 BattleEntity boss = FindBoss(battle)!;
                 BattleEntity hero = h.HeroOf(a)!;
 
@@ -2404,7 +2405,7 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 h.SendIdleInputFor(a, 12);
 
                 DungeonBattle battle = h.BattleOf(a)!;
-                MonsterBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
+                BtBrain brain = BrainOf(battle, FindBoss(battle)!.Id);
 
                 Check("BOSS AI：大脑用 A10 的状态机（有状态名、发生过状态切换）",
                     brain.TransitionCount > 0 && !string.IsNullOrEmpty(brain.StateName),

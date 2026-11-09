@@ -19,26 +19,31 @@ namespace NBC.Server.Game.Ai.Bt
         // 回位半径（毫米）：离家超过它就回位
         public readonly int LeashRadiusMm;
 
+        // 普攻射程（毫米）：来自 Monster 表的 attackRangeMm；树里显式写了 rangeMm 时以树为准
+        public readonly int AttackRangeMm;
+
         // 空闲时是否允许巡逻（BOSS 为 false，守着出生点）
         public readonly bool PatrolWhenIdle;
 
-        // 近战普通怪参数：4 米仇恨、40mm/帧、基本不回位、允许巡逻
-        public static MonsterAiProfile Melee => new MonsterAiProfile(4000, 40, 100000, true);
+        // 近战普通怪兜底参数：4 米仇恨、2 米射程、40mm/帧、基本不回位、允许巡逻（真实值来自 Monster 表）
+        public static MonsterAiProfile Melee => new MonsterAiProfile(4000, 40, 100000, 2000, true);
 
-        // BOSS 参数：4 米仇恨、40mm/帧、离家 200mm 就回位、不巡逻
-        public static MonsterAiProfile Boss => new MonsterAiProfile(4000, 40, 200, false);
+        // BOSS 兜底参数：4 米仇恨、2 米射程、40mm/帧、离家 200mm 回位、不巡逻（真实值来自 Monster 表）
+        public static MonsterAiProfile Boss => new MonsterAiProfile(4000, 40, 200, 2000, false);
 
         // 功能：构造参数。
-        // 入参：aggroRangeMm 仇恨范围；moveSpeedMmPerTick 移速；leashRadiusMm 回位半径；patrolWhenIdle 是否巡逻
+        // 入参：aggroRangeMm 仇恨范围；moveSpeedMmPerTick 移速；leashRadiusMm 回位半径；attackRangeMm 普攻射程；patrolWhenIdle 是否巡逻
         // 返回：无
         // 步骤：逐个赋值
-        // 上游：Melee / Boss 以及后续的配置表
+        // 上游：DungeonBattle（从 Monster 表读）、Melee / Boss 兜底
         // 下游：BtContext.Profile
-        public MonsterAiProfile(int aggroRangeMm, int moveSpeedMmPerTick, int leashRadiusMm, bool patrolWhenIdle)
+        public MonsterAiProfile(int aggroRangeMm, int moveSpeedMmPerTick, int leashRadiusMm,
+            int attackRangeMm, bool patrolWhenIdle)
         {
             AggroRangeMm = aggroRangeMm;
             MoveSpeedMmPerTick = moveSpeedMmPerTick;
             LeashRadiusMm = leashRadiusMm;
+            AttackRangeMm = attackRangeMm;
             PatrolWhenIdle = patrolWhenIdle;
         }
     }
@@ -105,6 +110,37 @@ namespace NBC.Server.Game.Ai.Bt
             return DungeonBattle.DistanceMm(ctx.Self, ctx.Target);
         }
 
+        // 功能：自己到目标的**距离平方**（圆形判定用；整数运算，不开方）。
+        // 入参：ctx 上下文
+        // 返回：距离平方（无目标返回 long.MaxValue）
+        // 步骤：算 dx/dz → 平方和（用 long 防溢出）
+        // 上游：WithinRange
+        // 下游：无
+        // 注意：不要用 DungeonBattle.DistanceMm —— 那是**切比雪夫**距离，是 AI 度量，不是射程判据。
+        public static long SquaredDistanceTo(BtContext ctx)
+        {
+            if (ctx?.Self == null || ctx.Target == null)
+            {
+                return long.MaxValue;
+            }
+
+            long dx = ctx.Self.PosXmm - ctx.Target.PosXmm;
+            long dz = ctx.Self.PosZmm - ctx.Target.PosZmm;
+            return dx * dx + dz * dz;
+        }
+
+        // 功能：目标是否在指定圆形射程内（含边界）。
+        // 入参：ctx 上下文；rangeMm 射程（毫米，<=0 用默认 2000）
+        // 返回：true = 在射程内
+        // 步骤：定射程 → 距离平方 <= 射程平方
+        // 上游：InAttackRange 条件、Chase/BasicAttack 动作
+        // 下游：SquaredDistanceTo
+        public static bool WithinRange(BtContext ctx, int rangeMm)
+        {
+            int range = rangeMm > 0 ? rangeMm : DefaultAttackRangeMm;
+            long square = (long)range * range;
+            return SquaredDistanceTo(ctx) <= square;
+        }
         // 功能：自己到出生点的距离。
         // 入参：ctx 上下文
         // 返回：距离（毫米）

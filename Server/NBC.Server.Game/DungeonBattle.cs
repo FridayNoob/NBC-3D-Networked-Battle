@@ -42,6 +42,9 @@
 using System.Collections.Generic;
 using NBC.Protocol;
 using NBC.Server.Game.Ai;
+using NBC.Server.Game.Ai.Bt;
+using BtBrain = NBC.Server.Game.Ai.Bt.MonsterBrain;
+using BtProfile = NBC.Server.Game.Ai.Bt.MonsterAiProfile;
 using NBC.Shared.Battle;
 using NBC.Shared.Condition;
 using NBC.Shared.Net;
@@ -389,7 +392,7 @@ public sealed class DungeonBattle
     private readonly List<BattleEntity> _entities = new();
 
     /// <summary>BOSS 大脑（每 tick 想一次，见 `BossBrain`）。</summary>
-    private readonly List<MonsterBrain> _brains = new();
+    private readonly List<BtBrain> _brains = new();
 
     /// <summary>待广播的服务端事件（掉落等；由 `RoomBattleService` 每帧取走，S7）。</summary>
     private readonly List<DropEvent> _pendingDrops = new();
@@ -481,7 +484,7 @@ public sealed class DungeonBattle
     }
 
     /// <summary>本局所有 BOSS 大脑（探针/调试面板看 AI 状态用）。</summary>
-    public IReadOnlyList<MonsterBrain> Brains => _brains;
+    public IReadOnlyList<BtBrain> Brains => _brains;
 
     /// <summary>BOSS 数量（`Kind == 1` 且配置号等于 `Dungeon.bossId` 的单位）。</summary>
     public int BossCount
@@ -1254,7 +1257,9 @@ public sealed class DungeonBattle
                              moveSpeedMmPerTick: MonsterMoveMmPerTick);
 
         // 普通怪也走行为树（wolf 树 + Melee 参数）
-        battle._brains.Add(new MonsterBrain(normal, DefaultAiTrees.WolfAiKind, MonsterAiProfile.Melee));
+        battle._brains.Add(new BtBrain(normal, BtTreeBuilder.WolfAiKind,
+            new BtProfile(monster.Value.AggroRangeMm, monster.Value.MoveSpeedMmPerTick,
+                monster.Value.LeashRadiusMm, monster.Value.AttackRangeMm, true)));
         }
 
         // BOSS：摆在对面（x = -radius），把"血量厚、攻击高"从表里带出来
@@ -1272,7 +1277,9 @@ public sealed class DungeonBattle
                                                   moveSpeedMmPerTick: BossMoveMmPerTick);
 
         // BOSS 由状态机驱动（见 `BossBrain`：Idle / Chase / Attack）
-        battle._brains.Add(new MonsterBrain(bossEntity, DefaultAiTrees.BossAiKind, MonsterAiProfile.Boss));
+        battle._brains.Add(new BtBrain(bossEntity, BtTreeBuilder.BossAiKind,
+            new BtProfile(boss.Value.AggroRangeMm, boss.Value.MoveSpeedMmPerTick,
+                boss.Value.LeashRadiusMm, boss.Value.AttackRangeMm, false)));
 
         return battle;
     }

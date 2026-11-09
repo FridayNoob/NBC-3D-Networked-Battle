@@ -100,8 +100,7 @@ namespace NBC.Server.Game.Ai.Bt
                 return BtStatus.Failure;
             }
 
-            int range = m_rangeMm > 0 ? m_rangeMm : BtOps.DefaultAttackRangeMm;
-            return BtOps.DistanceTo(ctx) <= range ? BtStatus.Success : BtStatus.Failure;
+            return BtOps.WithinRange(ctx, m_rangeMm) ? BtStatus.Success : BtStatus.Failure;
         }
     }
 
