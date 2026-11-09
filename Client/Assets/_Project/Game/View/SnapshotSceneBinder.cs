@@ -53,7 +53,7 @@ namespace NBC.Game.View
 
         // 朝向偏移，度；模型前向不是 +Z 时用它纠正（R017）
         [SerializeField]
-        private float m_facingOffsetDegrees = 0f;
+        private float m_facingOffsetDegrees = -90f;
 
         // 死亡后模型保留多久再隐藏，秒；给死亡动画留时间（R020）
         private const float DeathLingerSeconds = 1.0f;
