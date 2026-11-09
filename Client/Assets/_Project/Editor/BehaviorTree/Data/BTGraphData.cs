@@ -217,6 +217,33 @@ namespace NBC.EditorTools.BehaviorTree
                 }
             }
 
+            // 同一子节点被连两次、或一个子节点有多个父：DFS 会「重复访问」，但根因不是环 —— 分开报，免得误导
+            Dictionary<string, string> parentOf = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            foreach (KeyValuePair<string, BTNodeData> pair in Nodes)
+            {
+                HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+
+                for (int i = 0; i < pair.Value.Children.Count; i++)
+                {
+                    string childId = pair.Value.Children[i];
+
+                    if (!seen.Add(childId))
+                    {
+                        error = "节点 " + pair.Key + " 重复引用了子节点 " + childId + "（同一个子节点连了两次）。";
+                        return false;
+                    }
+
+                    if (parentOf.TryGetValue(childId, out string firstParent))
+                    {
+                        error = "子节点 " + childId + " 有多个父节点（" + firstParent + " 和 " + pair.Key + "）。";
+                        return false;
+                    }
+
+                    parentOf[childId] = pair.Key;
+                }
+            }
+
             HashSet<string> visited = new HashSet<string>();
             Stack<string> pending = new Stack<string>();
             pending.Push(root);

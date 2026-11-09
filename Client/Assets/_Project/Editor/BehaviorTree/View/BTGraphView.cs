@@ -187,7 +187,12 @@ namespace NBC.EditorTools.BehaviorTree
                     {
                         if (edge.input != null && edge.input.node is BTNodeView child)
                         {
-                            node.Children.Add(child.NodeId);
+                            // 去重：同一对节点之间的重复边（拖两次会留下两条）只能记一次，
+                            // 否则导出/预览会报「节点被重复访问」（表现为「检测到环」）
+                            if (!node.Children.Contains(child.NodeId))
+                            {
+                                node.Children.Add(child.NodeId);
+                            }
                         }
                     }
                 }
@@ -705,6 +710,13 @@ namespace NBC.EditorTools.BehaviorTree
                 }
             }
 
+            // 同一对「输出 → 输入」已经连过就不再连（否则会多出一条重复边，导出时表现为「节点被重复访问」）
+            if (source.connections.Any(e => e.input == target))
+            {
+                Debug.Log("[BT] 这两个节点已经连过了，忽略重复连线。");
+                return;
+            }
+
             Edge edge = source.ConnectTo(target);
             AddElement(edge);
             RefreshRoots();
@@ -865,7 +877,16 @@ namespace NBC.EditorTools.BehaviorTree
 
             m_nodeViews.Remove(node.NodeId);
             m_data.Nodes.Remove(node.NodeId);
-            // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报   // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报  // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。   // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。  m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();    m_data.RemoveDanglingReferences();   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)   if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)  {   {   {   {   {   {   {   {   {   {   {   {      m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();       m_data.RootNodeId = m_data.FindRootId();  }    }    }    }    }    }    }    }    }    }    }    }   RefreshRoots();
+            // 关键：父节点的 Children 里可能还留着这个 id —— 不清理的话，导出/预览会报
+            // 「节点 n1 引用了不存在的子节点 n4」。删完顺手把根也修一下。
+            m_data.RemoveDanglingReferences();
+
+            if (string.IsNullOrEmpty(m_data.RootNodeId) && m_data.Nodes.Count > 0)
+            {
+                m_data.RootNodeId = m_data.FindRootId();
+            }
+
+            RefreshRoots();
         }
 
         // 功能：判断某节点是不是祖先（用于环检测）。

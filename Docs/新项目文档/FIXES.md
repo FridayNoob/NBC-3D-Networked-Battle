@@ -89,3 +89,15 @@
   3. 兜底：`OnImport`（外部 JSON 可能自带脏引用）与 `BTPreviewRunner.Start`（改成「克隆 → 清理 → 校验」的顺序）都会清理并打警告
 - 验证：造一棵 `n1 → [n2, n4]` 的脏树，清理前 `Validate=false`（消息与截图一致）、清理后 `true`；脏树直接预览 `Start=True`，`hp=10` 时 `Selector/HPBelow` 均为 `Success`
 - 影响面：只在编辑器（`NBC.Editor`），不涉及服务端与打包
+
+## 2026-11-09 修：同一节点被连两次 → 预览报「检测到环：节点 n2 被重复访问」
+
+- 现象：删掉 n2 再重新连线后点【预览】，报「检测到环：节点 n2 被重复访问。行为树必须是有向无环图。」
+- 实据：导出快照里 `n1.children = [n3, n2, n4, n2]` —— **n2 被连了两条边**，DFS 第二次访问同一 id 就被当成环
+- 根因：连线允许重复（没有"这对节点已连过"的判断）；导出时逐条边写 `Children` 也没去重
+- 修法：
+  1. `BTGraphView.CompleteConnection`：同一对「输出 → 输入」已连过就直接忽略
+  2. `BTGraphView.ExportData`：写 `Children` 前 `Contains` 去重（重复边只记一次）
+  3. `BTGraphData.Validate`：先单独判「同一子节点连了两次」「子节点有多个父节点」，给出准确原因；真正的环才报环
+- 验证：重复引用报「节点 n1 重复引用了子节点 n2」；多父报「子节点 n4 有多个父节点（n2 和 n3）」；往画布导入含重复子节点的数据，导出后 `children=[n2]` 且 `Validate=True`
+- 附带修复：上一版对 `RemoveNode` 的行插入把注释与语句重复拼了 12 次（能编译但很脏），已还原成干净代码
