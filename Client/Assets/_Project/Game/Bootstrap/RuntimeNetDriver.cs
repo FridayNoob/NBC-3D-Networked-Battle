@@ -113,6 +113,9 @@ namespace NBC.Game.Bootstrap
         // 窗口是否开着
         private bool m_attackWindowOpen;
 
+        // 单次推进的最大毫秒数：卡顿/切窗口后 delta 可能是几秒，照实喂会让会话时钟猛跳、把心跳判成超时（假掉线）。
+        private const int MaxPumpDeltaMs = 250;
+
         // 窗口开始的时刻（Time.time）
         private float m_attackWindowStart;
 
@@ -218,6 +221,7 @@ namespace NBC.Game.Bootstrap
             }
 
             int deltaMs = Mathf.RoundToInt(Time.deltaTime * 1000f);
+            deltaMs = Mathf.Min(deltaMs, MaxPumpDeltaMs);
             m_session.Pump(deltaMs);
 
             DriveReconnect();

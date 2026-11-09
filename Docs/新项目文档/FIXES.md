@@ -101,3 +101,17 @@
   3. `BTGraphData.Validate`：先单独判「同一子节点连了两次」「子节点有多个父节点」，给出准确原因；真正的环才报环
 - 验证：重复引用报「节点 n1 重复引用了子节点 n2」；多父报「子节点 n4 有多个父节点（n2 和 n3）」；往画布导入含重复子节点的数据，导出后 `children=[n2]` 且 `Validate=True`
 - 附带修复：上一版对 `RemoveNode` 的行插入把注释与语句重复拼了 12 次（能编译但很脏），已还原成干净代码
+
+## 2026-11-09 修：玩家不操作十几秒就「心跳超时」掉线
+
+- 现象：进副本后不动（或切窗口），十几秒后掉线，提示心跳超时
+- 根因（两处叠加）：
+  1. **服务端**心跳超时 `TcpServerTransport.DefaultHeartbeatTimeoutMs = 10s`（10 秒没收到任何字节就断）
+  2. **客户端** `RuntimeNetDriver.Update` 把 `Time.deltaTime` **原样**喂给会话时钟；卡顿/切窗口后某帧 delta 可能是几秒
+     ⇒ 会话时钟猛跳，立刻判「超过 5s 没收到 Pong」；编辑器窗口那边早有 250ms 上限（注释就写着"照实喂会假掉线"），运行时却漏了
+- 修法（三处）：
+  1. `RuntimeNetDriver`：新增 `MaxPumpDeltaMs = 250`，`deltaMs` 夹住
+  2. `ProjectSettings.asset`：`runInBackground: 0 → 1`（失去焦点时 Play 继续跑，心跳不断）
+  3. `TcpServerTransport.DefaultHeartbeatTimeoutMs`：`10_000 → 30_000`（留足卡顿余量）
+- 验证：探针 436/0 全绿（无用例依赖 10s）；服务端重编 0 错
+- 影响面：只放宽"多久算掉线"，不改变任何战斗规则；真断线仍会在 30s 内被发现

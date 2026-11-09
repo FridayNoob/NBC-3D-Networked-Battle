@@ -41,7 +41,7 @@
 //  · 单帧上限 `NetContract.MaxFrameBytes`（512KB）—— 与客户端同一口径，超限判协议违规断开
 //  · 会话上限 `DefaultMaxSessions`（16）—— M3 是 2~4 人房间，但"连接数"不等于"房间席位"：
 //    留出"有人挂在大厅/多人同时连"的余量。超了**明确拒绝并说明**，不是静默丢弃
-//  · 心跳超时 `DefaultHeartbeatTimeoutMs`（10s）—— 30Hz 下 10s 没收到任何消息几乎必是掉线
+//  · 心跳超时 `DefaultHeartbeatTimeoutMs`（30s）—— 30Hz 下 10s 没收到任何消息几乎必是掉线
 // ============================================================================
 
 using System;
@@ -74,7 +74,7 @@ public sealed class TcpServerTransport : INetTransport
     public const int DefaultPort = 9000;
 
     /// <summary>默认心跳超时（毫秒）：超过这么久没收到**任何**消息就断开。</summary>
-    public const int DefaultHeartbeatTimeoutMs = 10_000;
+    public const int DefaultHeartbeatTimeoutMs = 30_000;
 
     /// <summary>默认会话上限。</summary>
     public const int DefaultMaxSessions = 16;
