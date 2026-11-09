@@ -157,6 +157,7 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
+            Bt_ActionsAndConfig();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -383,6 +384,7 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
+            Bt_ActionsAndConfig();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -541,6 +543,7 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
+            Bt_ActionsAndConfig();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -2041,6 +2044,131 @@ namespace NBC.NetProbe
         }
 
         /// <summary>R022-1：行为树内核（3 组合 + 6 条件）—— 语义、边界值、零分配。</summary>
+        /// <summary>R022-2：7 个动作的语义 + 配置链（Monster 表 4 个 AI 参数）+ 接线后的行为。</summary>
+        private static void Bt_ActionsAndConfig()
+        {
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+                h.TickBattles(1);
+
+                // ① 配置链：4 个新列真的读到了
+                MonsterRow wolfRow = h.Tables.FindMonster(6001)!.Value;
+                MonsterRow bossRow = h.Tables.FindMonster(6003)!.Value;
+
+                Check("配置：Monster 表读到 4 个 AI 参数（野狼 4000/2000/40/100000）",
+                    wolfRow.AggroRangeMm == 4000 && wolfRow.AttackRangeMm == 2000
+                    && wolfRow.MoveSpeedMmPerTick == 40 && wolfRow.LeashRadiusMm == 100000,
+                    $"aggro={wolfRow.AggroRangeMm} range={wolfRow.AttackRangeMm} speed={wolfRow.MoveSpeedMmPerTick} leash={wolfRow.LeashRadiusMm}");
+
+                Check("配置：狼王回位半径 200、移速 90（与旧常量一致，行为不突变）",
+                    bossRow.LeashRadiusMm == 200 && bossRow.MoveSpeedMmPerTick == 90,
+                    $"leash={bossRow.LeashRadiusMm} speed={bossRow.MoveSpeedMmPerTick}");
+
+                // ② Wait：0.5 秒 = 15 帧
+                var wait = new Bt.WaitAction();
+                wait.Configure(new ProbeParams().Set("seconds", "0.5"));
+                int runningTicks = 0;
+                Bt.BtStatus waitStatus = Bt.BtStatus.Running;
+
+                for (int i = 0; i < 20; i++)
+                {
+                    waitStatus = wait.Tick(null);
+
+                    if (waitStatus == Bt.BtStatus.Running)
+                    {
+                        runningTicks++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                Check("动作：Wait(0.5s) 在第 15 帧返回成功",
+                    waitStatus == Bt.BtStatus.Success && runningTicks == 14,
+                    $"Running 次数={runningTicks}，最终={waitStatus}");
+
+                // ③ CastSkill：恒失败
+                var cast = new Bt.CastSkillAction();
+                cast.Configure(new ProbeParams().Set("skillId", "1001"));
+                Bt.BtStatus cast1 = cast.Tick(null);
+                Bt.BtStatus cast2 = cast.Tick(null);
+                Check("动作：CastSkill 恒失败（技能系统未做，且不阻塞后续帧）",
+                    cast1 == Bt.BtStatus.Failure && cast2 == Bt.BtStatus.Failure,
+                    "第一次=" + cast1 + "，第二次=" + cast2);
+
+                // ④ Patrol / Idle 都会清 Chasing
+                DungeonBattle battle = h.BattleOf(a)!;
+                BattleEntity boss = FindBoss(battle)!;
+                BattleEntity hero = h.HeroOf(a)!;
+
+                Bt.BtContext MakeCtx() => new Bt.BtContext
+                {
+                    World = battle,
+                    Self = boss,
+                    HomeXmm = boss.PosXmm,
+                    HomeZmm = boss.PosZmm,
+                    Target = hero,
+                    Profile = new Bt.MonsterAiProfile(bossRow.AggroRangeMm, bossRow.MoveSpeedMmPerTick,
+                        bossRow.LeashRadiusMm, bossRow.AttackRangeMm, false)
+                };
+
+                Bt.BtContext patrolCtx = MakeCtx();
+                patrolCtx.Chasing = true;
+                new Bt.PatrolAction().Tick(patrolCtx);
+                Bt.BtContext idleCtx = MakeCtx();
+                idleCtx.Chasing = true;
+                new Bt.IdleAction().Tick(idleCtx);
+                Check("动作：Patrol / Idle 都会清掉 Chasing（否则实体还在往目标走）",
+                    !patrolCtx.Chasing && !idleCtx.Chasing,
+                    "Patrol后=" + patrolCtx.Chasing + "，Idle后=" + idleCtx.Chasing);
+
+                // ⑤ Chase：远 → Running 且 Chasing；贴脸 → Success 且清 Chasing
+                Bt.BtContext chaseFar = MakeCtx();
+                for (int i = 0; i < 80; i++)
+                {
+                    battle.MoveTowardsPoint(hero, boss.PosXmm + 5000, boss.PosZmm);
+                }
+
+                Bt.BtStatus farStatus = new Bt.ChaseAction().Tick(chaseFar);
+
+                Bt.BtContext chaseNear = MakeCtx();
+                for (int i = 0; i < 200; i++)
+                {
+                    battle.MoveTowardsPoint(hero, boss.PosXmm, boss.PosZmm);
+                }
+
+                Bt.BtStatus nearStatus = new Bt.ChaseAction().Tick(chaseNear);
+                Check("动作：Chase 远时 Running+Chasing、贴脸时 Success+清 Chasing",
+                    farStatus == Bt.BtStatus.Running && chaseFar.Chasing
+                    && nearStatus == Bt.BtStatus.Success && !chaseNear.Chasing,
+                    $"远={farStatus}/Chasing={chaseFar.Chasing}，近={nearStatus}/Chasing={chaseNear.Chasing}");
+
+                // ⑥ ReturnHome：远 → Running；到家 → Success
+                Bt.BtContext homeFar = MakeCtx();
+                homeFar.HomeXmm = boss.PosXmm + 5000;
+                Bt.BtStatus homeFarStatus = new Bt.ReturnHomeAction().Tick(homeFar);
+
+                Bt.BtContext homeNear = MakeCtx();
+                Bt.BtStatus homeNearStatus = new Bt.ReturnHomeAction().Tick(homeNear);
+                Check("动作：ReturnHome 离家远时 Running，200mm 内 Success 且清 Chasing",
+                    homeFarStatus == Bt.BtStatus.Running && homeFar.Chasing
+                    && homeNearStatus == Bt.BtStatus.Success && !homeNear.Chasing,
+                    $"远={homeFarStatus}，近={homeNearStatus}");
+
+                // ⑦ 接线：英雄被击杀后，BOSS 不再追（Chasing 清掉 + 状态不再是追击）
+                battle.ApplyDamage(hero.Id, 9999, 0);
+                h.TickBattles(10);
+
+                BtBrain bossBrain = BrainOf(battle, boss.Id);
+                bool stillChasing = boss.Chasing;
+                Check("接线：英雄全灭后 BOSS 停止追击（Chasing 清掉，状态=站桩/回位）",
+                    !stillChasing,
+                    "状态=" + bossBrain.StateName + "，Chasing=" + stillChasing);
+            }
+        }
+
         private static void Bt_KernelAndConditions()
         {
             // ① 组合：短路语义（不需要真世界，给 null 上下文即可）
