@@ -78,3 +78,14 @@
 - 为什么：负责人要测客户端攻击，不想被怪反杀
 - **恢复方法**：把该常量改成 `true` 并重编服务端 —— 伤害逻辑一行都没删
 - 影响面：只拦「怪物 → 英雄」；英雄打怪、怪打怪不受影响
+
+## 2026-11-09 修：行为树删节点后残留「引用了不存在的子节点」导致无法预览
+
+- 现象：删掉画布上一个子节点后点【预览】，状态栏报「无法预览：节点 n1 引用了不存在的子节点 n4。」
+- 根因：`BTGraphView.RemoveNode` 只从 `m_data.Nodes` 删了节点，**没把它的 id 从父节点的 `Children` 里摘掉**，`RootNodeId` 也可能指向已删节点
+- 修法（三处）：
+  1. `BTGraphData.RemoveDanglingReferences()`：清掉指向不存在节点的 `Children` 引用、清空失效的 `RootNodeId`，返回清理条数
+  2. `BTGraphView.RemoveNode`：删完节点立刻调用它并重算根
+  3. 兜底：`OnImport`（外部 JSON 可能自带脏引用）与 `BTPreviewRunner.Start`（改成「克隆 → 清理 → 校验」的顺序）都会清理并打警告
+- 验证：造一棵 `n1 → [n2, n4]` 的脏树，清理前 `Validate=false`（消息与截图一致）、清理后 `true`；脏树直接预览 `Start=True`，`hp=10` 时 `Selector/HPBelow` 均为 `Success`
+- 影响面：只在编辑器（`NBC.Editor`），不涉及服务端与打包

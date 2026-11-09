@@ -247,13 +247,22 @@ namespace NBC.EditorTools.BehaviorTree
                 return false;
             }
 
-            if (!data.Validate(out error))
-            {
-                return false;
-            }
+              // 先克隆再清理脏引用，最后才校验 —— 否则「删节点留下的脏引用」会直接卡在校验上（就是报错截图那种）
+              BTGraphData snapshot = data.Clone();
 
-            BTGraphData snapshot = data.Clone();
-            string rootId = string.IsNullOrEmpty(snapshot.RootNodeId) ? data.FindRootId() : snapshot.RootNodeId;
+              int dangling = snapshot.RemoveDanglingReferences();
+
+              if (dangling > 0)
+              {
+              Debug.LogWarning("[BT] 预览前清理了 " + dangling + " 处指向已删除节点的引用（源数据仍脏，建议重新导入或重建）。");
+              }
+
+              if (!snapshot.Validate(out error))
+              {
+              return false;
+              }
+
+              string rootId = string.IsNullOrEmpty(snapshot.RootNodeId) ? snapshot.FindRootId() : snapshot.RootNodeId;
 
             if (string.IsNullOrEmpty(rootId) || !snapshot.Nodes.ContainsKey(rootId))
             {

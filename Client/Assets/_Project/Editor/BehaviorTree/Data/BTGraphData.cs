@@ -259,6 +259,38 @@ namespace NBC.EditorTools.BehaviorTree
             return true;
         }
 
+        // 功能：清掉指向已删除节点的子节点引用（删节点后必须调用，否则导出/预览会报「引用了不存在的子节点」）。
+        // 入参：无
+        // 返回：被清掉的引用条数（0 = 本来就没有脏引用）
+        // 步骤：
+        //   1) 遍历每个节点的 Children，删掉 Nodes 里不存在的 id
+        //   2) RootNodeId 指向不存在的节点时清空
+        // 上游：BTGraphView.RemoveNode、BehaviorTreeEditorWindow.OnImport
+        // 下游：无
+        public int RemoveDanglingReferences()
+        {
+            int removed = 0;
+
+            foreach (KeyValuePair<string, BTNodeData> pair in Nodes)
+            {
+                for (int i = pair.Value.Children.Count - 1; i >= 0; i--)
+                {
+                    if (!Nodes.ContainsKey(pair.Value.Children[i]))
+                    {
+                        pair.Value.Children.RemoveAt(i);
+                        removed++;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(RootNodeId) && !Nodes.ContainsKey(RootNodeId))
+            {
+                RootNodeId = string.Empty;
+                removed++;
+            }
+
+            return removed;
+        }
         // 功能：深拷贝整棵树（预览运行时用它做快照，避免与画布共享数据）。
         // 入参：无
         // 返回：新树
