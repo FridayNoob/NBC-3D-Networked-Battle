@@ -84,6 +84,20 @@ namespace NBC.Game.Bootstrap
         private const int AttackTargetRangeMm = 3000;
 
         // 本地玩家的动画组件（播攻击用）；只查一次
+        // 英雄位置纠偏：服务端是权威，客户端只做"跟随式校正"（不是完整预测回滚）
+        private PlayerMove m_playerMove;
+
+        // 允许的最大漂移（米）：小于它就不动，避免每帧抖动
+        private const float HeroDriftDeadzoneM = 0.3f;
+
+        // 超过它就直接瞬移（米）：通常是被场地边界挡住后的重新对齐
+        private const float HeroSnapDistanceM = 2f;
+
+        // 纠偏速度（米/秒）：往服务端位置靠拢
+        private const float HeroReconcileSpeedMps = 8f;
+
+        // 与服务端一致的场地半边长（毫米）：±5 米
+        private const int PlayAreaHalfExtentMm = 5000;
         private PlayerAnimation m_playerAnimation;
 
         // 剑上的 Trigger 碰撞体（R019：用「剑碰到谁」决定打谁）；只找/建一次
@@ -242,9 +256,77 @@ namespace NBC.Game.Bootstrap
             }
 
             RefreshPresentation();
+            ReconcileHeroPosition();
             PushStats();
         }
 
+        // 功能：把客户端英雄往服务端位置"拉回"，并限制在场地范围内。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 没在线/没快照就返回
+        //   2) 取我的英雄快照（服务端权威位置）
+        //   3) 找 PlayerMove（懒加载）
+        //   4) 漂移小（< 0.3 米）不动；大（> 2 米）直接瞬移；中间按速度靠拢
+        //   5) 无论是否漂移，都把英雄夹在 ±5 米内（与服务端 PlayAreaHalfExtentMm 一致）
+        // 上游：Update
+        // 下游：PlayerMove.transform
+        // 注意：这里只做"跟随式纠偏"，不是预测回滚；帧同步模式不要用它（模式判断在调用处）
+        private void ReconcileHeroPosition()
+        {
+            if (m_session == null || !m_session.IsOnline || m_feed == null || m_feed.View == null)
+            {
+                return;
+            }
+
+            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
+
+            if (hero.EntityId <= 0 || !hero.Alive)
+            {
+                return;
+            }
+
+            if (m_playerMove == null)
+            {
+                m_playerMove = UnityEngine.Object.FindObjectOfType<PlayerMove>();
+            }
+
+            if (m_playerMove == null)
+            {
+                return;
+            }
+
+            Transform heroTransform = m_playerMove.transform;
+            Vector3 server = new Vector3(hero.PosXMm * 0.001f, heroTransform.position.y, hero.PosZMm * 0.001f);
+            Vector3 current = new Vector3(heroTransform.position.x, heroTransform.position.y, heroTransform.position.z);
+            float drift = Vector3.Distance(
+                new Vector3(current.x, 0f, current.z),
+                new Vector3(server.x, 0f, server.z));
+
+            if (drift > HeroSnapDistanceM)
+            {
+                heroTransform.position = server;
+            }
+            else if (drift > HeroDriftDeadzoneM)
+            {
+                float step = Mathf.Min(drift, HeroReconcileSpeedMps * Time.deltaTime);
+                heroTransform.position = Vector3.MoveTowards(
+                    new Vector3(current.x, heroTransform.position.y, current.z),
+                    new Vector3(server.x, heroTransform.position.y, server.z),
+                    step);
+            }
+
+            // 场地边界：客户端的移动是本地积分，不夹住就会走出服务端场地，导致"怪在远处也能打你"
+            float half = PlayAreaHalfExtentMm * 0.001f;
+            Vector3 pos = heroTransform.position;
+            float clampedX = Mathf.Clamp(pos.x, -half, half);
+            float clampedZ = Mathf.Clamp(pos.z, -half, half);
+
+            if (Mathf.Abs(clampedX - pos.x) > 0.0001f || Mathf.Abs(clampedZ - pos.z) > 0.0001f)
+            {
+                heroTransform.position = new Vector3(clampedX, pos.y, clampedZ);
+            }
+        }
         // 功能：每帧把会话状态喂给重连策略，并执行它给的下一步动作。
         // 入参：无
         // 返回：无
