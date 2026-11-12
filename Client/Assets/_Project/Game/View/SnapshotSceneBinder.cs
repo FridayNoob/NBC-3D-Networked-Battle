@@ -321,6 +321,7 @@ namespace NBC.Game.View
                 Vector3 target = new Vector3(e.PosXMm * MmToUnit, 0f, e.PosZMm * MmToUnit);
 
                 DriveAnimation(slot, e.FacingDeg, target);
+                SnapModelToGroundOnce(slot);
                 MoveSlotTo(slot, target);
                 slot.Transform.localScale = new Vector3(scale, scale, scale);
             }
@@ -436,6 +437,70 @@ namespace NBC.Game.View
             }
 
             slot.Transform.localRotation = Quaternion.Euler(0f, facingDeg + m_facingOffsetDegrees, 0f);
+        }
+        // 功能：按**当前动画姿势**把 Model 容器整体上移/下移，让脚底正好落在地面（只做一次）。
+        // 入参：slot 槽位
+        // 返回：无
+        // 步骤：
+        //   1) 已经做过 / 找不到 Model 容器 ⇒ 返回
+        //   2) 遍历 Model 下的 SkinnedMeshRenderer 与 MeshRenderer 求包围盒
+        //   3) 按 minY 反向偏移 Model 的 localPosition
+        // 上游：LateUpdate
+        // 下游：Transform.localPosition
+        // 注意：编辑期量的是**绑定姿势**，进 Play 后 Animator 摆姿势会让脚离地，所以必须运行时再对一次
+        private void SnapModelToGroundOnce(Slot slot)
+        {
+            if (slot.GroundSnapped || slot.Transform == null)
+            {
+                return;
+            }
+
+            Transform model = slot.Transform.Find("Model");
+
+            if (model == null)
+            {
+                slot.GroundSnapped = true;
+                return;
+            }
+
+            Renderer[] renderers = model.GetComponentsInChildren<Renderer>(true);
+            bool hasBounds = false;
+            Bounds bounds = default(Bounds);
+
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                // 只算模型网格；血条那两个 SpriteRenderer 不算
+                if (!(renderers[i] is SkinnedMeshRenderer) && !(renderers[i] is MeshRenderer))
+                {
+                    continue;
+                }
+
+                if (!hasBounds)
+                {
+                    bounds = renderers[i].bounds;
+                    hasBounds = true;
+                }
+                else
+                {
+                    bounds.Encapsulate(renderers[i].bounds);
+                }
+            }
+
+            if (!hasBounds)
+            {
+                slot.GroundSnapped = true;
+                return;
+            }
+
+            float minY = bounds.min.y;
+
+            if (Mathf.Abs(minY) > 0.01f)
+            {
+                Vector3 local = model.localPosition;
+                model.localPosition = new Vector3(local.x, local.y - minY, local.z);
+            }
+
+            slot.GroundSnapped = true;
         }
         // 功能：把槽位朝目标位置推进 —— 有刚体走物理速度，无刚体直接写位置；必要时直接归位。
         // 入参：slot 槽位；target 本帧快照给的目标位置（局部坐标，米，只用 X/Z）
@@ -690,6 +755,9 @@ namespace NBC.Game.View
 
             // 是否已经落过位；首次出现要直接归位，不能从原点滑进来
             public bool Positioned;
+
+            // 是否已经按**动画姿势**把模型对齐到地面（只做一次）
+            public bool GroundSnapped;
 
             // 模型自带的刚体；非空表示 Y 由物理（重力）负责，本组件只写 X/Z
             public readonly Rigidbody Body;

@@ -161,3 +161,11 @@
 - 修法：
   1. 预制体：给 `Img_Fill` 赋内置 `UI/Skin/UISprite.psd`，Type=Filled、FillMethod=Horizontal、fillAmount=1
   2. 代码兜底：`HpBarPanel.SetRatio` 在「Sprite 为空 / Type 不是 Filled」时改用 `anchorMax.x = ratio` 收缩
+
+## 2026-11-12 补：狼"浮空"真因（动画姿势）+ 死亡后误报位置警告
+
+- 实测（Play 中查询）：怪与英雄 root `y=0.115`、**碰撞体底部 = 0.000** ⇒ 物理没浮空
+- 真因：编辑期是按**绑定姿势**量的脚底，进 Play 后 Animator 摆姿势，脚就离地了
+- 修法：`SnapshotSceneBinder` 每只怪**第一次**进入 LateUpdate 时，按当前姿势量模型包围盒，把 `Model` 容器整体偏移到脚底 = 地面（只做一次）
+- 顺带修：英雄**死亡后** `FindHero`（只返回活着的）为 null 会刷「找不到我的英雄快照」警告；
+  改成「按 OwnerPlayerId 找、不看死活」，死了就安静返回

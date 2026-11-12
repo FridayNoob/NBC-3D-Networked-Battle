@@ -285,12 +285,24 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
-            // FindHero 找不到时返回 null（protobuf 类），必须先判空再读字段
-            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
+            // 先按「归属玩家」找英雄，**不看死活**：死亡后没快照是正常的，不该刷警告
+            EntitySnapshot hero = null;
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
 
-            if (hero == null || hero.EntityId <= 0 || !hero.Alive)
+            for (int i = 0; i < entities.Count; i++)
             {
-                // 诊断：客户端认不出自己的英雄时，位置纠偏等于没开（会表现为"红圈外也挨打"）
+                EntitySnapshot candidate = entities[i];
+
+                if (candidate.Kind == 0 && candidate.OwnerPlayerId == m_session.PlayerId)
+                {
+                    hero = candidate;
+                    break;
+                }
+            }
+
+            if (hero == null)
+            {
+                // 诊断：真的认不出自己的英雄时，位置纠偏等于没开（会表现为"红圈外也挨打"）
                 if (Time.time - m_lastHeroMissingLogTime > 5f)
                 {
                     m_lastHeroMissingLogTime = Time.time;
@@ -298,6 +310,12 @@ namespace NBC.Game.Bootstrap
                         + "，在线=" + m_session.IsOnline + "，实体数=" + m_feed.View.EntityCount);
                 }
 
+                return;
+            }
+
+            // 死了就停下（不纠偏、也不打警告）
+            if (hero.EntityId <= 0 || !hero.Alive)
+            {
                 return;
             }
 
