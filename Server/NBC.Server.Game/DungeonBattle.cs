@@ -1158,11 +1158,26 @@ public sealed class DungeonBattle
     /// <returns>快照。</returns>
     public WorldSnapshot ToSnapshot()
     {
+        return ToSnapshot(null);
+    }
+
+    // 功能：把世界拍成一张按条件过滤的快照（AOI 用）。
+    // 入参：include 过滤条件；null = 全量
+    // 返回：快照
+    // 步骤：逐实体判断，通过才加入
+    // 上游：RoomBattleService.BroadcastSnapshot（每个观察者/每组一份）
+    // 下游：BattleEntity.ToSnapshot
+    // 注意：AI 与伤害永远按全量实体算，这里只影响「发给谁」
+    public WorldSnapshot ToSnapshot(Func<BattleEntity, bool> include)
+    {
         var snapshot = new WorldSnapshot { ServerTick = (int)Tick };
 
         for (int i = 0; i < _entities.Count; i++)
         {
-            snapshot.Entities.Add(_entities[i].ToSnapshot());
+            if (include == null || include(_entities[i]))
+            {
+                snapshot.Entities.Add(_entities[i].ToSnapshot());
+            }
         }
 
         return snapshot;

@@ -67,6 +67,7 @@ using System.Collections.Generic;
 using Google.Protobuf;         // `ToByteArray()`
 using NBC.Protocol;
 using NBC.Server.Core;
+using NBC.Server.Game.Aoi;
 using NBC.Shared.Net;
 
 namespace NBC.Server.Game;
@@ -575,15 +576,116 @@ public sealed class RoomBattleService
     /// <param name="battle">世界。</param>
     /// <param name="room">房间。</param>
     /// <returns>成功发出去几份。</returns>
+    // AOI 格子边长（毫米）：默认 10 米；测试可以调小来验证「远处不发」
+    public static int AoiCellSizeMm = AoiGrid.DefaultCellSizeMm;
+
+    // 当前 AOI 网格（格子边长变化时重建）
+    private static AoiGrid? s_aoi;
+    private static int s_aoiCellMm;
+
+    // 功能：取当前 AOI 网格（懒建 + 尺寸变化时重建）。
+    // 入参：无
+    // 返回：网格
+    // 步骤：尺寸没变就直接复用
+    // 上游：BroadcastSnapshot
+    // 下游：AoiGrid 构造
+    private static AoiGrid GetAoiGrid()
+    {
+        if (s_aoi == null || s_aoiCellMm != AoiCellSizeMm)
+        {
+            s_aoiCellMm = AoiCellSizeMm;
+            s_aoi = new AoiGrid(AoiCellSizeMm);
+        }
+
+        return s_aoi;
+    }
+
+    // 一组观察者（同一格子的玩家共用一份 payload）
+    private sealed class AoiGroup
+    {
+        public int CenterXmm;
+        public int CenterZmm;
+        public readonly List<long> SessionIds = new();
+        public readonly HashSet<int> SelfEntityIds = new();
+    }
+
+    // 功能：按 AOI 把快照发给房里的人（同格玩家共用一份，远处实体不发）。
+    // 入参：battle 世界；room 房间
+    // 返回：成功发出去几份
+    // 步骤：
+    //   1) 按每个玩家的英雄所在格子分组（找不到英雄的单独一组，发全量）
+    //   2) 每组序列化一次，过滤条件 = 自己 或 在 3x3 邻域内
+    //   3) 逐会话发送
+    // 上游：RoomBattleService.Tick
+    // 下游：DungeonBattle.ToSnapshot(filter)
+    // 注意：客户端不需要改（SnapshotView 对消失的实体按看不到处理）
     private int BroadcastSnapshot(DungeonBattle battle, Room room)
     {
-        byte[] payload = new ServerMessage { Snapshot = battle.ToSnapshot() }.ToByteArray();
-        int sent = SendToRoom(payload, room);
+        AoiGrid grid = GetAoiGrid();
+        Dictionary<long, AoiGroup> groups = new();
+        List<long> blindSessionIds = new();
+
+        for (int i = 0; i < room.Seats.Count; i++)
+        {
+            RoomSeat seat = room.Seats[i];
+            BattleEntity? hero = battle.FindHeroOfPlayer(seat.Session.PlayerId);
+
+            if (hero == null)
+            {
+                blindSessionIds.Add(seat.Session.SessionId);
+                continue;
+            }
+
+            int cx = grid.CellOf(hero.PosXmm);
+            int cz = grid.CellOf(hero.PosZmm);
+            long key = ((long)cx << 32) ^ (uint)cz;
+
+            if (!groups.TryGetValue(key, out AoiGroup group))
+            {
+                group = new AoiGroup { CenterXmm = hero.PosXmm, CenterZmm = hero.PosZmm };
+                groups[key] = group;
+            }
+
+            group.SessionIds.Add(seat.Session.SessionId);
+            group.SelfEntityIds.Add(hero.Id);
+        }
+
+        int sent = 0;
+
+        foreach (AoiGroup group in groups.Values)
+        {
+            byte[] payload = new ServerMessage
+            {
+                Snapshot = battle.ToSnapshot(e => group.SelfEntityIds.Contains(e.Id)
+                    || grid.IsVisible(group.CenterXmm, group.CenterZmm, e.PosXmm, e.PosZmm)),
+            }.ToByteArray();
+
+            for (int i = 0; i < group.SessionIds.Count; i++)
+            {
+                if (_transport.Send(group.SessionIds[i], payload))
+                {
+                    sent++;
+                }
+            }
+        }
+
+        // 找不到英雄的会话：发全量，避免整屏空着（并留一条日志便于排查）
+        if (blindSessionIds.Count > 0)
+        {
+            byte[] full = new ServerMessage { Snapshot = battle.ToSnapshot() }.ToByteArray();
+
+            for (int i = 0; i < blindSessionIds.Count; i++)
+            {
+                if (_transport.Send(blindSessionIds[i], full))
+                {
+                    sent++;
+                }
+            }
+        }
 
         SnapshotsSent += sent;
         return sent;
     }
-
     /// <summary>
     /// 把这一帧产生的**伤害 / 死亡事件**发给房里的每个人（M4-S1）。
     /// <para>⚠️ 顺序是**先伤害、后死亡**，与 M2 本地战斗定下的因果顺序一致

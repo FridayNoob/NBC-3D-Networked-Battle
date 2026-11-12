@@ -158,6 +158,7 @@ namespace NBC.NetProbe
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
             Bt_ActionsAndConfig();
+            Aoi_OnlyNearbyEntitiesAreSent();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -385,6 +386,7 @@ namespace NBC.NetProbe
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
             Bt_ActionsAndConfig();
+            Aoi_OnlyNearbyEntitiesAreSent();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -544,6 +546,7 @@ namespace NBC.NetProbe
             Console.WriteLine("【九之二】行为树内核与条件节点（R022-1）");
             Bt_KernelAndConditions();
             Bt_ActionsAndConfig();
+            Aoi_OnlyNearbyEntitiesAreSent();
 
             Console.WriteLine();
             // ⚠️ 这一行 2026-09-23 被我自己"替换锚点时"误删过一次（S6a）——
@@ -2166,6 +2169,56 @@ namespace NBC.NetProbe
                 Check("接线：英雄全灭后 BOSS 停止追击（Chasing 清掉，状态=站桩/回位）",
                     !stillChasing,
                     "状态=" + bossBrain.StateName + "，Chasing=" + stillChasing);
+            }
+        }
+
+        /// <summary>R031：AOI 九宫格 —— 格子计算 + 服务端按可见集下发。</summary>
+        private static void Aoi_OnlyNearbyEntitiesAreSent()
+        {
+            // ① 网格本身：2 米格子，1.5 米可见、2.5 米不可见
+            var grid = new NBC.Server.Game.Aoi.AoiGrid(2000);
+            Check("AOI：同一格与相邻格可见、隔两格不可见",
+                grid.IsVisible(0, 0, 1500, 0) && !grid.IsVisible(0, 0, 4500, 0),
+                "1500mm=" + grid.IsVisible(0, 0, 1500, 0) + "，4500mm=" + grid.IsVisible(0, 0, 4500, 0));
+
+            Check("AOI：负坐标按向下取整（-1mm 与 1mm 在相邻格）",
+                Math.Abs(grid.CellOf(1) - grid.CellOf(-1)) == 1,
+                "cell(1)=" + grid.CellOf(1) + "，cell(-1)=" + grid.CellOf(-1));
+
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+                Client b = h.JoinSameRoom(h.ConnectAndHandshake("法师"));
+                h.TickBattles(2);
+
+                DungeonBattle battle = h.BattleOf(a)!;
+                BattleEntity heroA = h.HeroOf(a)!;
+                BattleEntity heroB = h.HeroOf(b)!;
+
+                // ② 把两人拉开 8 米（格子 2 米 ⇒ 互相看不到）
+                NBC.Server.Game.RoomBattleService.AoiCellSizeMm = 2000;
+                // 每次只走一个 tick 的距离，要循环才能真的拉开
+                for (int i = 0; i < 200; i++) { battle.MoveTowardsPoint(heroA, 4000, 0); }
+                for (int i = 0; i < 200; i++) { battle.MoveTowardsPoint(heroB, -4000, 0); }
+                h.TickBattles(2);
+
+                int aCount = a.LastSnapshot().Entities.Count;
+                int bCount = b.LastSnapshot().Entities.Count;
+                bool aSeesB = FindEntity(a.LastSnapshot(), heroB.Id) != null;
+                bool bSeesA = FindEntity(b.LastSnapshot(), heroA.Id) != null;
+                bool aSeesSelf = FindEntity(a.LastSnapshot(), heroA.Id) != null;
+
+                Check("AOI：相隔 8 米时互相看不到（但自己的英雄一定在）",
+                    !aSeesB && !bSeesA && aSeesSelf,
+                    "A看到B=" + aSeesB + "，B看到A=" + bSeesA + "，A看到自己=" + aSeesSelf
+                    + "，实体数 A=" + aCount + " B=" + bCount);
+
+                // ③ 恢复默认 10 米格子（整场 10 米 ⇒ 全可见），确认回归正常
+                NBC.Server.Game.RoomBattleService.AoiCellSizeMm = NBC.Server.Game.Aoi.AoiGrid.DefaultCellSizeMm;
+                h.TickBattles(2);
+
+                bool aSeesBFull = FindEntity(a.LastSnapshot(), heroB.Id) != null;
+                Check("AOI：恢复默认格子后两人互相可见（不误删）", aSeesBFull, "A看到B=" + aSeesBFull);
             }
         }
 
