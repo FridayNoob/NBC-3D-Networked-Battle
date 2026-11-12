@@ -577,7 +577,21 @@ public sealed class RoomBattleService
     /// <param name="room">房间。</param>
     /// <returns>成功发出去几份。</returns>
     // AOI 格子边长（毫米）：默认 10 米；测试可以调小来验证「远处不发」
-    public static int AoiCellSizeMm = AoiGrid.DefaultCellSizeMm;
+    // 环境变量 NBC_AOI_CELL_MM 可覆盖（手动验收不用改代码重编）
+    public static int AoiCellSizeMm = ReadAoiCellSizeFromEnv();
+
+    // 功能：从环境变量读格子边长（读不到用默认）。
+    // 入参：无
+    // 返回：格子边长（毫米）
+    // 步骤：读 NBC_AOI_CELL_MM → 解析正整数 → 否则默认
+    // 上游：静态初始化
+    // 下游：GetAoiGrid
+    private static int ReadAoiCellSizeFromEnv()
+    {
+        string? raw = Environment.GetEnvironmentVariable("NBC_AOI_CELL_MM");
+
+        return int.TryParse(raw, out int mm) && mm > 0 ? mm : AoiGrid.DefaultCellSizeMm;
+    }
 
     // 当前 AOI 网格（格子边长变化时重建）
     private static AoiGrid? s_aoi;
