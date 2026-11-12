@@ -279,9 +279,10 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
+            // FindHero 找不到时返回 null（protobuf 类），必须先判空再读字段
             EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
 
-            if (hero.EntityId <= 0 || !hero.Alive)
+            if (hero == null || hero.EntityId <= 0 || !hero.Alive)
             {
                 return;
             }
