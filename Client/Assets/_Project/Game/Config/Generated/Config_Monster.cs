@@ -19,5 +19,6 @@ namespace NBC.Game.Config
         public int attackRangeMm;  // 普攻射程（毫米）（int）
         public int moveSpeedMmPerTick;  // 追击移速（毫米/帧）（int）
         public int leashRadiusMm;  // 回位半径（毫米）（int）
+        public int groundLineMm;  // 接地线长（毫米）（int）
     }
 }

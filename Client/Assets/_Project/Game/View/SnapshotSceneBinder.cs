@@ -289,6 +289,14 @@ namespace NBC.Game.View
 
                 Slot slot = EnsureSlot(e.EntityId);
 
+                // 把怪型告诉调试可视化组件（决定读哪一行表、以及写回哪一行）
+                MonsterAiDebugView debugView = slot.Go.GetComponent<MonsterAiDebugView>();
+
+                if (debugView != null)
+                {
+                    debugView.Bind(e.ConfigId);
+                }
+
                 slot.SeenPush = m_pushCount;
 
                 ApplyCombatFeedback(slot, e);
