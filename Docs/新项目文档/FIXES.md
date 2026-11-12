@@ -137,3 +137,27 @@
   3. 只做"跟随式纠偏"，不是预测回滚；帧同步模式不走这条路径
 - 验证：走远到边界外应被挡住；怪只在约 1.8 米内才打得中
 - 备注：真正干净的做法是"预测 + 回滚"，属 M5；demo 阶段跟随纠偏足够
+
+## 2026-11-12 修：R030 验收发现的三个问题
+
+### ① 红圈外仍掉血（待用诊断日志定位）
+
+- 已加**两端诊断日志**（临时，定位后可删）：
+  - 服务端 `DungeonBattle.TryBasicAttack`：怪物打中英雄时打印 `[伤害诊断] 怪#X → 英雄#Y 距离=...mm（射程 2000mm）`
+  - 客户端 `RuntimeNetDriver.ReconcileHeroPosition`：漂移 > 0.5m 打印 `[位置诊断] 英雄漂移 ...`；找不到英雄快照打印 `[位置诊断] 找不到我的英雄快照 PlayerId=...`
+- 判据：服务端日志距离 **> 2000mm** ⇒ 两边位置不同步（看客户端漂移日志）；距离正常 ⇒ 是画圈用的半径/位置不对
+
+### ② 狼悬空 / 碰撞体不平行地面
+
+- 实据：狼的网格渲染器脚底在 `y = -0.439`（**陷进地里** 0.44m），碰撞体长边在 Z 而模型朝向 **+X**
+- 修法：
+  1. 碰撞体改成 `size (2.0, 0.9, 0.6)`、`center (0, 0.45, 0)`（长边朝 X，底面贴地）
+  2. 预制体加 `Model` 容器，把所有模型子物体搬进去，整体上移 **0.439**，脚底对齐 `y=0`
+- 结果：`脚底 minY = 0.000`；根下只剩 `Attack / Aggro / Ground / Model`
+
+### ③ 玩家血条只变色、不变短
+
+- 根因：`HpBarPanel.prefab` 的 `Img_Fill` **Sprite 为空** ⇒ `Image.fillAmount` 对空 Sprite 不生效（Type=Filled 也没用），只剩颜色变化
+- 修法：
+  1. 预制体：给 `Img_Fill` 赋内置 `UI/Skin/UISprite.psd`，Type=Filled、FillMethod=Horizontal、fillAmount=1
+  2. 代码兜底：`HpBarPanel.SetRatio` 在「Sprite 为空 / Type 不是 Filled」时改用 `anchorMax.x = ratio` 收缩

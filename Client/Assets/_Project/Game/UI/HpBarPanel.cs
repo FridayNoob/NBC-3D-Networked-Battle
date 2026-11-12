@@ -96,7 +96,19 @@ namespace NBC.Game.UI
 
             if (m_fill != null)
             {
-                m_fill.fillAmount = Ratio;
+                if (m_fill.type == Image.Type.Filled && m_fill.sprite != null)
+                {
+                    // 首选：Filled 图 + fillAmount（预制体里配好的情况）
+                    m_fill.fillAmount = Ratio;
+                }
+                else
+                {
+                    // 兜底：Sprite 为空或 Type 不是 Filled 时 fillAmount 不生效（踩过：只变色不变短），
+                    // 改用「右边界水平收缩」，视觉上一样是血条变短
+                    RectTransform rect = m_fill.rectTransform;
+                    rect.anchorMax = new Vector2(Ratio, rect.anchorMax.y);
+                }
+
                 m_fill.color = Color.Lerp(Color.red, Color.green, Ratio);
             }
 

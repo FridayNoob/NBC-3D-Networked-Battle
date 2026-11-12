@@ -87,6 +87,12 @@ namespace NBC.Game.Bootstrap
         // 英雄位置纠偏：服务端是权威，客户端只做"跟随式校正"（不是完整预测回滚）
         private PlayerMove m_playerMove;
 
+        // 诊断：上一次打「位置漂移」日志的时间（限流，避免刷屏）
+        private float m_lastDriftLogTime;
+
+        // 诊断：上一次打「找不到我的英雄」日志的时间
+        private float m_lastHeroMissingLogTime;
+
         // 允许的最大漂移（米）：小于它就不动，避免每帧抖动
         private const float HeroDriftDeadzoneM = 0.3f;
 
@@ -284,6 +290,14 @@ namespace NBC.Game.Bootstrap
 
             if (hero == null || hero.EntityId <= 0 || !hero.Alive)
             {
+                // 诊断：客户端认不出自己的英雄时，位置纠偏等于没开（会表现为"红圈外也挨打"）
+                if (Time.time - m_lastHeroMissingLogTime > 5f)
+                {
+                    m_lastHeroMissingLogTime = Time.time;
+                    Debug.LogWarning("[位置诊断] 找不到我的英雄快照：PlayerId=" + m_session.PlayerId
+                        + "，在线=" + m_session.IsOnline + "，实体数=" + m_feed.View.EntityCount);
+                }
+
                 return;
             }
 
@@ -303,6 +317,15 @@ namespace NBC.Game.Bootstrap
             float drift = Vector3.Distance(
                 new Vector3(current.x, 0f, current.z),
                 new Vector3(server.x, 0f, server.z));
+
+            // 诊断：漂移超过 0.5 米就打一条（每秒最多一条），用来判断"红圈外挨打"是不是位置没对齐
+            if (drift > 0.5f && Time.time - m_lastDriftLogTime > 1f)
+            {
+                m_lastDriftLogTime = Time.time;
+                Debug.LogWarning("[位置诊断] 英雄漂移 " + drift.ToString("0.00") + " 米：客户端("
+                    + current.x.ToString("0.00") + "," + current.z.ToString("0.00") + ") 服务端("
+                    + server.x.ToString("0.00") + "," + server.z.ToString("0.00") + ")");
+            }
 
             if (drift > HeroSnapDistanceM)
             {

@@ -686,6 +686,7 @@ public sealed class DungeonBattle
             return false;
         }
 
+        // 诊断：怪物打中英雄时打印真实距离（排查"红圈外也挨打"：距离 > 射程就说明两边位置不同步）         if (attacker.Kind == 1 && target.Kind == 0)         {             int hitDistanceMm = BattleRules.DistanceMmRounded(attacker.PosXmm, attacker.PosZmm, target.PosXmm, target.PosZmm);             Console.WriteLine("[伤害诊断] 怪#" + attacker.Id + " → 英雄#" + target.Id                 + " 距离=" + hitDistanceMm + "mm（射程 " + BasicAttackRangeMm + "mm）");         } 
         ApplyDamage(targetId, attacker.AttackDamage, attacker.Id);
         attacker.StartAttackCooldown(BasicAttackCooldownTicks);
         return true;
