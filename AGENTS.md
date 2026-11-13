@@ -74,6 +74,20 @@
 - 下载/引入素材必须登记：包名、来源链接、许可证、导入路径 —— 写进 `Docs/05-依赖清单.md`。
 - 素材缺失时**先找再要**：给出候选包链接让负责人选，不要拿灰色方块/圆柱糊过去当成品。
 - 仓库策略不变：`Client/Assets/Art/Model/**` 与 `Client/Assets/Prefabs/**` 不进仓库（.gitignore）。
+## 0.6 目录约定（负责人 2026-11-13 定）
+
+**`Assets/_Project/` 只放"我们自己写/自己改"的东西；第三方包与 Unity 强制目录留在 `Assets` 根，不搬。**
+
+| 放哪 | 内容 |
+| --- | --- |
+| `Assets/_Project/**` | 我们自己的代码（asmdef）、配置、场景、UI、自制 prefab、业务数据（BehaviorTrees/LuaScripts） |
+| `Assets/Art/Model`、`Assets/Art/Scenes` | **外部下载的美术包**：留根目录，`gitignore` + 登记到 `Docs/05-依赖清单.md` |
+| `Assets/Behavior Designer`、`XLua`、`Plugins`、`ThirdParty`、`TextMesh Pro` | **第三方**：只读，不搬（升级会覆盖） |
+| `Assets/Resources`、`StreamingAssets`、`Settings`、`Gizmos`、`link.xml` | **Unity/插件按名字找**：名字与位置都不能改 |
+
+- 判断口径：**"我们自己做的" ⇒ `_Project`；"别人给的" ⇒ 根目录 + 忽略 + 登记。**
+- 搬目录不会破坏引用（Unity 用 GUID），但**必须同步改** YooAsset 收集器路径与 `.gitignore`。
+- 已知 TODO（打包前必做）：`scene_battle`/`hero`/`monster` 收集器还是空的，`_Project/Prefabs` 与外部美术包尚未纳入收集器。
 ## 1. 通用规则 2~15（全项目适用）
 
 | # | 规则 | 关键判据 |
