@@ -30,6 +30,16 @@ namespace NBC.Game.Player
         //   4) 看向角色胸口高度（抬高 1.5 米），不要盯着脚
         // 上游：Unity 引擎每帧调用（在 Update 之后）
         // 下游：Transform.position、Transform.LookAt
+        // 功能：运行时改跟随目标（World 场景里玩家是后来生成的）。
+        // 入参：target 新的跟随目标
+        // 返回：无
+        // 步骤：直接赋值；空值由 LateUpdate 自己兜住
+        // 上游：WorldPlayerSetup.Start
+        // 下游：LateUpdate
+        public void SetTarget(Transform target)
+        {
+            m_target = target;
+        }
         // 注意：这里不能乘 m_target.rotation。乘了相机就会跟着角色转身（2026-10-28 负责人明确要求：镜头始终不会跟着转向）
         // 注意：必须用 LateUpdate。放 Update 会拿到角色移动前的位置，画面会抖一下
         private void LateUpdate()
