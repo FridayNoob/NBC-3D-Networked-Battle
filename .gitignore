@@ -289,3 +289,8 @@ Client/Assets/Art/Model.meta
 # 谁 clone 后看不到狼：把 Art\Model 的素材导进来，再在 HpBarDemo 的 Monster Prefab 里指回去即可
 Client/Assets/Prefabs/
 Client/Assets/Prefabs.meta
+
+# 外部导入的美术环境包（体积 GB 级，不进仓库；见 AGENTS.md §0.5）
+Client/Assets/Art/Scenes/
+Client/Assets/Art/Scenes.meta
+

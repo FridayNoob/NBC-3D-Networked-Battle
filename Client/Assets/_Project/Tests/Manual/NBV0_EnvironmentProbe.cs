@@ -14,7 +14,7 @@
 //        ③ 运行环境信息（是否真为 IL2CPP、监听日志）
 //
 //  使用方法：
-//      1. 场景 Client/Assets/Scenes/Scene_AOTProbe.unity（由 M0 手册 D17 步骤 6 创建）
+//      1. 场景 Client/Assets/_Project/Scenes/Scene_AOTProbe.unity（由 M0 手册 D17 步骤 6 创建）
 //      2. 场景里建一个空物体，命名 "AOTProbe"，挂上本脚本
 //      3. 把该场景加入 Build Settings 的 Scenes In Build（放第一个）
 //      4. 按 M0 手册 D17 用 IL2CPP 出 Release 包并运行
