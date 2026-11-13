@@ -137,10 +137,17 @@ namespace NBC.Game.GameFlow
             // World 的动画改由 PlayerBrain + 动画参数驱动；旧的 PlayerAnimation 还会自己 SetTrigger，会和状态机打架
             PlayerAnimation selfAnimation = GetComponent<PlayerAnimation>();
 
-            if (selfAnimation != null && selfAnimation.enabled)
+            if (selfAnimation != null)
             {
+                bool closedByUs = selfAnimation.enabled;
+
                 selfAnimation.enabled = false;
-                Debug.Log("[WorldPlayerSetup] 关掉根节点上的 PlayerAnimation（World 动画改由状态机参数驱动）");
+                Debug.Log("[WorldPlayerSetup] 根节点上的 PlayerAnimation 已关闭（World 动画改由状态机参数驱动）"
+                    + (closedByUs ? "：本次由 WorldPlayerSetup 关掉" : "：此前已被 PlayerBrain 关掉"));
+            }
+            else
+            {
+                Debug.Log("[WorldPlayerSetup] 根节点上没有 PlayerAnimation，动画只由状态机参数驱动");
             }
 
             Debug.Log("[WorldPlayerSetup] 玩家已就位：" + m_player.name

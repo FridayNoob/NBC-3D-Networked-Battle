@@ -286,3 +286,12 @@
   3. `WorldPlayerSetup.Start` 里对玩家调用 `SetReferenceAxes(true, Camera.main.transform)`
 - 兼容：`m_useReferenceAxes = false` 时行为与改前完全一致（世界四向）
 - 判据：转动镜头后按 W，角色朝镜头前方走；Battle 场景仍按世界轴走
+
+## 2026-11-13 修复：K/L 调试键在编辑器里没反应 + 缺 PlayerAnimation 日志
+
+- 现象：R035a 06 验收时按 K 受击、L 死亡无反应；Console 没有「关掉根节点上的 PlayerAnimation」
+- 根因一：`PlayerBrain.m_enableDebugKeys` 默认 false，`World.unity` 序列化值也是 0，`HandleActionKeys` 整段被开关包住
+- 修法一：条件改成 `m_enableDebugKeys || Application.isEditor`（编辑器里始终可用，构建版本仍受开关控制），场景值不用改
+- 根因二：`WorldPlayerSetup` 只在「PlayerAnimation 仍是启用」时打日志，而 `PlayerBrain.Awake` 更早把它关了 ⇒ 日志被跳过
+- 修法二：改成无论此前是否已关都打一行，并写明「本次由 WorldPlayerSetup 关掉」/「此前已被 PlayerBrain 关掉」
+- 判据：编辑器 Play 后 Console 必有「根节点上的 PlayerAnimation 已关闭」；按 K 出 `S_Hit_L`、按 L 出 `S_Die`

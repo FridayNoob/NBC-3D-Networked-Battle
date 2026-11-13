@@ -98,7 +98,7 @@ namespace NBC.Game.Player
         [SerializeField]
         private bool m_enableLocalAttack = true;
 
-        // 是否启用调试键 K/L
+        // 是否启用调试键 K/L（编辑器里始终启用，方便验收；构建版本按这个开关决定）
         [SerializeField]
         private bool m_enableDebugKeys = false;
 
@@ -285,11 +285,11 @@ namespace NBC.Game.Player
         // 功能：处理攻击/受击/死亡的按键请求。
         // 入参：无。
         // 返回：无。
-        // 步骤：调试键先判（K 左受击、L 死亡），再看攻击键（J 或鼠标左键）；是否启用由 Inspector 开关决定。
+        // 步骤：调试键先判（K 左受击、L 死亡），再看攻击键（J 或鼠标左键）；编辑器里调试键始终可用，构建版本看 Inspector 开关。
         // 上游/下游：Update 调用；下游 Notify*。
         private void HandleActionKeys()
         {
-            if (m_enableDebugKeys)
+            if (m_enableDebugKeys || Application.isEditor)
             {
                 if (Input.GetKeyDown(m_hitKey))
                 {
