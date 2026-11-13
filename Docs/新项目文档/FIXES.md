@@ -203,3 +203,17 @@
   3. 失败时打 `切换 X 失败：...`，不再静默
 - 判据：按 Ctrl+Shift+1 后 Console 必须出现「请求加载 Login」
 - 顺带：R032 的 06 手工验收步骤已同步改成新键位
+
+## 2026-11-13 真因：快捷键按了没反应 = 组件是"丢失脚本"
+
+- 现象：换成 Ctrl+Shift+1~5 后仍然**一条日志都没有**
+- 真因：场景里 `[SceneFlowDebugKeys]` 对象在，但组件 `m_Script` 指向一个**内嵌的空 MonoScript**（fileID 536156266），
+  实际是"缺失脚本" ⇒ 组件不运行，`Update` 从不执行，所以既没反应也没日志
+- 为什么会这样：`SceneFlowDebugKeys` 与 `SceneFlow` 写在**同一个 .cs 文件**里。
+  **Unity 一个文件只能挂一个与文件名同名的 MonoBehaviour**，第二个类挂上去就是缺失脚本
+- 修法：
+  1. 拆出独立文件 `Game/GameFlow/SceneFlowDebugKeys.cs`
+  2. 两个场景的 `m_Script` 改为指向新脚本 guid `10dbef4e06a32ef418cab4e93ed94741`
+- 验证（MCP 实测）：Login / World 均「组件=True，对象激活=True，组件启用=True」，`m_Script: {fileID: 0}` 计数 0
+- 教训：判断"组件有没有生效"不能看 Hierarchy 里有名字，要看**场景文件里的 m_Script guid**；
+  另外避免"Play 期间改 .unity 文件"——退出 Play 会用快照覆盖
