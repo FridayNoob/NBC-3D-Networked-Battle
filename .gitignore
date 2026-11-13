@@ -282,13 +282,13 @@ Client/Assets/UnityChan.meta
 #  第三方角色包，**包内没有任何 license/readme** ⇒ 授权不明，不进公开仓库。
 #  用途仅限本地试验；要正式用必须先确认授权（做法同 Unity-chan：README 写清来源与放置路径）。
 # ============================================================================
-Client/Assets/Art/Model/
-Client/Assets/Art/Model.meta
+Client/Assets/_Project/Art/Model/
+Client/Assets/_Project/Art/Model.meta
 
 # 素材/演示用 prefab（R015：怪物模型 prefab 放在这里，但它依赖 Art\Model 下不进仓库的网格与贴图）
 # 谁 clone 后看不到狼：把 Art\Model 的素材导进来，再在 HpBarDemo 的 Monster Prefab 里指回去即可
 
 # 外部导入的美术环境包（体积 GB 级，不进仓库；见 AGENTS.md §0.5）
-Client/Assets/Art/Scenes/
-Client/Assets/Art/Scenes.meta
+Client/Assets/_Project/Art/Scenes/
+Client/Assets/_Project/Art/Scenes.meta
 

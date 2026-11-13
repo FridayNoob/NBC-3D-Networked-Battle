@@ -81,13 +81,15 @@
 | 放哪 | 内容 |
 | --- | --- |
 | `Assets/_Project/**` | 我们自己的代码（asmdef）、配置、场景、UI、自制 prefab、业务数据（BehaviorTrees/LuaScripts） |
-| `Assets/Art/Model`、`Assets/Art/Scenes` | **外部下载的美术包**：留根目录，`gitignore` + 登记到 `Docs/05-依赖清单.md` |
+| `Assets/_Project/Art/Model`、`Assets/_Project/Art/Scenes` | **外部下载的美术包**（已并入 `_Project/Art`）：`gitignore` + 登记到 `Docs/05-依赖清单.md`；体积 GB 级，别进仓库 |
 | `Assets/Behavior Designer`、`XLua`、`Plugins`、`ThirdParty`、`TextMesh Pro` | **第三方**：只读，不搬（升级会覆盖） |
 | `Assets/Resources`、`StreamingAssets`、`Settings`、`Gizmos`、`link.xml` | **Unity/插件按名字找**：名字与位置都不能改 |
 
 - 判断口径：**"我们自己做的" ⇒ `_Project`；"别人给的" ⇒ 根目录 + 忽略 + 登记。**
 - 搬目录不会破坏引用（Unity 用 GUID），但**必须同步改** YooAsset 收集器路径与 `.gitignore`。
 - 已知 TODO（打包前必做）：`scene_battle`/`hero`/`monster` 收集器还是空的，`_Project/Prefabs` 与外部美术包尚未纳入收集器。
+> 2026-11-13：负责人把 `Assets/Art` 整体并入 `Assets/_Project/Art`；`.gitignore` 规则已同步改到新路径（Model 约 4.7GB、Scenes 约 2.9GB 仍不进仓库）。
+
 ## 1. 通用规则 2~15（全项目适用）
 
 | # | 规则 | 关键判据 |
