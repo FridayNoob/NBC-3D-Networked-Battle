@@ -18,6 +18,28 @@ namespace NBC.Game.Player
         // 转身速度，度/秒。720 约等于 0.125 秒转 90 度
         [SerializeField] private float m_turnSpeed = 720f;
 
+        // 是否用「参考体的坐标轴」来算方向（World 场景用相机轴；Battle 保持世界轴）
+        [SerializeField] private bool m_useReferenceAxes = false;
+
+        // 参考体：留空时用 Camera.main；只有 m_useReferenceAxes 为 true 才用
+        [SerializeField] private Transform m_reference = null;
+
+        // 功能：运行时开关"用参考体坐标轴"（World 场景由 WorldPlayerSetup 打开）。
+        // 入参：use true = 用参考体轴；reference 参考体（null 表示用 Camera.main）
+        // 返回：无
+        // 步骤：直接赋值
+        // 上游：WorldPlayerSetup.Start
+        // 下游：Update 里的方向计算
+        public void SetReferenceAxes(bool use, Transform reference)
+        {
+            m_useReferenceAxes = use;
+
+            if (reference != null)
+            {
+                m_reference = reference;
+            }
+        }
+
         // 前后分量，米/秒：W 为正、S 为负
         private float m_forwardSpeed;
 
@@ -109,10 +131,35 @@ namespace NBC.Game.Player
 
             bool forwardWins = Mathf.Abs(z) >= Mathf.Abs(x);
 
-            // 目标是世界坐标的四个基本方向之一（S 就是 (0,0,-1)，与 A/D 同样对待）
+            // 四个基本方向：默认是世界轴；打开开关后改成"参考体的轴"（World 用相机轴）
+            Vector3 forwardAxis = new Vector3(0f, 0f, 1f);
+            Vector3 rightAxis = new Vector3(1f, 0f, 0f);
+
+            if (m_useReferenceAxes)
+            {
+                Transform reference = m_reference != null ? m_reference : (Camera.main != null ? Camera.main.transform : null);
+
+                if (reference != null)
+                {
+                    // 压到水平面：镜头俯视时也不能让角色往地里钻
+                    forwardAxis = Vector3.ProjectOnPlane(reference.forward, Vector3.up).normalized;
+                    rightAxis = Vector3.ProjectOnPlane(reference.right, Vector3.up).normalized;
+
+                    if (forwardAxis.sqrMagnitude < 0.0001f)
+                    {
+                        forwardAxis = new Vector3(0f, 0f, 1f);
+                    }
+
+                    if (rightAxis.sqrMagnitude < 0.0001f)
+                    {
+                        rightAxis = new Vector3(1f, 0f, 0f);
+                    }
+                }
+            }
+
             Vector3 targetDirection = forwardWins
-                ? new Vector3(0f, 0f, Mathf.Sign(z))
-                : new Vector3(Mathf.Sign(x), 0f, 0f);
+                ? forwardAxis * Mathf.Sign(z)
+                : rightAxis * Mathf.Sign(x);
 
             // 四向统一：先转身朝目标方向（限速），位移仍用目标方向，避免边走边转出弧线
             Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);

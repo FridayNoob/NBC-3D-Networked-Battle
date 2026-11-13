@@ -276,3 +276,13 @@
   - 滚轮控制距离（2~15 米）
   - 只跟随**位置**（平滑 Lerp），不跟朝向
 - 判据：按住 A 转身时画面朝向不变；右键拖动时镜头能自己转
+
+## 2026-11-13 需求：玩家移动改用相机坐标系
+
+- 负责人要求：W/A/S/D 相对**相机**（W 永远是镜头前方），不是世界轴
+- 修法（可选开关，默认关，Battle 不受影响）：
+  1. `PlayerMove` 加 `m_useReferenceAxes` + `m_reference`，以及 `SetReferenceAxes(bool, Transform)`
+  2. 打开后：`forwardAxis / rightAxis` 取自参考体的 `forward / right`，并 **`ProjectOnPlane` 压到水平面**（镜头俯视时角色不会往地里钻）
+  3. `WorldPlayerSetup.Start` 里对玩家调用 `SetReferenceAxes(true, Camera.main.transform)`
+- 兼容：`m_useReferenceAxes = false` 时行为与改前完全一致（世界四向）
+- 判据：转动镜头后按 W，角色朝镜头前方走；Battle 场景仍按世界轴走

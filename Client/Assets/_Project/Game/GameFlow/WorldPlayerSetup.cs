@@ -104,6 +104,14 @@ namespace NBC.Game.GameFlow
                 Debug.LogWarning("[WorldPlayerSetup] 没配跟随相机，画面会停在原地");
             }
 
+            // World 需要「镜头相对移动」：W 永远是镜头前方（Battle 用世界轴，那边不动）
+            PlayerMove relativeMove = GetComponent<PlayerMove>();
+
+            if (relativeMove != null)
+            {
+                Camera mainCameraForAxes = Camera.main;
+                relativeMove.SetReferenceAxes(true, mainCameraForAxes != null ? mainCameraForAxes.transform : null);
+            }
             // 防"双份移动"：模型身上若也挂了 PlayerMove / PlayerAnimation，两套会各读一份输入、各走一次
             PlayerMove[] moves = GetComponentsInChildren<PlayerMove>(true);
 
