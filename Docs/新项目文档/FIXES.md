@@ -227,3 +227,16 @@
   2. 位置 `Lerp` 平滑，滚轮调距离（2~15 米）
   3. `WorldPlayerSetup` 在 `Start` 里**运行时自动**给它加上并接线；旧的 `FollowCamera` 自动 `enabled=false`
 - 判据：转身 180° 后，画面应逐渐绕到角色背后（不是一直看侧脸）
+
+## 2026-11-13 修：玩家"双份移动"（根与模型各挂一套 PlayerMove）
+
+- 现象：相机像跟不上玩家；实际是**两个物体各自位移**，视觉模型跑到一边去了
+- 实据（Play 中 MCP 查询 `[Player_Hero]` 整棵树）：
+  - `PlayerMove` on `[Player_Hero]`（enabled=True，我们要的）
+  - `PlayerMove` on `SwordGirl_FullBody`（enabled=False）
+  - `PlayerAnimation` on `SwordGirl_FullBody`（enabled=True）—— 它对 `PlayerMove` 有 `[RequireComponent]`，会把它拉回来
+- 根因：模型预制体自带一套玩家脚本；我们把模型当"纯视觉子物体"用时，它身上那套也会读同一份输入
+- 修法（双保险）：
+  1. `WorldPlayerSetup.Start` 加守卫：**关掉子物体上重复的 `PlayerMove` / `PlayerAnimation`**，并打 Warning（让问题自证）
+  2. 非 Play 状态下把模型实例上的这两个组件**直接删掉**（Inspector 干净，不靠运行时兜底）
+- 判据：Console 出现「关掉子物体 SwordGirl_FullBody 上重复的 PlayerMove」；走动时只有一个物体在动

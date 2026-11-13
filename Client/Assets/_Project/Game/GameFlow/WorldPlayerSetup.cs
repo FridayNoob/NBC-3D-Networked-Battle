@@ -5,6 +5,7 @@
 // 相机要跟人走，人还要贴地形高度 —— 这两件事不能写死在相机/玩家各自的脚本里。
 
 using NBC.Game.Player;
+
 using UnityEngine;
 
 namespace NBC.Game.GameFlow
@@ -103,6 +104,28 @@ namespace NBC.Game.GameFlow
                 Debug.LogWarning("[WorldPlayerSetup] 没配跟随相机，画面会停在原地");
             }
 
+            // 防"双份移动"：模型身上若也挂了 PlayerMove / PlayerAnimation，两套会各读一份输入、各走一次
+            PlayerMove[] moves = GetComponentsInChildren<PlayerMove>(true);
+
+            for (int i = 0; i < moves.Length; i++)
+            {
+                if (moves[i].gameObject != gameObject && moves[i].enabled)
+                {
+                    moves[i].enabled = false;
+                    Debug.LogWarning("[WorldPlayerSetup] 关掉子物体 " + moves[i].name + " 上重复的 PlayerMove（会造成双份位移）");
+                }
+            }
+
+            PlayerAnimation[] animations = GetComponentsInChildren<PlayerAnimation>(true);
+
+            for (int i = 0; i < animations.Length; i++)
+            {
+                if (animations[i].gameObject != gameObject && animations[i].enabled)
+                {
+                    animations[i].enabled = false;
+                    Debug.LogWarning("[WorldPlayerSetup] 关掉子物体 " + animations[i].name + " 上重复的 PlayerAnimation");
+                }
+            }
             Debug.Log("[WorldPlayerSetup] 玩家已就位：" + m_player.name
                 + "，第三人称相机=" + (m_worldFollowCamera != null)
                 + "，旧跟随相机=" + (m_followCamera != null));
