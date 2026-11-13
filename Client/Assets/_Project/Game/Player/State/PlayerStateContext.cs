@@ -137,10 +137,10 @@ namespace NBC.Game.Player
         // 位移能力，由 PlayerMove 实现
         public readonly IPlayerMotion Motion;
 
-        // 当前移动速度，-1~1（写进动画参数用于分流）
+        // 当前移动速度，米/秒（0~8，按档位取值；动作中与死亡时为 0）
         public float Speed;
 
-        // 横向速度，-1~1（左负右正）
+        // 横向分量，-1~1（左负右正；动作中与死亡时为 0）
         public float Direction;
 
         // 是否蹲下（Ctrl 切换）
