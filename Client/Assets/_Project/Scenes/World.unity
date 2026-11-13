@@ -185,7 +185,9 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 8633424325273862972, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
+    - {fileID: 99679575719506728, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []
@@ -590,6 +592,7 @@ GameObject:
   - component: {fileID: 1775856765}
   - component: {fileID: 1775856764}
   - component: {fileID: 1775856763}
+  - component: {fileID: 1775856766}
   m_Layer: 0
   m_Name: '[Player_Hero]'
   m_TagString: Untagged
@@ -611,6 +614,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_player: {fileID: 1775856765}
   m_followCamera: {fileID: 801266917}
+  m_worldFollowCamera: {fileID: 0}
   m_orbitCamera: {fileID: 801266916}
   m_groundMask:
     serializedVersion: 2
@@ -647,6 +651,20 @@ Transform:
   - {fileID: 141803631}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1775856766
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1775856762}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c2a1da2fb6f7104fa5f1a7bcc7d5a3d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_animator: {fileID: 0}
+  m_damping: 0.1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

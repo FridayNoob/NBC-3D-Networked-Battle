@@ -240,3 +240,12 @@
   1. `WorldPlayerSetup.Start` 加守卫：**关掉子物体上重复的 `PlayerMove` / `PlayerAnimation`**，并打 Warning（让问题自证）
   2. 非 Play 状态下把模型实例上的这两个组件**直接删掉**（Inspector 干净，不靠运行时兜底）
 - 判据：Console 出现「关掉子物体 SwordGirl_FullBody 上重复的 PlayerMove」；走动时只有一个物体在动
+
+## 2026-11-13 定：玩家层级职责拆分（方案 C）
+
+- 负责人问"为什么不删根上的 PlayerMove" ⇒ 采纳折中方案 C：
+  - **根 `[Player_Hero]` 负责"动"**：`PlayerMove` + `PlayerAnimation` + `WorldPlayerSetup`
+  - **模型 `SwordGirl_FullBody` 只负责"好看"**：只剩 `Animator`（`Sword_Controller`，含 `Speed`/`Direction`）
+- 为什么这么分：以后接网络只改**根**的位置；模型换皮不影响移动；`PlayerAnimation` 的 `Awake` 本来就用 `GetComponentInChildren<Animator>()`，放根上能自动找到子物体的 Animator ⇒ **零代码改动**
+- 踩坑：先删模型的 `PlayerMove` 会失败（当时 `PlayerAnimation` 还在，`[RequireComponent]` 拦着）；顺序必须是**先删 PlayerAnimation、再删 PlayerMove**
+- 验证：根 `PlayerMove=True PlayerAnimation=True`；模型 `PlayerMove=False PlayerAnimation=False Animator=True`；Unity 0 编译错误
