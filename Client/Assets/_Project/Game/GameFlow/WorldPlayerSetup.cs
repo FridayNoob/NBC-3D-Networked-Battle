@@ -20,9 +20,13 @@ namespace NBC.Game.GameFlow
         [SerializeField]
         private Transform m_player;
 
-        // 跟随相机（World 场景的 Main Camera）
+        // 跟随相机（World 场景的 Main Camera；旧版：世界固定偏移）
         [SerializeField]
         private FollowCamera m_followCamera;
+
+        // 第三人称跟随相机（优先用这个：会绕到角色背后）
+        [SerializeField]
+        private WorldFollowCamera m_worldFollowCamera;
 
         // 观察相机（没有玩家时用的那个；有玩家就关掉它）
         [SerializeField]
@@ -61,16 +65,47 @@ namespace NBC.Game.GameFlow
                 m_orbitCamera.enabled = false;
             }
 
+            // 没在 Inspector 里配第三人称相机 ⇒ 运行时给 Main Camera 加一个（场景不用改）
+            if (m_worldFollowCamera == null)
+            {
+                Camera mainCamera = Camera.main;
+
+                if (mainCamera != null)
+                {
+                    m_worldFollowCamera = mainCamera.GetComponent<WorldFollowCamera>();
+
+                    if (m_worldFollowCamera == null)
+                    {
+                        m_worldFollowCamera = mainCamera.gameObject.AddComponent<WorldFollowCamera>();
+                    }
+                }
+            }
+
+            if (m_worldFollowCamera != null)
+            {
+                m_worldFollowCamera.enabled = true;
+                m_worldFollowCamera.SetTarget(m_player);
+            }
+
             if (m_followCamera != null)
             {
-                m_followCamera.SetTarget(m_player);
+                // 旧的"世界固定偏移"相机：有新的就关掉，避免两套都写位置
+                m_followCamera.enabled = m_worldFollowCamera == null;
+
+                if (m_worldFollowCamera == null)
+                {
+                    m_followCamera.SetTarget(m_player);
+                }
             }
-            else
+
+            if (m_worldFollowCamera == null && m_followCamera == null)
             {
                 Debug.LogWarning("[WorldPlayerSetup] 没配跟随相机，画面会停在原地");
             }
 
-            Debug.Log("[WorldPlayerSetup] 玩家已就位：" + m_player.name + "，跟随相机=" + (m_followCamera != null));
+            Debug.Log("[WorldPlayerSetup] 玩家已就位：" + m_player.name
+                + "，第三人称相机=" + (m_worldFollowCamera != null)
+                + "，旧跟随相机=" + (m_followCamera != null));
         }
 
         // 功能：每帧把玩家贴到地面（地形有起伏，不贴会浮空/陷地）。

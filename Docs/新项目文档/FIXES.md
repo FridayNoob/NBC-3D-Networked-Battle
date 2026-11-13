@@ -217,3 +217,13 @@
 - 验证（MCP 实测）：Login / World 均「组件=True，对象激活=True，组件启用=True」，`m_Script: {fileID: 0}` 计数 0
 - 教训：判断"组件有没有生效"不能看 Hierarchy 里有名字，要看**场景文件里的 m_Script guid**；
   另外避免"Play 期间改 .unity 文件"——退出 Play 会用快照覆盖
+
+## 2026-11-13 修：World 相机"跟不上"（其实是固定偏移、不跟朝向）
+
+- 实测（Play 中）：玩家 `(7.07,4.34,34.85)`、相机 `(7.07,8.34,28.85)` ⇒ **位置正好是 玩家+(0,4,-6)**，跟随逻辑没坏
+- 真因：旧 `FollowCamera` 用的是**世界固定偏移**（永远在世界 -Z 后方），角色转身后看到侧脸/正面，观感像"镜头没跟"
+- 修法：新增 `WorldFollowCamera`（沿用 `WorldOrbitCamera` 的球坐标思路）
+  1. 用 `LerpAngle` 把 yaw 平滑到角色朝向 ⇒ 镜头绕到角色**背后**
+  2. 位置 `Lerp` 平滑，滚轮调距离（2~15 米）
+  3. `WorldPlayerSetup` 在 `Start` 里**运行时自动**给它加上并接线；旧的 `FollowCamera` 自动 `enabled=false`
+- 判据：转身 180° 后，画面应逐渐绕到角色背后（不是一直看侧脸）
