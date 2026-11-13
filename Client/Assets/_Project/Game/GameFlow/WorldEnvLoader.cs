@@ -6,6 +6,7 @@
 
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 
 namespace NBC.Game.GameFlow
@@ -19,7 +20,15 @@ namespace NBC.Game.GameFlow
     {
         // 要叠加的环境场景名（必须与 Build Settings 里的场景同名）
         [SerializeField]
-        private string m_envSceneName = "SampleScene";
+        private string m_envSceneName = "Environment_World";
+
+        // 是否使用环境场景自己的天空盒/雾/环境光/平行光（true = 关掉我们自己的平行光）
+        [SerializeField]
+        private bool m_useEnvironmentLighting = true;
+
+        // 我们自己的平行光（环境加载后要关掉它，改用环境的光）
+        [SerializeField]
+        private Light m_worldLight;
 
         // 是否已经加载完成
         public bool IsLoaded { get; private set; }
@@ -96,10 +105,72 @@ namespace NBC.Game.GameFlow
             }
 
             DisabledCount = DisableConflicts(envScene);
+
+            if (m_useEnvironmentLighting)
+            {
+                ApplyEnvironmentRenderSettings(envScene);
+
+                // 环境的光才是"原版布光"：关我们自己的平行光，避免双光过曝
+                if (m_worldLight != null && m_worldLight.enabled)
+                {
+                    m_worldLight.enabled = false;
+                }
+            }
+
             IsLoaded = true;
             Debug.Log("[WorldEnvLoader] 已叠加环境 " + m_envSceneName + "，关掉冲突组件 " + DisabledCount + " 个");
         }
 
+        // 功能：把环境场景的渲染设置（天空盒 / 雾 / 环境光 / 反射强度）套到当前世界。
+        // 入参：envScene 已加载的环境场景
+        // 返回：无
+        // 步骤：
+        //   1) 临时把活动场景切成环境场景，读它的 RenderSettings（这些是每场景一份的）
+        //   2) 切回原活动场景，把读到的值写进当前场景
+        //   3) 阳光也指向环境的灯（m_Sun），让阴影方向一致
+        // 上游：LoadRoutine
+        // 下游：RenderSettings、SceneManager.SetActiveScene
+        // 注意：不搬天空盒的话，云和天色会消失 —— 叠加加载不会自动继承渲染设置
+        private static void ApplyEnvironmentRenderSettings(Scene envScene)
+        {
+            Scene previous = SceneManager.GetActiveScene();
+            SceneManager.SetActiveScene(envScene);
+
+            Material skybox = RenderSettings.skybox;
+            bool fog = RenderSettings.fog;
+            FogMode fogMode = RenderSettings.fogMode;
+            Color fogColor = RenderSettings.fogColor;
+            float fogDensity = RenderSettings.fogDensity;
+            float fogStart = RenderSettings.fogStartDistance;
+            float fogEnd = RenderSettings.fogEndDistance;
+            AmbientMode ambientMode = RenderSettings.ambientMode;
+            Color ambientSky = RenderSettings.ambientSkyColor;
+            Color ambientEquator = RenderSettings.ambientEquatorColor;
+            Color ambientGround = RenderSettings.ambientGroundColor;
+            float ambientIntensity = RenderSettings.ambientIntensity;
+            float reflectionIntensity = RenderSettings.reflectionIntensity;
+            Light sun = RenderSettings.sun;
+
+            SceneManager.SetActiveScene(previous);
+
+            RenderSettings.skybox = skybox;
+            RenderSettings.fog = fog;
+            RenderSettings.fogMode = fogMode;
+            RenderSettings.fogColor = fogColor;
+            RenderSettings.fogDensity = fogDensity;
+            RenderSettings.fogStartDistance = fogStart;
+            RenderSettings.fogEndDistance = fogEnd;
+            RenderSettings.ambientMode = ambientMode;
+            RenderSettings.ambientSkyColor = ambientSky;
+            RenderSettings.ambientEquatorColor = ambientEquator;
+            RenderSettings.ambientGroundColor = ambientGround;
+            RenderSettings.ambientIntensity = ambientIntensity;
+            RenderSettings.reflectionIntensity = reflectionIntensity;
+            RenderSettings.sun = sun;
+
+            // 天空盒换了要通知引擎重算环境光与反射（否则画面还是旧天色）
+            DynamicGI.UpdateEnvironment();
+        }
         // 功能：关掉环境场景里与我们冲突的组件。
         // 入参：envScene 已加载的环境场景
         // 返回：关掉的数量
@@ -136,17 +207,6 @@ namespace NBC.Game.GameFlow
                     }
                 }
 
-                Light[] lights = roots[i].GetComponentsInChildren<Light>(true);
-
-                for (int l = 0; l < lights.Length; l++)
-                {
-                    if (lights[l].enabled && lights[l].type == LightType.Directional)
-                    {
-                        // 只关平行光：点光/聚光（火把、灯）留着当氛围，不会过曝
-                        lights[l].enabled = false;
-                        count++;
-                    }
-                }
             }
 
             return count;

@@ -169,3 +169,26 @@
 - 修法：`SnapshotSceneBinder` 每只怪**第一次**进入 LateUpdate 时，按当前姿势量模型包围盒，把 `Model` 容器整体偏移到脚底 = 地面（只做一次）
 - 顺带修：英雄**死亡后** `FindHero`（只返回活着的）为 null 会刷「找不到我的英雄快照」警告；
   改成「按 OwnerPlayerId 找、不看死活」，死了就安静返回
+
+## 2026-11-13 修：R033 验收三问题（F1 不回 Login / 云不见 / 场景改名）
+
+### ① 按 F1 不回 Login
+
+- 根因：`SceneFlow` 只走 YooAsset 一条路；地址没被收集器覆盖时**只报错不回退**，表现就是"按了没反应"
+- 修法：`LoadRoutine` 改成「YooAsset 失败（抛异常或 handle.Error）→ **自动退回 SceneManager**」；
+  成功时打印 `[SceneFlow] 已加载 X（路径：YooAsset|SceneManager）`，一眼看出走的哪条
+- 判据：F1 后 Console 必有 `已加载 Login（路径：...）`
+
+### ② 云不见了：叠加加载不会继承天空盒
+
+- 根因：**天空盒/雾/环境光（RenderSettings）是每个场景各自一份**；`LoadSceneAsync(Additive)` 只加物体，**不套渲染设置**。
+  云在环境场景的**天空盒材质**里 ⇒ 不搬就等于没有
+- 修法：`WorldEnvLoader.ApplyEnvironmentRenderSettings(envScene)`：临时把活动场景切成环境场景读 RenderSettings，
+  切回来写进当前场景（天空盒/雾/环境光/反射强度/太阳），最后 `DynamicGI.UpdateEnvironment()` 重算
+- 光照策略反转：**保留环境场景的平行光**（原版布光），关掉**我们自己的**平行光（`m_worldLight`），避免双光过曝
+
+### ③ 环境场景改名
+
+- `SampleScene.unity` → **`Environment_World.unity`**（含 .meta 一起改）
+- 同步三处：Build Settings 路径、`WorldEnvLoader.m_envSceneName`（场景里序列化值 + 代码默认值）
+- 注意：美术包改名后**素材包升级会重新生成 SampleScene**，届时要重新改一次名（记在这条里）
