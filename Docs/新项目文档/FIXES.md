@@ -250,3 +250,11 @@
 - 踩坑：先删模型的 `PlayerMove` 会失败（当时 `PlayerAnimation` 还在，`[RequireComponent]` 拦着）；顺序必须是**先删 PlayerAnimation、再删 PlayerMove**
 - 验证：根 `PlayerMove=True PlayerAnimation=True`；模型 `PlayerMove=False PlayerAnimation=False Animator=True`；Unity 0 编译错误
 - 补充：模型上还查出 **`PlayerBrain`**（玩家状态机）也被一起清掉；相机侧正式挂上 `WorldFollowCamera` 并接线（旧 `FollowCamera` 置灰）
+
+## 2026-11-13 修：玩家状态机被误删，改挂到根节点
+
+- 现象：走路动画正常了，但玩家状态机（`PlayerBrain`）没了
+- 根因：方案 C 清理"模型上的逻辑组件"时，把 `PlayerBrain` 和 `PlayerMove` 一起删了；但它其实是要保留的状态机
+- 修法：把 `PlayerBrain` 加到**根节点**（它 `Awake` 里 `GetComponent<PlayerMove>()`，根上正好有）
+- 最终根组件：`Transform / PlayerMove / WorldPlayerSetup / PlayerAnimation / PlayerBrain`
+- 判据：Console 有状态切换日志（Idle ↔ Move），走动时状态名会变
