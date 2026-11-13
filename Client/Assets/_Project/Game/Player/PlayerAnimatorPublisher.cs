@@ -6,8 +6,8 @@ using UnityEngine;
 
 namespace NBC.Game.Player
 {
-    // 主要功能：实现 IPlayerAnimatorSink —— 状态机算好的 bool/float 参数由它统一写进 Animator。
-    // 主要数据成员：m_animator（目标动画机）、参数哈希与上次写入值（用于幂等）。
+    // 主要功能：实现 IPlayerAnimatorSink —— 状态机算好的 bool/float 参数由它统一写进 Animator；Speed 在这里从旧档位平滑到新档位。
+    // 主要数据成员：m_animator（目标动画机）、参数哈希与上次写入值（用于幂等）、m_speedSmoother（Speed 的线性平滑器）。
     // 主要外部方法：Apply 写一帧参数；Reset 在编辑器里自动抓 Animator。
     // 谁在用它：PlayerBrain.Update 每帧调一次；本身挂在玩家根节点上。
     // 注意：控制器没声明的参数只告警一次并跳过，不要每帧 SetFloat —— Unity 会为每个缺失参数刷一条警告， Console 会被淹掉。
@@ -29,6 +29,9 @@ namespace NBC.Game.Player
         private const int BoolActionBusy = 2;
         private const int BoolDead = 3;
         private const int BoolCount = 4;
+
+        // Speed 的变化小于这个值就不写 Animator（混合树上看不出来，省掉每帧 SetFloat）
+        private const float FloatWriteEpsilon = 0.01f;
 
         // 六个浮点参数的控制器名字，顺序与上面的下标一致
         private static readonly string[] FloatNames =
@@ -55,6 +58,12 @@ namespace NBC.Game.Player
 
         // 控制器缺参数时是否打一条警告（只打一次）
         [SerializeField] private bool m_logMissingParameters = true;
+
+        // Speed 从旧档位滑到新档位用多少秒（秒）；混合树靠它把「站→跑」变成连续过渡，0 表示不平滑
+        [SerializeField] private float m_speedSmoothSeconds = 0.12f;
+
+        // Speed 的平滑器；EnsureReady 里按 m_speedSmoothSeconds 创建
+        private PlayerSpeedSmoother m_speedSmoother;
 
         // 参数哈希
         private int[] m_floatHashes;
@@ -103,8 +112,8 @@ namespace NBC.Game.Player
         // 功能：把一帧参数写进 Animator（幂等：没变就不写）。
         // 入参：parameters 是状态机产出的只读快照。
         // 返回：无。
-        // 步骤：1) 确保初始化 2) 六个浮点 3) 四个布尔。
-        // 上游/下游：PlayerBrain.Update 调用。
+        // 步骤：1) 确保初始化 2) 先把 Speed 平滑一帧（混合树要连续值）3) 其余浮点 4) 四个布尔。
+        // 上游/下游：PlayerBrain.Update 调用；下游 WriteFloat / WriteBool。
         public void Apply(in PlayerAnimatorParams parameters)
         {
             EnsureReady();
@@ -114,7 +123,11 @@ namespace NBC.Game.Player
                 return;
             }
 
-            WriteFloat(FloatSpeed, parameters.Speed);
+            float smoothedSpeed = m_speedSmoother == null
+                ? parameters.Speed
+                : m_speedSmoother.Step(parameters.Speed, Time.deltaTime);
+
+            WriteFloat(FloatSpeed, smoothedSpeed, FloatWriteEpsilon);
             WriteFloat(FloatDirection, parameters.Direction);
             WriteFloat(FloatVerticalSpeed, parameters.VerticalSpeed);
             WriteFloat(FloatActionId, parameters.ActionId);
@@ -153,6 +166,11 @@ namespace NBC.Game.Player
             }
 
             m_animator.applyRootMotion = false;
+
+            if (m_speedSmoother == null)
+            {
+                m_speedSmoother = new PlayerSpeedSmoother(m_speedSmoothSeconds);
+            }
 
             Dictionary<string, AnimatorControllerParameterType> existing = new Dictionary<string, AnimatorControllerParameterType>();
             AnimatorControllerParameter[] parameters = m_animator.parameters;
@@ -213,20 +231,24 @@ namespace NBC.Game.Player
         }
 
         // 功能：写一个浮点参数，值没变就跳过。
-        // 入参：index 参数下标；value 目标值。
+        // 入参：index 参数下标；value 目标值；epsilon 变化小于它就算没变（0 表示只跳过完全相等）。
         // 返回：无。
-        // 步骤：参数缺失直接返回；与上次值近似相等也返回；否则 SetFloat 并记下。
+        // 步骤：参数缺失直接返回；与上次值差在 epsilon 内也返回；否则 SetFloat 并记下。
         // 上游/下游：Apply 调用；下游 Animator.SetFloat。
-        private void WriteFloat(int index, float value)
+        private void WriteFloat(int index, float value, float epsilon = 0f)
         {
             if (!m_floatValid[index])
             {
                 return;
             }
 
-            if (!float.IsNaN(m_floatLast[index]) && Mathf.Approximately(m_floatLast[index], value))
+            if (!float.IsNaN(m_floatLast[index]))
             {
-                return;
+                float delta = Mathf.Abs(m_floatLast[index] - value);
+                if (epsilon <= 0f ? Mathf.Approximately(m_floatLast[index], value) : delta <= epsilon)
+                {
+                    return;
+                }
             }
 
             m_floatLast[index] = value;
