@@ -131,6 +131,44 @@ namespace NBC.Game.GameFlow
                 + "，旧跟随相机=" + (m_followCamera != null));
         }
 
+        // 诊断：是否打印「输入 → 朝向/速度」日志（排查转身/动画问题用，默认关）
+        [SerializeField]
+        private bool m_debugLog = false;
+
+        // 诊断用：上一次打印的时间
+        private float m_lastLogTime;
+
+        // 功能：临时诊断，打印输入轴、当前朝向、速度。
+        // 入参：无
+        // 返回：无
+        // 步骤：每 0.5 秒一条，内容含 MoveX/MoveY、yaw、速度
+        // 上游：LateUpdate
+        // 下游：Debug.Log
+        private void LogDiagnostics()
+        {
+            if (!m_debugLog)
+            {
+                return;
+            }
+
+            if (Time.time - m_lastLogTime < 0.5f)
+            {
+                return;
+            }
+
+            m_lastLogTime = Time.time;
+
+            NBC.Framework.Input.InputManager input = NBC.Framework.Input.InputManager.Instance;
+            int moveX = input != null ? input.Current.MoveX : 0;
+            int moveY = input != null ? input.Current.MoveY : 0;
+            NBC.Game.Player.PlayerMove move = GetComponent<NBC.Game.Player.PlayerMove>();
+
+            Debug.Log("[玩家诊断] 输入 X=" + moveX + " Y=" + moveY
+                + " 朝向 y=" + transform.eulerAngles.y.ToString("0")
+                + " 速度=" + (move != null ? move.CurrentSpeed.ToString("0.00") : "?")
+                + " 移动组件启用=" + (move != null && move.enabled));
+        }
+
         // 功能：每帧把玩家贴到地面（地形有起伏，不贴会浮空/陷地）。
         // 入参：无
         // 返回：无
@@ -146,6 +184,8 @@ namespace NBC.Game.GameFlow
             {
                 return;
             }
+
+            LogDiagnostics();
 
             Vector3 origin = m_player.position + Vector3.up * m_probeHeight;
 

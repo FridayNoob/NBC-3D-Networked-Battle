@@ -258,3 +258,21 @@
 - 修法：把 `PlayerBrain` 加到**根节点**（它 `Awake` 里 `GetComponent<PlayerMove>()`，根上正好有）
 - 最终根组件：`Transform / PlayerMove / WorldPlayerSetup / PlayerAnimation / PlayerBrain`
 - 判据：Console 有状态切换日志（Idle ↔ Move），走动时状态名会变
+
+## 2026-11-13 修：转身无效（场景里 turnSpeed=5）+ 相机改为鼠标控制
+
+### ① 按 A/D 不转身：场景序列化值是 5
+
+- 实测：`World.unity` 里 `PlayerMove.m_turnSpeed = 5`（Battle 场景是 720）⇒ 转 90° 要 18 秒，肉眼看就是"不转"
+- 注意：**代码默认值 720 对已序列化的场景无效**；`[SerializeField]` 一旦写进场景，就以场景为准
+- 修法：把 `World.unity` 的 `m_turnSpeed` 改成 720 并**保存场景**（已在文件里回读确认：`m_turnSpeed: 720`）
+- 判据：退出 Play 再进，仍能转身（上次只改了运行时值，所以退出就还原）
+
+### ② 相机不该跟着角色转
+
+- 需求：角色转身时镜头不动；**镜头旋转由鼠标控制**
+- 修法：`WorldFollowCamera` 去掉「yaw 平滑跟随角色朝向」，改为：
+  - **右键拖动** 控制 yaw/pitch（pitch 夹 -20~80 度）
+  - 滚轮控制距离（2~15 米）
+  - 只跟随**位置**（平滑 Lerp），不跟朝向
+- 判据：按住 A 转身时画面朝向不变；右键拖动时镜头能自己转
