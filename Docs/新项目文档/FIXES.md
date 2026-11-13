@@ -249,3 +249,4 @@
 - 为什么这么分：以后接网络只改**根**的位置；模型换皮不影响移动；`PlayerAnimation` 的 `Awake` 本来就用 `GetComponentInChildren<Animator>()`，放根上能自动找到子物体的 Animator ⇒ **零代码改动**
 - 踩坑：先删模型的 `PlayerMove` 会失败（当时 `PlayerAnimation` 还在，`[RequireComponent]` 拦着）；顺序必须是**先删 PlayerAnimation、再删 PlayerMove**
 - 验证：根 `PlayerMove=True PlayerAnimation=True`；模型 `PlayerMove=False PlayerAnimation=False Animator=True`；Unity 0 编译错误
+- 补充：模型上还查出 **`PlayerBrain`**（玩家状态机）也被一起清掉；相机侧正式挂上 `WorldFollowCamera` 并接线（旧 `FollowCamera` 置灰）

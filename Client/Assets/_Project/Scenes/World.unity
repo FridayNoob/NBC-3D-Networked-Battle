@@ -188,6 +188,7 @@ PrefabInstance:
     m_RemovedComponents:
     - {fileID: 8633424325273862972, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
     - {fileID: 99679575719506728, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
+    - {fileID: 5644042295866662647, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []
@@ -422,6 +423,7 @@ GameObject:
   - component: {fileID: 801266916}
   - component: {fileID: 801266917}
   - component: {fileID: 801266918}
+  - component: {fileID: 801266919}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -529,7 +531,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 801266912}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3990c5768429eb14b81e39a26c3d4bcb, type: 3}
   m_Name: 
@@ -581,6 +583,25 @@ MonoBehaviour:
     m_MipBias: 0
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
+--- !u!114 &801266919
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 801266912}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8b4d8b93494ef943b3c00e4446bb015, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_target: {fileID: 0}
+  m_distance: 6
+  m_height: 3.5
+  m_lookAtHeight: 1.5
+  m_yawSmooth: 8
+  m_positionSmooth: 10
+  m_zoomSpeed: 4
 --- !u!1 &1775856762
 GameObject:
   m_ObjectHideFlags: 0
@@ -614,7 +635,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_player: {fileID: 1775856765}
   m_followCamera: {fileID: 801266917}
-  m_worldFollowCamera: {fileID: 0}
+  m_worldFollowCamera: {fileID: 801266919}
   m_orbitCamera: {fileID: 801266916}
   m_groundMask:
     serializedVersion: 2
