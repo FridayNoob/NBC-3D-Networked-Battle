@@ -52,43 +52,89 @@ namespace NBC.Game.Player
         }
     }
 
-    // 主要功能：集中放「某个动作要播多少帧」，方便 Inspector 调手感。
-    // 主要数据成员：攻击/受击/技能/冲刺/硬直/姿势 六个帧数（60fps 下 36 帧=0.6 秒）。
-    // 主要外部方法：无。
-    // 谁在用它：PlayerStateMachine 在 BeginAction 时读对应的帧数。
+    // 主要功能：集中放「某个动作要播多少帧」，以及连击窗口的两个位置，方便 Inspector 调手感。
+    // 主要数据成员：三个攻击段、三个技能、冲刺、受击、硬直、姿势的帧数（60fps 口径），加连击窗口起止。
+    // 主要外部方法：构造函数与 Default 默认值。
+    // 谁在用它：PlayerStateMachine 在 BeginAction 时按动作取帧数，NotifyAttack 判连击窗口。
     public readonly struct PlayerTimings
     {
-        // 攻击一段的帧数（60fps 下 36 帧 = 0.6 秒）
+        // 攻击第 1 段的帧数（60 帧 = 1 秒，对应 clip 84 帧 ÷ 播放速度 1.4）
         public readonly int AttackFrames;
 
-        // 受击的帧数（18 帧 = 0.3 秒）
-        public readonly int HitFrames;
+        // 攻击第 2 段的帧数
+        public readonly int Attack2Frames;
 
-        // 技能的帧数（48 帧 = 0.8 秒）
-        public readonly int SkillFrames;
+        // 攻击第 3 段的帧数（93 帧，对应 clip 130 帧 ÷ 1.4）
+        public readonly int Attack3Frames;
 
-        // 冲刺的帧数（18 帧 = 0.3 秒）
+        // 技能 1 的帧数（240 帧 = 4 秒）
+        public readonly int Skill1Frames;
+
+        // 技能 2 的帧数（144 帧 = 2.4 秒）
+        public readonly int Skill2Frames;
+
+        // 技能 3 的帧数（264 帧 = 4.4 秒）
+        public readonly int Skill3Frames;
+
+        // 冲刺的帧数（60 帧 = 1 秒）
         public readonly int DashFrames;
 
-        // 硬直的帧数（45 帧 = 0.75 秒）
+        // 受击的帧数（88 帧，对应 clip 1.467 秒）
+        public readonly int HitFrames;
+
+        // 硬直的帧数（120 帧 = 2 秒）
         public readonly int StunFrames;
 
         // 姿势的帧数（90 帧 = 1.5 秒）
         public readonly int PoseFrames;
 
-        // 功能：打包六个动作时长。
-        // 入参：六个帧数，单位是 60fps 的帧；小于等于 0 表示「不自动结束」，由调用方决定。
+        // 连击窗口从第几帧开始（之前按键不排队，避免起手就攒三段）
+        public readonly int ComboWindowStart;
+
+        // 连击窗口在结束前留几帧缓冲（之后按键不排队）
+        public readonly int ComboEndBuffer;
+
+        // 功能：打包全部动作时长与连击窗口。
+        // 入参：十二个帧数，单位是 60fps 的帧；小于等于 0 表示「不自动结束」。
         // 返回：结构本身。
         // 步骤：直接赋值。
         // 上游/下游：PlayerBrain.Awake 用 Inspector 值构造；PlayerStateMachine.Notify* 读取。
-        public PlayerTimings(int attackFrames, int hitFrames, int skillFrames, int dashFrames, int stunFrames, int poseFrames)
+        public PlayerTimings(
+            int attackFrames,
+            int attack2Frames,
+            int attack3Frames,
+            int skill1Frames,
+            int skill2Frames,
+            int skill3Frames,
+            int dashFrames,
+            int hitFrames,
+            int stunFrames,
+            int poseFrames,
+            int comboWindowStart,
+            int comboEndBuffer)
         {
             AttackFrames = attackFrames;
-            HitFrames = hitFrames;
-            SkillFrames = skillFrames;
+            Attack2Frames = attack2Frames;
+            Attack3Frames = attack3Frames;
+            Skill1Frames = skill1Frames;
+            Skill2Frames = skill2Frames;
+            Skill3Frames = skill3Frames;
             DashFrames = dashFrames;
+            HitFrames = hitFrames;
             StunFrames = stunFrames;
             PoseFrames = poseFrames;
+            ComboWindowStart = comboWindowStart;
+            ComboEndBuffer = comboEndBuffer;
+        }
+
+        // 功能：给出一套按 clip 实测算好的默认值。
+        // 入参：无。
+        // 返回：攻击 60/60/93、技能 240/144/264、冲刺 60、受击 88、硬直 120、姿势 90、窗口 18 帧、缓冲 4 帧。
+        // 步骤：直接 new。
+        // 上游/下游：PlayerBrain 的 Inspector 默认值参考；测试用 PlayerTimings.Default。
+        public static PlayerTimings Default
+        {
+            get { return new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4); }
         }
     }
 

@@ -10,7 +10,7 @@ namespace NBC.Game.Player
     // 主要数据成员：m_moveSpeed（米/秒）、m_turnSpeed（度/秒）、m_forwardSpeed / m_sideSpeed（给动画的分量）。
     // 主要外部方法：ForwardSpeed / SideSpeed / MoveSpeed / CurrentSpeed（只读属性）、SetMoveSpeed、MovementEnabled。
     // 谁在用它：挂在角色物体上；输入取自 InputManager.Instance.Current，键位在 InputMapping 里可改；World 里由 PlayerBrain 通过 IPlayerMotion 驱动。
-    public sealed class PlayerMove : MonoBehaviour, IPlayerMotion
+    public sealed class PlayerMove : MonoBehaviour, IPlayerMotion, IPlayerDash
     {
         // 每秒走多少米。场景里 1 单位 = 1 米，5 就是每秒 5 米
         [SerializeField] private float m_moveSpeed = 5f;
@@ -26,6 +26,28 @@ namespace NBC.Game.Player
 
         // 是否允许位移：动作/受击/死亡期间由状态机置 false，实现「动作即停」（组件本身不禁用）
         private bool m_movementEnabled = true;
+
+        // 冲刺速度（米/秒）；0 表示当前没有冲刺
+        private float m_dashSpeed;
+
+        // 冲刺结束时刻（Time.time 口径，秒）
+        private float m_dashEndTime;
+
+        // 功能：开始一段匀速前冲，动作期间也能位移（冲刺属于动作，但必须真的动）。
+        // 入参：speedMetersPerSecond 前进速度（米/秒）；durationSeconds 持续秒数（<=0 忽略）。
+        // 返回：无。
+        // 步骤：记录速度与「当前时间 + 时长」，Update 每帧检查是否还在窗口内。
+        // 上游/下游：PlayerBrain 在 Dash 动作开始时调用；Update 的 TryAdvanceDash 执行。
+        public void StartDash(float speedMetersPerSecond, float durationSeconds)
+        {
+            if (speedMetersPerSecond <= 0f || durationSeconds <= 0f)
+            {
+                return;
+            }
+
+            m_dashSpeed = speedMetersPerSecond;
+            m_dashEndTime = Time.time + durationSeconds;
+        }
 
         // 功能：读/写位移闸门。
         // 入参：true 允许移动；false 原地站住。
@@ -128,6 +150,25 @@ namespace NBC.Game.Player
             get { return m_currentSpeed; }
         }
 
+        // 功能：推进冲刺位移；没有冲刺或已过期就返回 false。
+        // 入参：无。
+        // 返回：true 表示这一帧由冲刺接管了移动，Update 不再读输入。
+        // 步骤：比结束时刻；还在窗口内就沿当前朝向平移，并写上速度给调试面板。
+        // 上游/下游：Update 开头调用；StartDash 设置窗口。
+        private bool TryAdvanceDash()
+        {
+            if (m_dashSpeed <= 0f || Time.time >= m_dashEndTime)
+            {
+                m_dashSpeed = 0f;
+                return false;
+            }
+
+            transform.position += transform.forward * (m_dashSpeed * Time.deltaTime);
+            m_forwardSpeed = m_dashSpeed;
+            m_currentSpeed = m_dashSpeed;
+            return true;
+        }
+
         // 功能：每帧把输入压成四向之一，转身朝该方向并位移，同时算出前后 / 左右分量。
         // 入参：无（引擎每帧调用）
         // 返回：无
@@ -150,6 +191,12 @@ namespace NBC.Game.Player
             m_forwardSpeed = 0f;
             m_sideSpeed = 0f;
             m_currentSpeed = 0f;
+
+            // 冲刺优先：动作期间 m_movementEnabled 是 false，但冲刺要真的往前挪
+            if (TryAdvanceDash())
+            {
+                return;
+            }
 
             // 状态机说了「动作中/已死」就不位移：这里只是不移动，组件保持启用，动画参数照常发布
             if (!m_movementEnabled)

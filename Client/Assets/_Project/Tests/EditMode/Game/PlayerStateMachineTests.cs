@@ -71,7 +71,7 @@ namespace NBC.Tests.EditMode
         // 功能：每个用例前重建机器，保证互不污染。
         // 入参：无。
         // 返回：无。
-        // 步骤：建假位移 → 建上下文 → 用默认档位（2/5/8/1.5/3）与默认帧数（36/18/48/18/45/90）建机器。
+        // 步骤：建假位移 → 建上下文 → 用默认档位（2/5/8/1.5/3）与默认帧数（60/60/93/240/144/264/60/88/120/90/18/4）建机器。
         // 上游/下游：NUnit 调用。
         [SetUp]
         public void SetUp()
@@ -80,7 +80,7 @@ namespace NBC.Tests.EditMode
             m_context = new PlayerStateContext(m_motion);
             m_machine = new PlayerStateMachine(
                 m_context,
-                new PlayerTimings(36, 18, 48, 18, 45, 90),
+                new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4),
                 new PlayerSpeeds(2f, 5f, 8f, 1.5f, 3f));
             m_frame = 0;
         }
@@ -168,10 +168,10 @@ namespace NBC.Tests.EditMode
         // 功能：验证攻击期间位移闸门关闭、动作结束后按输入回到跑。
         // 入参：无。
         // 返回：无。
-        // 步骤：请求攻击 → 推一帧 → 断言 Attack1/忙碌/禁移动/参数 → 推满 36 帧 → 断言回到 Run。
+        // 步骤：请求攻击 → 推一帧 → 断言 Attack1/忙碌/禁移动/参数 → 推满 60 帧 → 断言回到 Run。
         // 上游/下游：NUnit 调用。
         [Test]
-        public void Attack_BlocksMovementForThirtySixFrames_ThenReturnsToLocomotion()
+        public void Attack_BlocksMovementForSixtyFrames_ThenReturnsToLocomotion()
         {
             m_machine.NotifyAttack();
             Tick(0f, 1f);
@@ -183,7 +183,7 @@ namespace NBC.Tests.EditMode
             Assert.IsFalse(m_motion.MovementEnabled);
             Assert.AreEqual(0f, m_context.Speed, 0.001f);
 
-            for (int i = 0; i < 36; i++)
+            for (int i = 0; i < 60; i++)
             {
                 Tick(0f, 1f);
             }

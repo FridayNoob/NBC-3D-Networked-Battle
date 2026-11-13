@@ -57,29 +57,61 @@ namespace NBC.Game.Player
         private float m_crouchJogSpeed = 3f;
 
         [Header("动作时长（60fps 帧数）")]
-        // 攻击一段帧数
+        // 第一段攻击帧数（60 帧 = 1 秒；控制器里三个攻击状态 speed=1.4）
         [SerializeField]
-        private int m_attackFrames = 36;
+        private int m_attack1Frames = 60;
+
+        // 第二段攻击帧数（控制器里同样是 speed=1.4，60 帧 = 1 秒）
+        [SerializeField]
+        private int m_attack2Frames = 60;
+
+        // 第三段攻击帧数（93 帧 = 1.55 秒）
+        [SerializeField]
+        private int m_attack3Frames = 93;
+
+        // 技能 1 帧数
+        [SerializeField]
+        private int m_skill1Frames = 240;
+
+        // 技能 2 帧数
+        [SerializeField]
+        private int m_skill2Frames = 144;
+
+        // 技能 3 帧数
+        [SerializeField]
+        private int m_skill3Frames = 264;
 
         // 受击帧数
         [SerializeField]
-        private int m_hitFrames = 18;
-
-        // 技能帧数
-        [SerializeField]
-        private int m_skillFrames = 48;
+        private int m_hitFrames = 88;
 
         // 冲刺帧数
         [SerializeField]
-        private int m_dashFrames = 18;
+        private int m_dashFrames = 60;
 
         // 硬直帧数
         [SerializeField]
-        private int m_stunFrames = 45;
+        private int m_stunFrames = 120;
 
         // 姿势帧数
         [SerializeField]
         private int m_poseFrames = 90;
+
+        // 连击窗口起点：动作开始后第几帧才接受下一段输入（18 帧 = 0.3 秒）
+        [SerializeField]
+        private int m_comboWindowStart = 18;
+
+        // 连击窗口末端缓冲：结束前多少帧就不再接受（4 帧）
+        [SerializeField]
+        private int m_comboEndBuffer = 4;
+
+        // 冲刺速度（米/秒）
+        [SerializeField]
+        private float m_dashSpeedMetersPerSecond = 8f;
+
+        // 冲刺持续秒数（0.18 秒约等于 1.4 米）
+        [SerializeField]
+        private float m_dashSeconds = 0.18f;
 
         [Header("按键")]
         // 攻击键（鼠标左键也可）
@@ -93,6 +125,26 @@ namespace NBC.Game.Player
         // 死亡调试键
         [SerializeField]
         private KeyCode m_dieKey = KeyCode.L;
+
+        // 技能 1 键
+        [SerializeField]
+        private KeyCode m_skill1Key = KeyCode.Q;
+
+        // 技能 2 键
+        [SerializeField]
+        private KeyCode m_skill2Key = KeyCode.E;
+
+        // 技能 3 键
+        [SerializeField]
+        private KeyCode m_skill3Key = KeyCode.R;
+
+        // 前冲键（Space 留给跳跃）
+        [SerializeField]
+        private KeyCode m_dashKey = KeyCode.V;
+
+        // 姿势轮换键（七个 CBG 表情动作）
+        [SerializeField]
+        private KeyCode m_poseKey = KeyCode.F;
 
         // 是否接受本地攻击键（Battle 可关掉，避免和网络输入双触发）
         [SerializeField]
@@ -166,12 +218,18 @@ namespace NBC.Game.Player
 
             m_context = new PlayerStateContext(m_motion);
             PlayerTimings timings = new PlayerTimings(
-                m_attackFrames,
-                m_hitFrames,
-                m_skillFrames,
+                m_attack1Frames,
+                m_attack2Frames,
+                m_attack3Frames,
+                m_skill1Frames,
+                m_skill2Frames,
+                m_skill3Frames,
                 m_dashFrames,
+                m_hitFrames,
                 m_stunFrames,
-                m_poseFrames);
+                m_poseFrames,
+                m_comboWindowStart,
+                m_comboEndBuffer);
             PlayerSpeeds speeds = new PlayerSpeeds(
                 m_walkSpeed,
                 m_runSpeed,
@@ -200,6 +258,9 @@ namespace NBC.Game.Player
 
             PlayerInput input = ReadInput();
             HandleActionKeys();
+
+            // 右键是「按住格挡」：每帧同步一次，松开当帧就退出
+            m_machine.SetBlocking(m_enableLocalAttack && Input.GetMouseButton(1));
 
             m_frameAccumulator += Time.deltaTime;
             int steps = 0;
@@ -310,6 +371,76 @@ namespace NBC.Game.Player
             if (Input.GetKeyDown(m_attackKey) || Input.GetMouseButtonDown(0))
             {
                 NotifyAttack();
+            }
+
+            if (Input.GetKeyDown(m_skill1Key))
+            {
+                NotifySkill(1);
+            }
+
+            if (Input.GetKeyDown(m_skill2Key))
+            {
+                NotifySkill(2);
+            }
+
+            if (Input.GetKeyDown(m_skill3Key))
+            {
+                NotifySkill(3);
+            }
+
+            if (Input.GetKeyDown(m_dashKey))
+            {
+                NotifyDash();
+            }
+
+            if (Input.GetKeyDown(m_poseKey))
+            {
+                NotifyPose();
+            }
+        }
+
+        // 功能：请求播第 index 个技能（只播动画）。
+        // 入参：index 取 1~3。
+        // 返回：无。
+        // 步骤：转给状态机；被拒绝（动作中/格挡/已死）时什么都不做。
+        // 上游/下游：Update 的 Q/E/R、外部网络消息；下游 PlayerStateMachine.NotifySkill。
+        public void NotifySkill(int index)
+        {
+            if (m_machine != null)
+            {
+                m_machine.NotifySkill(index);
+            }
+        }
+
+        // 功能：请求前冲：状态机接了就同时让位移组件真的往前挪。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：状态机接受后，把速度与时长交给实现了 IPlayerDash 的位移组件。
+        // 上游/下游：Update 的 V 键；下游 PlayerStateMachine.NotifyDash、IPlayerDash.StartDash。
+        public void NotifyDash()
+        {
+            if (m_machine == null || !m_machine.NotifyDash())
+            {
+                return;
+            }
+
+            IPlayerDash dash = m_motion as IPlayerDash;
+            if (dash != null)
+            {
+                dash.StartDash(m_dashSpeedMetersPerSecond, m_dashSeconds);
+            }
+        }
+
+        // 功能：请求轮换到下一个姿势。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：转给状态机，由它把 PoseIndex 加一。
+        // 上游/下游：Update 的 F 键；下游 PlayerStateMachine.NotifyPose。
+        public void NotifyPose()
+        {
+            if (m_machine != null)
+            {
+                m_machine.NotifyPose();
             }
         }
 

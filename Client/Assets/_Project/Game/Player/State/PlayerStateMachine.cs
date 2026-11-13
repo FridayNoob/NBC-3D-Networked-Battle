@@ -37,6 +37,15 @@ namespace NBC.Game.Player
         // 待执行动作的总帧数
         private int m_pendingFrames;
 
+        // 连击是否已排队：窗口内按过攻击键，等当前段播完再切下一段
+        private bool m_comboQueued;
+
+        // 是否正在按住格挡；格挡不占 ActionBusy，但会关掉移动闸门
+        private bool m_blocking;
+
+        // 当前姿势序号 0~6，按 F 轮换
+        private int m_poseIndex;
+
         // 功能：注册三层状态机并进入移动层的 Idle。
         // 入参：context 共享状态（不能为 null，且 Motion 不能为 null）；timings 动作帧数；speeds 五档速度。
         // 返回：无。
@@ -100,6 +109,18 @@ namespace NBC.Game.Player
             get { return m_context.BuildParams(); }
         }
 
+        // 当前姿势序号 0~6；按 F 依次轮换
+        public int PoseIndex
+        {
+            get { return m_poseIndex; }
+        }
+
+        // 是否正按住格挡
+        public bool Blocking
+        {
+            get { return m_blocking; }
+        }
+
         // 状态真的发生切换后触发；参数是切换记录（含帧号与前后状态名）
         public event Action<StateChangeRecord> StateChanged
         {
@@ -142,7 +163,7 @@ namespace NBC.Game.Player
                 ApplyLocomotion(ChooseLocomotion(input));
             }
 
-            bool canMove = !PlayerStateCatalog.BlocksMovement(m_fsm.LowerCurrent);
+            bool canMove = !m_blocking && !PlayerStateCatalog.BlocksMovement(m_fsm.LowerCurrent);
             m_context.Speed = canMove ? SpeedOf(m_fsm.LowerCurrent) : 0f;
             m_context.Direction = canMove ? ClampDirection(input.MoveX) : 0f;
             m_context.Motion.SetMoveSpeed(m_context.Speed);
@@ -151,19 +172,133 @@ namespace NBC.Game.Player
             m_fsm.Tick(frame);
         }
 
-        // 功能：请求播攻击第 1 段。
+        // 功能：请求播攻击；空闲时起手第 1 段，连击窗口内则排队下一段。
         // 入参：无。
-        // 返回：true 表示请求已受理（下一帧生效）；false 表示已死或已有动作在播。
-        // 步骤：死亡与动作忙碌时直接拒绝；连击（第 2/3 段）留给 R035b。
-        // 上游/下游：PlayerBrain 攻击键调用；内部调用 BeginAction。
+        // 返回：true 表示已起手或已排队；false 表示已死、动作不在攻击链上、或不在窗口内。
+        // 步骤：1) 死亡拒绝 2) 空闲直接起手第 1 段 3) 动作层里只接第 1/2 段 4) 帧号不在窗口内拒绝 5) 只做排队，不切当前状态。
+        // 上游/下游：PlayerBrain 攻击键调用；内部调用 BeginAction，下一段在 AdvanceAction 里接。
         public bool NotifyAttack()
         {
-            if (m_context.Dead || m_context.ActionBusy)
+            if (m_context.Dead)
             {
                 return false;
             }
 
-            return BeginAction(EPlayerState.Attack1, PlayerActionId.Attack1, m_timings.AttackFrames);
+            if (!m_context.ActionBusy)
+            {
+                return BeginAction(EPlayerState.Attack1, PlayerActionId.Attack1, m_timings.AttackFrames);
+            }
+
+            if (PlayerStateCatalog.LayerOf(m_fsm.LowerCurrent) != EPlayerLayer.Action)
+            {
+                return false;
+            }
+
+            if (m_context.ActionId != PlayerActionId.Attack1 && m_context.ActionId != PlayerActionId.Attack2)
+            {
+                return false;
+            }
+
+            if (m_context.ActionFrame < m_timings.ComboWindowStart)
+            {
+                return false;
+            }
+
+            if (m_context.ActionFrames > 0 && m_context.ActionFrame > m_context.ActionFrames - m_timings.ComboEndBuffer)
+            {
+                return false;
+            }
+
+            m_comboQueued = true;
+            return true;
+        }
+
+        // 功能：请求播第 index 个技能（只播动画，不产生伤害）。
+        // 入参：index 取 1~3，超出范围拒绝。
+        // 返回：true 表示已排队；false 表示已死、有动作在播、或正在格挡。
+        // 步骤：先做前置拒绝，再按序号取状态、ActionId 与帧数。
+        // 上游/下游：PlayerBrain 的 Q/E/R 调用；内部调用 BeginAction。
+        public bool NotifySkill(int index)
+        {
+            if (m_context.Dead || m_context.ActionBusy || m_blocking)
+            {
+                return false;
+            }
+
+            if (index < 1 || index > 3)
+            {
+                return false;
+            }
+
+            EPlayerState state = (EPlayerState)((int)EPlayerState.Skill1 + index - 1);
+            int frames = index == 1 ? m_timings.Skill1Frames : (index == 2 ? m_timings.Skill2Frames : m_timings.Skill3Frames);
+            return BeginAction(state, PlayerActionId.OfSkill(index), frames);
+        }
+
+        // 功能：请求前冲一段。
+        // 入参：无。
+        // 返回：true 表示已排队；false 表示已死、有动作在播、或正在格挡。
+        // 步骤：前置拒绝后进 Dash，帧数取 DashFrames；位移由 PlayerBrain 通过 IPlayerDash 触发。
+        // 上游/下游：PlayerBrain 的 V 键调用；内部调用 BeginAction。
+        public bool NotifyDash()
+        {
+            if (m_context.Dead || m_context.ActionBusy || m_blocking)
+            {
+                return false;
+            }
+
+            return BeginAction(EPlayerState.Dash, PlayerActionId.Dash, m_timings.DashFrames);
+        }
+
+        // 功能：轮换到下一个姿势（七个 CBG 表情动作）。
+        // 入参：无。
+        // 返回：true 表示已排队；false 表示已死、有动作在播、或正在格挡。
+        // 步骤：先把 PoseIndex 加一并对 7 取模，再进 Pose。
+        // 上游/下游：PlayerBrain 的 F 键调用；内部调用 BeginAction。
+        public bool NotifyPose()
+        {
+            if (m_context.Dead || m_context.ActionBusy || m_blocking)
+            {
+                return false;
+            }
+
+            m_poseIndex = (m_poseIndex + 1) % 7;
+            return BeginAction(EPlayerState.Pose, PlayerActionId.Pose, m_timings.PoseFrames);
+        }
+
+        // 功能：按住/松开格挡。格挡是常驻动作，不占 ActionBusy。
+        // 入参：blocking 为 true 表示按住右键。
+        // 返回：无。
+        // 步骤：按住时若有动作在播就忽略；否则写 ActionId=8 并关移动闸门。松开时清回 None。
+        // 上游/下游：PlayerBrain 每帧调用；动画控制器按 ActionId==8 进 S_Block。
+        public void SetBlocking(bool blocking)
+        {
+            if (m_context.Dead)
+            {
+                return;
+            }
+
+            if (blocking)
+            {
+                if (m_blocking || m_context.ActionBusy)
+                {
+                    return;
+                }
+
+                m_blocking = true;
+                m_context.ActionId = PlayerActionId.Block;
+                m_context.ActionFrame = 0;
+                m_context.ActionFrames = 0;
+                return;
+            }
+
+            if (!m_blocking)
+            {
+                return;
+            }
+
+            m_blocking = false;
+            m_context.ActionId = PlayerActionId.None;
         }
 
         // 功能：请求播受击；受击优先级高于攻击，会把正在播的攻击打断。
@@ -179,6 +314,8 @@ namespace NBC.Game.Player
             }
 
             m_context.StackSide = fromLeft ? -1f : 1f;
+            m_comboQueued = false;
+            m_blocking = false;
             EPlayerState state = fromLeft ? EPlayerState.HitLeft : EPlayerState.HitRight;
             return BeginAction(state, PlayerActionId.Hit, m_timings.HitFrames);
         }
@@ -198,6 +335,8 @@ namespace NBC.Game.Player
             m_context.Dead = true;
             m_context.ResetAction();
             m_hasPendingAction = false;
+            m_comboQueued = false;
+            m_blocking = false;
             m_context.Motion.MovementEnabled = false;
             m_context.Motion.SetMoveSpeed(0f);
             m_fsm.ForceChange(EPlayerState.Reaction, EPlayerState.Die);
@@ -249,11 +388,11 @@ namespace NBC.Game.Player
             m_fsm.TryChangeUpper(EPlayerState.Locomotion, desired);
         }
 
-        // 功能：推进当前动作的帧计数，到点就结束动作。
+        // 功能：推进当前动作的帧计数，到点就结束动作或接上排队的下一段连击。
         // 入参：无。
         // 返回：无。
-        // 步骤：没有动作直接返回；有动作就 +1 帧，到达 ActionFrames 时清动作（0 表示不自动结束）。
-        // 上游/下游：Tick 调用；下游 PlayerStateContext.ResetAction。
+        // 步骤：没有动作直接返回；有动作就 +1 帧；到点先看有没有排队连击，能接就接下一段，否则清动作。
+        // 上游/下游：Tick 调用；下游 TryStartNextCombo / PlayerStateContext.ResetAction。
         private void AdvanceAction()
         {
             if (!m_context.ActionBusy)
@@ -262,10 +401,39 @@ namespace NBC.Game.Player
             }
 
             m_context.ActionFrame++;
-            if (m_context.ActionFrames > 0 && m_context.ActionFrame >= m_context.ActionFrames)
+            if (m_context.ActionFrames <= 0 || m_context.ActionFrame < m_context.ActionFrames)
             {
-                m_context.ResetAction();
+                return;
             }
+
+            if (m_comboQueued && TryStartNextCombo())
+            {
+                m_comboQueued = false;
+                return;
+            }
+
+            m_comboQueued = false;
+            m_context.ResetAction();
+        }
+
+        // 功能：把当前攻击段接到下一段（1→2、2→3）。
+        // 入参：无。
+        // 返回：true 表示已登记下一段；false 表示当前不是第 1/2 段。
+        // 步骤：按当前 ActionId 决定目标状态与帧数，再 BeginAction 排队，下一帧生效。
+        // 上游/下游：AdvanceAction 调用；下游 BeginAction。
+        private bool TryStartNextCombo()
+        {
+            if (m_context.ActionId == PlayerActionId.Attack1)
+            {
+                return BeginAction(EPlayerState.Attack2, PlayerActionId.Attack2, m_timings.Attack2Frames);
+            }
+
+            if (m_context.ActionId == PlayerActionId.Attack2)
+            {
+                return BeginAction(EPlayerState.Attack3, PlayerActionId.Attack3, m_timings.Attack3Frames);
+            }
+
+            return false;
         }
 
         // 功能：把排队中的动作请求真正执行（切到对应层与状态）。
