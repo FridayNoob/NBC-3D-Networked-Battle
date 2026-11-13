@@ -192,3 +192,14 @@
 - `SampleScene.unity` → **`Environment_World.unity`**（含 .meta 一起改）
 - 同步三处：Build Settings 路径、`WorldEnvLoader.m_envSceneName`（场景里序列化值 + 代码默认值）
 - 注意：美术包改名后**素材包升级会重新生成 SampleScene**，届时要重新改一次名（记在这条里）
+
+## 2026-11-13 修：F1/F2 切不了场景（编辑器吃掉了按键）
+
+- 现象：World 里按 F1/F2 完全没反应（连日志都没有）
+- 根因：**F1~F5 是 Unity 编辑器的快捷键**（F1 帮助、F2 重命名），Play 模式下按键先被编辑器消费，`Input.GetKeyDown` 收不到
+- 修法：
+  1. 快捷键改成 **Ctrl+Shift+1~5**（1 Login / 2 World / 3 PVP_Room / 4 Battle / 5 Test）
+  2. 每次按键都打两条日志：`请求加载 X` 与 `已切换到 X（路径：...）`；**没有第一条就说明按键没进来**
+  3. 失败时打 `切换 X 失败：...`，不再静默
+- 判据：按 Ctrl+Shift+1 后 Console 必须出现「请求加载 Login」
+- 顺带：R032 的 06 手工验收步骤已同步改成新键位

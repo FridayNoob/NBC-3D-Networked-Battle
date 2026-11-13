@@ -206,7 +206,7 @@ namespace NBC.Game.GameFlow
         }
     }
 
-    // 主要功能：开发期快捷键切场景（F1 Login / F2 World / F3 PVP / F4 Battle / F5 Test）。
+    // 主要功能：开发期快捷键切场景（Ctrl+Shift+1~5，分别对应 Login/World/PVP_Room/Battle/Test）。
     // 主要数据成员：m_enabled（是否启用）。
     // 主要外部方法：Unity 的 Update。
     // 谁在用它：挂在 Login/World 场景里手动测试；正式版本移除。
@@ -217,12 +217,16 @@ namespace NBC.Game.GameFlow
         [SerializeField]
         private bool m_enabled = true;
 
-        // 功能：每帧查快捷键。
+        // 功能：每帧查快捷键（Ctrl+Shift+1~5）。
         // 入参：无
         // 返回：无
-        // 步骤：F1~F5 分别加载五个场景
+        // 步骤：
+        //   1) Ctrl 与 Shift 都按住才生效（避免误触，也避开编辑器快捷键）
+        //   2) 1~5 分别加载 Login/World/PVP_Room/Battle/Test
+        //   3) 每次按键都打一条日志 —— 没日志就说明按键没进来
         // 上游：Unity
         // 下游：SceneFlow.LoadAsync
+        // 注意：不用 F1~F5 —— 它们被 Unity 编辑器占用（F1 帮助 / F2 重命名），Play 时收不到
         private void Update()
         {
             if (!m_enabled)
@@ -230,11 +234,42 @@ namespace NBC.Game.GameFlow
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.F1)) { SceneFlow.Instance.LoadAsync(GameScene.Login); }
-            if (Input.GetKeyDown(KeyCode.F2)) { SceneFlow.Instance.LoadAsync(GameScene.World); }
-            if (Input.GetKeyDown(KeyCode.F3)) { SceneFlow.Instance.LoadAsync(GameScene.PvpRoom); }
-            if (Input.GetKeyDown(KeyCode.F4)) { SceneFlow.Instance.LoadAsync(GameScene.Battle); }
-            if (Input.GetKeyDown(KeyCode.F5)) { SceneFlow.Instance.LoadAsync(GameScene.Test); }
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+            if (!ctrl || !shift)
+            {
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.Alpha1)) { RequestLoad(GameScene.Login); }
+            if (Input.GetKeyDown(KeyCode.Alpha2)) { RequestLoad(GameScene.World); }
+            if (Input.GetKeyDown(KeyCode.Alpha3)) { RequestLoad(GameScene.PvpRoom); }
+            if (Input.GetKeyDown(KeyCode.Alpha4)) { RequestLoad(GameScene.Battle); }
+            if (Input.GetKeyDown(KeyCode.Alpha5)) { RequestLoad(GameScene.Test); }
+        }
+
+        // 功能：请求加载并打印结果（成功/失败/被拒绝都要能看到）。
+        // 入参：scene 目标场景
+        // 返回：无
+        // 步骤：打请求日志 → 调 SceneFlow → 回调里打结果
+        // 上游：Update
+        // 下游：SceneFlow.LoadAsync
+        private static void RequestLoad(GameScene scene)
+        {
+            Debug.Log("[SceneFlowDebugKeys] 请求加载 " + scene);
+
+            SceneFlow.Instance.LoadAsync(scene, (ok, error) =>
+            {
+                if (ok)
+                {
+                    Debug.Log("[SceneFlowDebugKeys] 已切换到 " + scene + "（路径：" + SceneFlow.Instance.LastPath + "）");
+                }
+                else
+                {
+                    Debug.LogWarning("[SceneFlowDebugKeys] 切换 " + scene + " 失败：" + error);
+                }
+            });
         }
     }
 }
