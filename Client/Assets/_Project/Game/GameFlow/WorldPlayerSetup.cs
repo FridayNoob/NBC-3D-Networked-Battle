@@ -134,6 +134,15 @@ namespace NBC.Game.GameFlow
                     Debug.LogWarning("[WorldPlayerSetup] 关掉子物体 " + animations[i].name + " 上重复的 PlayerAnimation");
                 }
             }
+            // World 的动画改由 PlayerBrain + 动画参数驱动；旧的 PlayerAnimation 还会自己 SetTrigger，会和状态机打架
+            PlayerAnimation selfAnimation = GetComponent<PlayerAnimation>();
+
+            if (selfAnimation != null && selfAnimation.enabled)
+            {
+                selfAnimation.enabled = false;
+                Debug.Log("[WorldPlayerSetup] 关掉根节点上的 PlayerAnimation（World 动画改由状态机参数驱动）");
+            }
+
             Debug.Log("[WorldPlayerSetup] 玩家已就位：" + m_player.name
                 + "，第三人称相机=" + (m_worldFollowCamera != null)
                 + "，旧跟随相机=" + (m_followCamera != null));

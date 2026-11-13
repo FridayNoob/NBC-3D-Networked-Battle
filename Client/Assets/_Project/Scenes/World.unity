@@ -130,10 +130,20 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 1775856765}
     m_Modifications:
+    - target: {fileID: 2549977409432451209, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
+      objectReference: {fileID: 0}
     - target: {fileID: 3762231254516395996, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
       propertyPath: m_Name
       value: SwordGirl_FullBody
+      objectReference: {fileID: 0}
+    - target: {fileID: 4398618373256926287, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
       objectReference: {fileID: 0}
     - target: {fileID: 4575078637956642150, guid: a93b47c056555ef4e93fb84a04282ed1,
         type: 3}
@@ -184,6 +194,41 @@ PrefabInstance:
         type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5860804970520429529, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
+      objectReference: {fileID: 0}
+    - target: {fileID: 5872096419836274815, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
+      objectReference: {fileID: 0}
+    - target: {fileID: 6319522786611588758, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
+      objectReference: {fileID: 0}
+    - target: {fileID: 7037644966524715964, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_BlendShapeWeights.Array.size
+      value: 35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8363381122021082000, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0.000005913109
+      objectReference: {fileID: 0}
+    - target: {fileID: 8363381122021082000, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.000006744154
+      objectReference: {fileID: 0}
+    - target: {fileID: 8363381122021082000, guid: a93b47c056555ef4e93fb84a04282ed1,
+        type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0.0000032251182
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 8633424325273862972, guid: a93b47c056555ef4e93fb84a04282ed1, type: 3}
@@ -659,6 +704,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_moveSpeed: 5
   m_turnSpeed: 720
+  m_useReferenceAxes: 0
+  m_reference: {fileID: 0}
 --- !u!4 &1775856765
 Transform:
   m_ObjectHideFlags: 0
@@ -702,8 +749,26 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_move: {fileID: 0}
-  m_debugStateName: Idle
-  m_debugRegistered: 0
+  m_disableLegacyAnimation: 1
+  m_animatorControllerOverride: {fileID: 9100000, guid: 12ebda3b0cfa7c14fb7d413a4a3e70f1,
+    type: 2}
+  m_walkSpeed: 2
+  m_runSpeed: 5
+  m_sprintSpeed: 8
+  m_crouchWalkSpeed: 1.5
+  m_crouchJogSpeed: 3
+  m_attackFrames: 36
+  m_hitFrames: 18
+  m_skillFrames: 48
+  m_dashFrames: 18
+  m_stunFrames: 45
+  m_poseFrames: 90
+  m_attackKey: 106
+  m_hitKey: 107
+  m_dieKey: 108
+  m_enableLocalAttack: 1
+  m_enableDebugKeys: 0
+  m_logStateChanges: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

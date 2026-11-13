@@ -8,9 +8,9 @@ namespace NBC.Game.Player
 {
     // 主要功能：每帧读输入，取主导轴得到 W/A/S/D 四种之一，统一「转身朝该方向 + 沿该方向前进」。
     // 主要数据成员：m_moveSpeed（米/秒）、m_turnSpeed（度/秒）、m_forwardSpeed / m_sideSpeed（给动画的分量）。
-    // 主要外部方法：ForwardSpeed / SideSpeed / MoveSpeed / CurrentSpeed（只读属性）。
-    // 谁在用它：挂在角色物体上；输入取自 InputManager.Instance.Current，键位在 InputMapping 里可改。
-    public sealed class PlayerMove : MonoBehaviour
+    // 主要外部方法：ForwardSpeed / SideSpeed / MoveSpeed / CurrentSpeed（只读属性）、SetMoveSpeed、MovementEnabled。
+    // 谁在用它：挂在角色物体上；输入取自 InputManager.Instance.Current，键位在 InputMapping 里可改；World 里由 PlayerBrain 通过 IPlayerMotion 驱动。
+    public sealed class PlayerMove : MonoBehaviour, IPlayerMotion
     {
         // 每秒走多少米。场景里 1 单位 = 1 米，5 就是每秒 5 米
         [SerializeField] private float m_moveSpeed = 5f;
@@ -23,6 +23,45 @@ namespace NBC.Game.Player
 
         // 参考体：留空时用 Camera.main；只有 m_useReferenceAxes 为 true 才用
         [SerializeField] private Transform m_reference = null;
+
+        // 是否允许位移：动作/受击/死亡期间由状态机置 false，实现「动作即停」（组件本身不禁用）
+        private bool m_movementEnabled = true;
+
+        // 功能：读/写位移闸门。
+        // 入参：true 允许移动；false 原地站住。
+        // 返回：当前是否允许移动。
+        // 步骤：置 false 时顺手把三个速度清零，避免下游读到「停之前那一帧」的旧值。
+        // 上游/下游：PlayerStateMachine.Tick 每帧写；Update 开头读。
+        public bool MovementEnabled
+        {
+            get { return m_movementEnabled; }
+            set
+            {
+                m_movementEnabled = value;
+
+                if (!value)
+                {
+                    m_forwardSpeed = 0f;
+                    m_sideSpeed = 0f;
+                    m_currentSpeed = 0f;
+                }
+            }
+        }
+
+        // 功能：设置这一帧的移动速度（状态机按走/跑/冲/蹲档位传进来）。
+        // 入参：metersPerSecond 米/秒；负数视为非法，直接忽略。
+        // 返回：无。
+        // 步骤：写 m_moveSpeed，Update 下一次位移就用新值。
+        // 上游/下游：PlayerStateMachine.Tick 调用；Update 读取。
+        public void SetMoveSpeed(float metersPerSecond)
+        {
+            if (metersPerSecond < 0f)
+            {
+                return;
+            }
+
+            m_moveSpeed = metersPerSecond;
+        }
 
         // 功能：运行时开关"用参考体坐标轴"（World 场景由 WorldPlayerSetup 打开）。
         // 入参：use true = 用参考体轴；reference 参考体（null 表示用 Camera.main）
@@ -111,6 +150,12 @@ namespace NBC.Game.Player
             m_forwardSpeed = 0f;
             m_sideSpeed = 0f;
             m_currentSpeed = 0f;
+
+            // 状态机说了「动作中/已死」就不位移：这里只是不移动，组件保持启用，动画参数照常发布
+            if (!m_movementEnabled)
+            {
+                return;
+            }
 
             InputManager input = InputManager.Instance;
 

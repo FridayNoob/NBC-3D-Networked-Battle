@@ -1,5 +1,8 @@
 // 这个文件里有：
-//   PlayerBrain（组件）：用框架状态机管角色的逻辑状态（Idle / Move），并据此开关移动。
+//   PlayerBrain（组件）：玩家的输入适配层 —— 读键位、按固定 60fps 驱动机器、把参数写给 Animator
+//
+// 它只做三件事：读输入、按固定步长推进 PlayerStateMachine、发布动画参数。
+// 具体「什么状态、什么时候切」全在 PlayerStateMachine 里，本类不做判断。
 
 using NBC.Framework.Fsm;
 using NBC.Framework.Input;
@@ -7,168 +10,354 @@ using UnityEngine;
 
 namespace NBC.Game.Player
 {
-    // 主要功能：每帧判断「有没有方向输入」，据此在 Idle / Move 之间切逻辑状态，并把状态变化打成一条日志。
-    // 主要数据成员：m_move（要开关的移动组件）、m_fsm（框架状态机）、m_frame（自增帧号，喂给 Tick）。
-    // 主要外部方法：Current / CurrentName / IsMoving / RegisteredCount（只读观测）。
-    // 谁在用它：挂在玩家物体上，和 PlayerMove / PlayerAnimation 同一个物体；由场景配置启用。
-    // 注意：状态机是帧驱动（StateTick 只有 Frame / DeltaFrames，没有 DeltaTime）—— 位移仍由 PlayerMove 按真实时间算，别在这里算位移。
-    // 注意：逻辑状态（本组件）与表现状态（Animator 的 S_Idle / S_Walk）是两层，本组件不写 Animator。
-    // 注意：帧号用自增计数器而不是 Time.frameCount，避免编辑器暂停 / 时间缩放让语义变化；帧号只增不减。
+    // 主要功能：把玩家输入与角色状态机接起来，并保证逻辑按固定 60fps 推进（不随渲染帧率抖动）。
+    // 主要数据成员：m_move（位移）、m_publisher（动画参数）、m_context（共享状态）、m_machine（三层状态机）。
+    // 主要外部方法：NotifyAttack / NotifyHit / NotifyDead（给网络消息与调试键用）。
+    // 谁在用它：挂在 World 的 [Player_Hero] 根节点上；Battle 不用这套（Battle 走网络快照）。
+    // 注意：只有本类允许读 Input 与 Time —— 状态机是纯逻辑，测试直接喂 PlayerInput 与帧号。
     public sealed class PlayerBrain : MonoBehaviour
     {
-        // 玩家身上的移动组件，Awake 时自动找（没找到会报错并停用自己）
+        // 每秒逻辑帧数（动作帧数都按这个口径标）
+        private const float FixedDeltaSeconds = 1f / 60f;
+
+        // 一帧最多补几个逻辑步（卡顿后防止一次补几百帧把角色瞬移）
+        private const int MaxCatchUpSteps = 4;
+
+        // 玩家身上的移动组件（Awake 自动找）
         [SerializeField]
         private PlayerMove m_move;
 
-        // 调试观察：当前状态名（运行时自动更新，只给人看，别手改）—— Unity 默认 Inspector 只显示字段，不显示属性
+        // 是否关掉旧的 PlayerAnimation（World 改由状态机 + 参数驱动；关掉避免它继续 SetTrigger）
         [SerializeField]
-        private string m_debugStateName = "Idle";
+        private bool m_disableLegacyAnimation = true;
 
-        // 调试观察：已注册状态数（运行时自动更新，应为 2）
+        // World 专用的动画控制器副本（为空则沿用模型自带控制器；Battle 不挂本组件，不受影响）
         [SerializeField]
-        private int m_debugRegistered;
+        private RuntimeAnimatorController m_animatorControllerOverride;
 
-        // 框架状态机：注册 Idle / Move，切换由「有没有方向输入」驱动
-        private StateMachine<EPlayerState> m_fsm;
+        [Header("速度档位（米/秒）")]
+        // 慢走速度
+        [SerializeField]
+        private float m_walkSpeed = 2f;
 
-        // 喂给状态机的帧号：每帧 +1，从 0 起（状态机允许从 0 开始）
+        // 默认跑速
+        [SerializeField]
+        private float m_runSpeed = 5f;
+
+        // 冲刺速度
+        [SerializeField]
+        private float m_sprintSpeed = 8f;
+
+        // 蹲走速度
+        [SerializeField]
+        private float m_crouchWalkSpeed = 1.5f;
+
+        // 蹲跑速度
+        [SerializeField]
+        private float m_crouchJogSpeed = 3f;
+
+        [Header("动作时长（60fps 帧数）")]
+        // 攻击一段帧数
+        [SerializeField]
+        private int m_attackFrames = 36;
+
+        // 受击帧数
+        [SerializeField]
+        private int m_hitFrames = 18;
+
+        // 技能帧数
+        [SerializeField]
+        private int m_skillFrames = 48;
+
+        // 冲刺帧数
+        [SerializeField]
+        private int m_dashFrames = 18;
+
+        // 硬直帧数
+        [SerializeField]
+        private int m_stunFrames = 45;
+
+        // 姿势帧数
+        [SerializeField]
+        private int m_poseFrames = 90;
+
+        [Header("按键")]
+        // 攻击键（鼠标左键也可）
+        [SerializeField]
+        private KeyCode m_attackKey = KeyCode.J;
+
+        // 受击调试键
+        [SerializeField]
+        private KeyCode m_hitKey = KeyCode.K;
+
+        // 死亡调试键
+        [SerializeField]
+        private KeyCode m_dieKey = KeyCode.L;
+
+        // 是否接受本地攻击键（Battle 可关掉，避免和网络输入双触发）
+        [SerializeField]
+        private bool m_enableLocalAttack = true;
+
+        // 是否启用调试键 K/L
+        [SerializeField]
+        private bool m_enableDebugKeys = false;
+
+        // 是否把每次状态切换打到 Console
+        [SerializeField]
+        private bool m_logStateChanges = true;
+
+        // 位移组件（IPlayerMotion 的实现者）
+        private PlayerMove m_motion;
+
+        // 动画参数发布器
+        private PlayerAnimatorPublisher m_publisher;
+
+        // 状态机共享状态
+        private PlayerStateContext m_context;
+
+        // 三层状态机
+        private PlayerStateMachine m_machine;
+
+        // 已推进的逻辑帧号（必须单调递增）
         private int m_frame;
 
-        // 功能：当前逻辑状态。
-        // 返回：EPlayerState 值；状态机没启动时返回 Idle
-        public EPlayerState Current
-        {
-            get { return m_fsm == null || !m_fsm.IsStarted ? EPlayerState.Idle : m_fsm.Current; }
-        }
+        // 距上一个逻辑帧攒下的时间，秒
+        private float m_frameAccumulator;
 
-        // 功能：当前状态名，给日志与调试面板用。
-        // 返回：状态名（Idle / Move）；未启动时返回 Idle
-        public string CurrentName
-        {
-            get { return m_fsm == null || !m_fsm.IsStarted ? "Idle" : m_fsm.CurrentName; }
-        }
-
-        // 功能：是否处于可移动状态。
-        // 返回：true = Move
-        public bool IsMoving
-        {
-            get { return Current == EPlayerState.Move; }
-        }
-
-        // 功能：已注册的状态数，用于在 Inspector 里确认装配成功（应为 2）。
-        // 返回：注册数；未初始化时 0
-        public int RegisteredCount
-        {
-            get { return m_fsm == null ? 0 : m_fsm.RegisteredCount; }
-        }
-
-        // 功能：装配状态机 —— 找移动组件、注册两个状态、订阅日志、以 Idle 启动。
-        // 入参：无
-        // 返回：无
-        // 步骤：
-        //   1) 没配 m_move 就在本物体上找
-        //   2) 找不到就报错并停用（否则后面每帧都会空引用）
-        //   3) 建状态机、注册 Idle / Move
-        //   4) 订阅 StateChanged 打日志（只在这里打，状态类不打，避免重复）
-        //   5) 以 Idle 启动（启动前不能切状态）
-        // 上游：Unity 引擎（物体激活时）
-        // 下游：PlayerIdleState / PlayerMoveState、Debug.Log
-        // 注意：必须在 Start 之前启动状态机；TryChangeState 在 Start 之前调用会抛异常
+        // 功能：找齐组件、构造状态机、订阅状态切换日志。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 找 PlayerMove（找不到就禁用自己）2) 找或加 Publisher 3) 关旧动画 4) 换控制器副本 5) 建上下文与状态机 6) 订阅日志。
+        // 上游/下游：Unity 生命周期；下游 PlayerStateMachine 构造函数。
         private void Awake()
         {
-            if (m_move == null)
-            {
-                m_move = GetComponent<PlayerMove>();
-            }
+            m_motion = m_move != null ? m_move : GetComponent<PlayerMove>();
 
-            if (m_move == null)
+            if (m_motion == null)
             {
-                Debug.LogError("[PlayerBrain] 找不到 PlayerMove，逻辑状态机无法开关移动。", this);
+                Debug.LogError("[PlayerBrain] 根节点上没有 PlayerMove，状态机无法驱动位移。", this);
                 enabled = false;
                 return;
             }
 
-            m_fsm = new StateMachine<EPlayerState>();
-            m_fsm.Register(EPlayerState.Idle, new PlayerIdleState(m_move));
-            m_fsm.Register(EPlayerState.Move, new PlayerMoveState(m_move));
-            m_fsm.StateChanged += OnStateChanged;
-            m_fsm.Start(EPlayerState.Idle);
+            m_publisher = GetComponent<PlayerAnimatorPublisher>();
+            if (m_publisher == null)
+            {
+                m_publisher = gameObject.AddComponent<PlayerAnimatorPublisher>();
+            }
 
-            m_debugStateName = m_fsm.CurrentName;
-            m_debugRegistered = m_fsm.RegisteredCount;
+            if (m_disableLegacyAnimation)
+            {
+                PlayerAnimation legacy = GetComponent<PlayerAnimation>();
+                if (legacy != null)
+                {
+                    legacy.enabled = false;
+                }
+            }
+
+            if (m_animatorControllerOverride != null)
+            {
+                Animator animator = GetComponentInChildren<Animator>();
+                if (animator != null && animator.runtimeAnimatorController != m_animatorControllerOverride)
+                {
+                    animator.runtimeAnimatorController = m_animatorControllerOverride;
+                }
+            }
+
+            m_context = new PlayerStateContext(m_motion);
+            PlayerTimings timings = new PlayerTimings(
+                m_attackFrames,
+                m_hitFrames,
+                m_skillFrames,
+                m_dashFrames,
+                m_stunFrames,
+                m_poseFrames);
+            PlayerSpeeds speeds = new PlayerSpeeds(
+                m_walkSpeed,
+                m_runSpeed,
+                m_sprintSpeed,
+                m_crouchWalkSpeed,
+                m_crouchJogSpeed);
+            m_machine = new PlayerStateMachine(m_context, timings, speeds);
+
+            if (m_logStateChanges)
+            {
+                m_machine.StateChanged += OnStateChanged;
+            }
         }
 
-        // 功能：每帧按「有没有方向输入」决定逻辑状态，然后推进状态机。
-        // 入参：无
-        // 返回：无
-        // 步骤：
-        //   1) 读输入；输入被禁用或读不到时当作「没输入」
-        //   2) 有方向分量（X 或 Y 非 0）就是要移动
-        //   3) 期望状态与当前不一致时才 TryChangeState（同状态切是空操作，但避免每帧白调）
-        //   4) Tick 推进（帧号自增），状态的 OnUpdate 在这时被调用
-        // 上游：Unity 引擎每帧调用
-        // 下游：StateMachine.TryChangeState / Tick、PlayerMove.enabled
-        // 注意：判据用「输入有没有方向」而不是「当前速度」—— 被墙挡住时速度是 0，用速度判会反复切状态
+        // 功能：每帧读输入、按固定步长推进逻辑、发布动画参数。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 读一次输入 2) 先处理攻击/受击/死亡键（写 pending）3) 累加时间并按 1/60 秒补步 4) 只让第一步消费「蹲切换」 5) 发布了就写一次参数。
+        // 上游/下游：Unity 生命周期；下游 PlayerStateMachine.Tick、PlayerAnimatorPublisher.Apply。
         private void Update()
         {
-            bool hasInput = HasDirectionInput();
-            EPlayerState wanted = hasInput ? EPlayerState.Move : EPlayerState.Idle;
-
-            if (wanted != m_fsm.Current)
+            if (m_machine == null)
             {
-                m_fsm.TryChangeState(wanted);
+                return;
             }
 
-            m_frame++;
-            m_fsm.Tick(m_frame);
+            PlayerInput input = ReadInput();
+            HandleActionKeys();
+
+            m_frameAccumulator += Time.deltaTime;
+            int steps = 0;
+            bool firstStep = true;
+
+            while (m_frameAccumulator >= FixedDeltaSeconds && steps < MaxCatchUpSteps)
+            {
+                m_frameAccumulator -= FixedDeltaSeconds;
+                steps++;
+                m_frame++;
+
+                PlayerInput stepInput = firstStep
+                    ? input
+                    : new PlayerInput(input.MoveX, input.MoveY, input.WalkHeld, input.SprintHeld, false);
+                firstStep = false;
+                m_machine.Tick(m_frame, stepInput);
+            }
+
+            if (steps == 0)
+            {
+                return;
+            }
+
+            if (m_frameAccumulator > FixedDeltaSeconds * MaxCatchUpSteps)
+            {
+                m_frameAccumulator = 0f;
+            }
+
+            m_publisher.Apply(m_machine.Parameters);
         }
 
-        // 功能：组件被禁用时停掉状态机订阅，避免残留回调。
-        // 入参：无
-        // 返回：无
-        // 步骤：有状态机就退订
-        // 上游：Unity 引擎
-        // 下游：无
-        private void OnDisable()
+        // 功能：请求播攻击（本地键与网络消息都走这里）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：转给状态机；被拒绝（已死/动作中）时什么都不做。
+        // 上游/下游：Update 的攻击键、外部网络消息；下游 PlayerStateMachine.NotifyAttack。
+        public void NotifyAttack()
         {
-            if (m_fsm != null)
+            if (m_machine != null)
             {
-                m_fsm.StateChanged -= OnStateChanged;
+                m_machine.NotifyAttack();
             }
         }
 
-        // 功能：判断本帧输入里有没有方向分量。
-        // 入参：无
-        // 返回：true = X 或 Y 不为 0（量化轴，范围 ±1000）
-        // 步骤：
-        //   1) 取 InputManager；为空或整体被禁用则视为没输入
-        //   2) 看 Current 的 MoveX / MoveY 是否有非 0
-        // 上游：Update
-        // 下游：InputManager.Instance.Current、InputCommand.MoveX / MoveY
-        private static bool HasDirectionInput()
+        // 功能：请求播受击。
+        // 入参：fromLeft 为 true 表示从左侧被打。
+        // 返回：无。
+        // 步骤：转给状态机。
+        // 上游/下游：Update 的调试键、外部网络消息；下游 PlayerStateMachine.NotifyHit。
+        public void NotifyHit(bool fromLeft)
         {
-            InputManager input = InputManager.Instance;
-
-            if (input == null || !input.IsEnabled)
+            if (m_machine != null)
             {
-                return false;
+                m_machine.NotifyHit(fromLeft);
             }
-
-            InputCommand command = input.Current;
-            return command.MoveX != 0 || command.MoveY != 0;
         }
 
-        // 功能：状态变化时打一条日志（只在这里打，保证「一次切换一条」）。
-        // 入参：record 状态变化记录（含 From / To / Frame / Forced）
-        // 返回：无
-        // 步骤：直接拼字符串输出
-        // 上游：StateMachine.StateChanged
-        // 下游：Console
-        // 注意：日志必须只在切换时产生 —— 每帧打印会把 Console 刷满，也掩盖真正的问题
+        // 功能：请求进入死亡状态。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：转给状态机。
+        // 上游/下游：Update 的调试键、外部网络消息；下游 PlayerStateMachine.NotifyDead。
+        public void NotifyDead()
+        {
+            if (m_machine != null)
+            {
+                m_machine.NotifyDead();
+            }
+        }
+
+        // 当前是否已死亡
+        public bool IsDead
+        {
+            get { return m_machine != null && m_machine.IsDead; }
+        }
+
+        // 当前下层状态（日志/调试面板用）
+        public EPlayerState CurrentState
+        {
+            get { return m_machine != null ? m_machine.State : EPlayerState.Idle; }
+        }
+
+        // 功能：处理攻击/受击/死亡的按键请求。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：调试键先判（K 左受击、L 死亡），再看攻击键（J 或鼠标左键）；是否启用由 Inspector 开关决定。
+        // 上游/下游：Update 调用；下游 Notify*。
+        private void HandleActionKeys()
+        {
+            if (m_enableDebugKeys)
+            {
+                if (Input.GetKeyDown(m_hitKey))
+                {
+                    NotifyHit(true);
+                }
+
+                if (Input.GetKeyDown(m_dieKey))
+                {
+                    NotifyDead();
+                }
+            }
+
+            if (!m_enableLocalAttack)
+            {
+                return;
+            }
+
+            if (Input.GetKeyDown(m_attackKey) || Input.GetMouseButtonDown(0))
+            {
+                NotifyAttack();
+            }
+        }
+
+        // 功能：把这一帧的键位读成 PlayerInput。
+        // 入参：无。
+        // 返回：输入快照。
+        // 步骤：移动轴取 InputManager（-1000~1000 除 1000）；Alt=慢走、Shift=冲刺、Ctrl 按下=切换蹲；输入被禁用时轴按 0。
+        // 上游/下游：Update 调用；下游 PlayerStateMachine.Tick。
+        private static PlayerInput ReadInput()
+        {
+            float x = 0f;
+            float y = 0f;
+
+            InputManager manager = InputManager.Instance;
+            if (manager != null && manager.IsEnabled)
+            {
+                InputCommand command = manager.Current;
+                x = (float)command.MoveX / InputCommand.MoveScale;
+                y = (float)command.MoveY / InputCommand.MoveScale;
+            }
+
+            bool walk = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            bool sprint = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool crouch = Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl);
+            return new PlayerInput(x, y, walk, sprint, crouch);
+        }
+
+        // 功能：把一次状态切换打到 Console。
+        // 入参：record 切换记录（含帧号与前后状态名）。
+        // 返回：无。
+        // 步骤：直接用记录自带的 ToString，格式 "[f12] Locomotion/Idle -> Locomotion/Run"。
+        // 上游/下游：PlayerStateMachine.StateChanged 事件。
         private void OnStateChanged(StateChangeRecord record)
         {
-            Debug.Log("[PlayerBrain] " + record.From + " → " + record.To);
-            m_debugStateName = record.To;
+            Debug.Log("[PlayerBrain] " + record);
+        }
+
+        // 功能：组件销毁时退订事件，避免状态机持有已销毁的 MonoBehaviour。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：有状态机就退订。
+        // 上游/下游：Unity 生命周期。
+        private void OnDestroy()
+        {
+            if (m_machine != null)
+            {
+                m_machine.StateChanged -= OnStateChanged;
+            }
         }
     }
 }
