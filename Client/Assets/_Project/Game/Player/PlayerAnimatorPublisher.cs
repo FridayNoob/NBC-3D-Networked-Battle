@@ -28,7 +28,8 @@ namespace NBC.Game.Player
         private const int BoolGrounded = 1;
         private const int BoolActionBusy = 2;
         private const int BoolDead = 3;
-        private const int BoolCount = 4;
+        private const int BoolLanding = 4;
+        private const int BoolCount = 5;
 
         // Speed 的变化小于这个值就不写 Animator（混合树上看不出来，省掉每帧 SetFloat）
         private const float FloatWriteEpsilon = 0.01f;
@@ -44,13 +45,14 @@ namespace NBC.Game.Player
             PlayerAnimatorNames.PoseIndex,
         };
 
-        // 四个布尔参数的控制器名字，顺序与上面的下标一致
+        // 五个布尔参数的控制器名字，顺序与上面的下标一致
         private static readonly string[] BoolNames =
         {
             PlayerAnimatorNames.Crouch,
             PlayerAnimatorNames.Grounded,
             PlayerAnimatorNames.ActionBusy,
             PlayerAnimatorNames.Dead,
+            PlayerAnimatorNames.Landing,
         };
 
         // 目标动画机；为空时 Awake 自动往子物体找
@@ -138,6 +140,7 @@ namespace NBC.Game.Player
             WriteBool(BoolGrounded, parameters.Grounded);
             WriteBool(BoolActionBusy, parameters.ActionBusy);
             WriteBool(BoolDead, parameters.Dead);
+            WriteBool(BoolLanding, parameters.Landing);
         }
 
         // 功能：找 Animator、查参数表、缓存哈希。

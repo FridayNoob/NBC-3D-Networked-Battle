@@ -94,8 +94,11 @@ namespace NBC.Game.Player
         // 连击窗口在结束前留几帧缓冲（之后按键不排队）
         public readonly int ComboEndBuffer;
 
+        // 落地缓冲的帧数（12 帧 = 0.2 秒，期间不能移动）
+        public readonly int LandFrames;
+
         // 功能：打包全部动作时长与连击窗口。
-        // 入参：十二个帧数，单位是 60fps 的帧；小于等于 0 表示「不自动结束」。
+        // 入参：十三个帧数，单位是 60fps 的帧；小于等于 0 表示「不自动结束」。
         // 返回：结构本身。
         // 步骤：直接赋值。
         // 上游/下游：PlayerBrain.Awake 用 Inspector 值构造；PlayerStateMachine.Notify* 读取。
@@ -111,7 +114,8 @@ namespace NBC.Game.Player
             int stunFrames,
             int poseFrames,
             int comboWindowStart,
-            int comboEndBuffer)
+            int comboEndBuffer,
+            int landFrames)
         {
             AttackFrames = attackFrames;
             Attack2Frames = attack2Frames;
@@ -125,16 +129,17 @@ namespace NBC.Game.Player
             PoseFrames = poseFrames;
             ComboWindowStart = comboWindowStart;
             ComboEndBuffer = comboEndBuffer;
+            LandFrames = landFrames;
         }
 
         // 功能：给出一套按 clip 实测算好的默认值。
         // 入参：无。
-        // 返回：攻击 60/60/93、技能 240/144/264、冲刺 60、受击 88、硬直 120、姿势 90、窗口 18 帧、缓冲 4 帧。
+        // 返回：攻击 60/60/93、技能 240/144/264、冲刺 60、受击 88、硬直 120、姿势 90、窗口 18 帧、缓冲 4 帧、落地 12 帧。
         // 步骤：直接 new。
         // 上游/下游：PlayerBrain 的 Inspector 默认值参考；测试用 PlayerTimings.Default。
         public static PlayerTimings Default
         {
-            get { return new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4); }
+            get { return new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4, 12); }
         }
     }
 
@@ -192,10 +197,10 @@ namespace NBC.Game.Player
         // 是否蹲下（Ctrl 切换）
         public bool Crouch;
 
-        // 是否踩在地面上（R035d 之前恒为 true）
+        // 是否踩在地面上（R035d 起由 PlayerJumpMotor 每帧写入）
         public bool Grounded = true;
 
-        // 竖直速度，米/秒（R035d 之前恒为 0）
+        // 竖直速度，米/秒（上升为正；落地时为 0）
         public float VerticalSpeed;
 
         // 是否有动作在播
@@ -212,6 +217,9 @@ namespace NBC.Game.Player
 
         // 是否死亡
         public bool Dead;
+
+        // 是否正在落地缓冲（R035d：落地后约 0.2 秒不能移动）
+        public bool Landing;
 
         // 动作已播帧数，0 表示刚开始
         public int ActionFrame;
@@ -246,7 +254,8 @@ namespace NBC.Game.Player
                 ActionId,
                 StackSide,
                 PoseIndex,
-                Dead);
+                Dead,
+                Landing);
         }
 
         // 功能：清掉当前动作，让状态机可以回到移动层。

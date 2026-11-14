@@ -157,6 +157,14 @@ namespace NBC.Game.Player
         [SerializeField]
         private KeyCode m_poseKey = KeyCode.F;
 
+        // 跳跃键（R035d）
+        [SerializeField]
+        private KeyCode m_jumpKey = KeyCode.Space;
+
+        // 落地缓冲帧数（12 帧 = 0.2 秒，期间不能移动）
+        [SerializeField]
+        private int m_landFrames = 12;
+
         // 是否接受本地攻击键（Battle 可关掉，避免和网络输入双触发）
         [SerializeField]
         private bool m_enableLocalAttack = true;
@@ -174,6 +182,9 @@ namespace NBC.Game.Player
 
         // 动画参数发布器
         private PlayerAnimatorPublisher m_publisher;
+
+        // 竖直运动电机（跳跃/下落/落地，R035d）
+        private PlayerJumpMotor m_jumpMotor;
 
         // 状态机共享状态
         private PlayerStateContext m_context;
@@ -247,7 +258,8 @@ namespace NBC.Game.Player
                 m_stunFrames,
                 m_poseFrames,
                 m_comboWindowStart,
-                m_comboEndBuffer);
+                m_comboEndBuffer,
+                m_landFrames);
             PlayerSpeeds speeds = new PlayerSpeeds(
                 m_walkSpeed,
                 m_runSpeed,
@@ -255,6 +267,14 @@ namespace NBC.Game.Player
                 m_crouchWalkSpeed,
                 m_crouchJogSpeed);
             m_machine = new PlayerStateMachine(m_context, timings, speeds);
+
+            m_jumpMotor = GetComponent<PlayerJumpMotor>();
+            if (m_jumpMotor == null)
+            {
+                m_jumpMotor = gameObject.AddComponent<PlayerJumpMotor>();
+            }
+
+            m_jumpMotor.Bind(m_machine);
 
             if (m_logStateChanges)
             {
@@ -292,8 +312,8 @@ namespace NBC.Game.Player
         // 功能：每帧读输入、按固定步长推进逻辑、发布动画参数。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 读一次输入 2) 先处理攻击/受击/死亡键（写 pending）3) 累加时间并按 1/60 秒补步 4) 只让第一步消费「蹲切换」 5) 发布了就写一次参数。
-        // 上游/下游：Unity 生命周期；下游 PlayerStateMachine.Tick、PlayerAnimatorPublisher.Apply。
+        // 步骤：1) 读一次输入 2) 先处理攻击/受击/死亡键与跳跃键（写 pending）3) 推进一步竖直位移 4) 累加时间并按 1/60 秒补步 5) 只让第一步消费「蹲切换」 6) 发布了就写一次参数。
+        // 上游/下游：Unity 生命周期；下游 PlayerJumpMotor.Step、PlayerStateMachine.Tick、PlayerAnimatorPublisher.Apply。
         private void Update()
         {
             if (m_machine == null)
@@ -306,6 +326,15 @@ namespace NBC.Game.Player
 
             // 右键是「按住格挡」：每帧同步一次，松开当帧就退出
             m_machine.SetBlocking(m_enableLocalAttack && Input.GetMouseButton(1));
+
+            // 跳跃：按下当帧请求；电机先算初速度，状态机拒绝（动作中/已死/空中）就回滚
+            if (Input.GetKeyDown(m_jumpKey))
+            {
+                m_jumpMotor.TryJump();
+            }
+
+            // 先把竖直位移推进一步，下面状态机就能读到这一帧的 Grounded / VerticalSpeed
+            m_jumpMotor.Step(Time.deltaTime);
 
             m_frameAccumulator += Time.deltaTime;
             int steps = 0;

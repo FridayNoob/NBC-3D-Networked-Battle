@@ -71,7 +71,7 @@ namespace NBC.Tests.EditMode
         // 功能：每个用例前重建机器，保证互不污染。
         // 入参：无。
         // 返回：无。
-        // 步骤：建假位移 → 建上下文 → 用默认档位（2/5/8/1.5/3）与默认帧数（60/60/93/240/144/264/60/88/120/90/18/4）建机器。
+        // 步骤：建假位移 → 建上下文 → 用默认档位（2/5/8/1.5/3）与默认帧数（60/60/93/240/144/264/60/88/120/90/18/4/12）建机器。
         // 上游/下游：NUnit 调用。
         [SetUp]
         public void SetUp()
@@ -80,7 +80,7 @@ namespace NBC.Tests.EditMode
             m_context = new PlayerStateContext(m_motion);
             m_machine = new PlayerStateMachine(
                 m_context,
-                new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4),
+                new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4, 12),
                 new PlayerSpeeds(2f, 5f, 8f, 1.5f, 3f));
             m_frame = 0;
         }

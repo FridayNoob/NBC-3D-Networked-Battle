@@ -10,8 +10,8 @@ using UnityEngine;
 
 namespace NBC.Game.GameFlow
 {
-    // 主要功能：找到玩家 → 把跟随相机的目标设成他 → 关掉观察相机 → 每帧把人贴到地面。
-    // 主要数据成员：m_player（玩家根节点）、m_followCamera、m_orbitCamera、m_groundMask（哪些层算地面）。
+    // 主要功能：找到玩家 → 把跟随相机的目标设成他 → 关掉观察相机 → 没有 PlayerJumpMotor 时每帧把人贴到地面（有电机就交给电机）。
+    // 主要数据成员：m_player（玩家根节点）、m_followCamera、m_orbitCamera、m_groundMask（哪些层算地面）、m_jumpMotor。
     // 主要外部方法：Unity 的 Start / LateUpdate。
     // 谁在用它：World 场景里的玩家对象（[Player_Hero]）。
     // 注意：贴地用的是向下射线；地形/房子都要有碰撞体，否则人会穿下去。
@@ -45,6 +45,9 @@ namespace NBC.Game.GameFlow
         [SerializeField]
         private float m_probeDistance = 50f;
 
+        // 玩家身上的竖直运动电机；有它时贴地由电机负责，本组件不再写 y
+        private PlayerJumpMotor m_jumpMotor;
+
         // 贴地射线的命中缓冲（复用以避免每帧分配；16 个足够覆盖脚下几层物体）
         private readonly RaycastHit[] m_groundHits = new RaycastHit[16];
 
@@ -67,6 +70,9 @@ namespace NBC.Game.GameFlow
             {
                 m_player = transform;
             }
+
+            // World 玩家现在由 PlayerJumpMotor 负责贴地（R035d 起）；这里只记下来，LateUpdate 里让位
+            m_jumpMotor = m_player.GetComponent<PlayerJumpMotor>();
 
             if (m_orbitCamera != null)
             {
@@ -218,6 +224,12 @@ namespace NBC.Game.GameFlow
             }
 
             LogDiagnostics();
+
+            // 有 PlayerJumpMotor 时贴地归它管（它要同时处理起跳高度与落地），这里不能抢着写 y
+            if (m_jumpMotor != null)
+            {
+                return;
+            }
 
             Vector3 origin = m_player.position + Vector3.up * m_probeHeight;
             int count = Physics.RaycastNonAlloc(origin, Vector3.down, m_groundHits, m_probeDistance, m_groundMask, QueryTriggerInteraction.Ignore);

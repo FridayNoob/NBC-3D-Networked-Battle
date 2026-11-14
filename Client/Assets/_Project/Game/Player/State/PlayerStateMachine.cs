@@ -46,6 +46,9 @@ namespace NBC.Game.Player
         // 当前姿势序号 0~6，按 F 轮换
         private int m_poseIndex;
 
+        // 落地缓冲剩余帧数；大于 0 时不能移动，动画停在 S_Land
+        private int m_landingFrames;
+
         // 功能：注册三层状态机并进入移动层的 Idle。
         // 入参：context 共享状态（不能为 null，且 Motion 不能为 null）；timings 动作帧数；speeds 五档速度。
         // 返回：无。
@@ -121,6 +124,67 @@ namespace NBC.Game.Player
             get { return m_blocking; }
         }
 
+        // 是否在空中（离地）
+        public bool Airborne
+        {
+            get { return !m_context.Grounded; }
+        }
+
+        // 是否正在落地缓冲
+        public bool Landing
+        {
+            get { return m_context.Landing; }
+        }
+
+        // 功能：把电机算好的竖直状态写进上下文，供这一帧选 Jump / Fall。
+        // 入参：grounded 是否踩地；verticalSpeed 竖直速度，米/秒（上升为正）。
+        // 返回：无。
+        // 步骤：直接写入两个字段；落地时顺手清掉竖直速度，避免残留值影响下一跳。
+        // 上游/下游：PlayerJumpMotor.Step 每帧调用；内部用于 ChooseLocomotion 与参数发布。
+        public void SetVertical(bool grounded, float verticalSpeed)
+        {
+            m_context.Grounded = grounded;
+            m_context.VerticalSpeed = grounded ? 0f : verticalSpeed;
+        }
+
+        // 功能：请求起跳（不管物理，只标状态）；真正的初速度由 PlayerJumpMotor 施加。
+        // 入参：无。
+        // 返回：true 表示可以起跳；false 表示已死、有动作在播、正在格挡、正在落地缓冲、或已经离地。
+        // 步骤：1) 五类前置拒绝 2) 取消落地缓冲 3) 置空中并把竖直速度设为向上，让本帧就选 Jump。
+        // 上游/下游：PlayerBrain 的 Space 键 → PlayerJumpMotor.TryJump → 本方法。
+        public bool NotifyJump()
+        {
+            if (m_context.Dead || m_context.ActionBusy || m_hasPendingAction || m_blocking || m_context.Landing || !m_context.Grounded)
+            {
+                return false;
+            }
+
+            m_landingFrames = 0;
+            m_context.Landing = false;
+            m_context.Grounded = false;
+            m_context.VerticalSpeed = 1f;
+            return true;
+        }
+
+        // 功能：通知落地，开始约 0.2 秒的缓冲（期间不能移动）。
+        // 入参：无。
+        // 返回：true 表示这次真的落地了；false 表示本来就在落地缓冲里或已经死了。
+        // 步骤：1) 死亡与重复落地拒绝 2) 置落地与缓冲帧数 3) 清竖直速度。
+        // 上游/下游：PlayerJumpMotor 检测到 JustLanded 时调用；Tick 每帧递减缓冲帧数。
+        public bool NotifyLand()
+        {
+            if (m_context.Dead || m_landingFrames > 0)
+            {
+                return false;
+            }
+
+            m_context.Grounded = true;
+            m_context.VerticalSpeed = 0f;
+            m_landingFrames = m_timings.LandFrames;
+            m_context.Landing = m_landingFrames > 0;
+            return true;
+        }
+
         // 状态真的发生切换后触发；参数是切换记录（含帧号与前后状态名）
         public event Action<StateChangeRecord> StateChanged
         {
@@ -146,7 +210,13 @@ namespace NBC.Game.Player
                 return;
             }
 
-            if (input.CrouchToggle && !m_context.ActionBusy)
+            if (m_landingFrames > 0)
+            {
+                m_landingFrames--;
+            }
+            m_context.Landing = m_landingFrames > 0;
+
+            if (input.CrouchToggle && !m_context.ActionBusy && m_context.Grounded)
             {
                 m_context.Crouch = !m_context.Crouch;
             }
@@ -163,7 +233,11 @@ namespace NBC.Game.Player
                 ApplyLocomotion(ChooseLocomotion(input));
             }
 
-            bool canMove = !m_blocking && !PlayerStateCatalog.BlocksMovement(m_fsm.LowerCurrent);
+            // 空中、落地缓冲、格挡都不许水平移动；动作层/反应层按 BlocksMovement 判
+            bool canMove = m_context.Grounded
+                && !m_blocking
+                && !m_context.Landing
+                && !PlayerStateCatalog.BlocksMovement(m_fsm.LowerCurrent);
             m_context.Speed = canMove ? SpeedOf(m_fsm.LowerCurrent) : 0f;
             m_context.Direction = canMove ? ClampDirection(input.MoveX) : 0f;
             m_context.Motion.SetMoveSpeed(m_context.Speed);
@@ -364,6 +438,8 @@ namespace NBC.Game.Player
             m_hasPendingAction = false;
             m_comboQueued = false;
             m_blocking = false;
+            m_landingFrames = 0;
+            m_context.Landing = false;
             m_context.Motion.MovementEnabled = false;
             m_context.Motion.SetMoveSpeed(0f);
             m_fsm.ForceChange(EPlayerState.Reaction, EPlayerState.Die);
@@ -372,11 +448,21 @@ namespace NBC.Game.Player
 
         // 功能：按输入选一个移动状态（只在没有动作在播时用）。
         // 入参：input 这一帧的输入。
-        // 返回：Idle / Walk / Run / Sprint / CrouchIdle / CrouchWalk / CrouchJog 之一。
-        // 步骤：没方向就站着；蹲着优先蹲三态；否则按 Shift→冲刺、Alt→慢走、默认跑。
+        // 返回：Idle / Walk / Run / Sprint / CrouchIdle / CrouchWalk / CrouchJog / Jump / Fall / Land 之一。
+        // 步骤：1) 离地先按竖直速度分 Jump / Fall（空中不响应方向）2) 落地缓冲选 Land 3) 其余按方向与蹲 Shift Alt。
         // 上游/下游：Tick 调用。
         private EPlayerState ChooseLocomotion(in PlayerInput input)
         {
+            if (!m_context.Grounded)
+            {
+                return m_context.VerticalSpeed > 0f ? EPlayerState.Jump : EPlayerState.Fall;
+            }
+
+            if (m_context.Landing)
+            {
+                return EPlayerState.Land;
+            }
+
             if (!input.HasDirection())
             {
                 return m_context.Crouch ? EPlayerState.CrouchIdle : EPlayerState.Idle;
@@ -558,6 +644,7 @@ namespace NBC.Game.Player
             RegisterSub(EPlayerState.CrouchJog);
             RegisterSub(EPlayerState.Jump);
             RegisterSub(EPlayerState.Fall);
+            RegisterSub(EPlayerState.Land);
         }
 
         // 功能：注册动作层的九个状态。

@@ -5,7 +5,7 @@
 namespace NBC.Game.Player
 {
     // 主要功能：集中放动画参数名，避免「一个地方写 "Speed"、另一个地方写 "speed"」这种拼写事故。
-    // 主要数据成员：十个参数名常量（前两个是控制器原有参数，其余是 R035a 新增）。
+    // 主要数据成员：十一个参数名常量（前两个是控制器原有参数，其余是 R035a/R035d 新增）。
     // 主要外部方法：无。
     // 谁在用它：PlayerAnimatorPublisher（把它们换成哈希）、PlayerAnimation（沿用原有 Speed/Direction）。
     public static class PlayerAnimatorNames
@@ -39,15 +39,18 @@ namespace NBC.Game.Player
 
         // 是否死亡（true 后永久停在死亡状态）
         public const string Dead = "Dead";
+
+        // 是否正在落地缓冲（true 时停在 S_Land，约 0.2 秒）
+        public const string Landing = "Landing";
     }
 
     // 主要功能：一帧动画参数的只读快照 —— 状态机算完，发布器照着写，谁也不回读 Animator。
-    // 主要数据成员：Speed/Direction/VerticalSpeed 是浮点，Crouch/Grounded/ActionBusy/Dead 是布尔，ActionId/StackSide/PoseIndex 是编号。
-    // 主要外部方法：构造函数（十个参数，顺序与字段一致）。
+    // 主要数据成员：Speed/Direction/VerticalSpeed 是浮点，Crouch/Grounded/ActionBusy/Dead/Landing 是布尔，ActionId/StackSide/PoseIndex 是编号。
+    // 主要外部方法：构造函数（十一个参数，顺序与字段一致）。
     // 谁在用它：PlayerStateMachine 产出、PlayerAnimatorPublisher 消费；测试里直接断言字段值。
     public readonly struct PlayerAnimatorParams
     {
-        // 移动速度，-1~1（控制器按 0.1/3/6 阈值分流；不是米每秒）
+        // 移动速度，米/秒（0~8；混合树按 0/2/5/8 混合，不是 -1~1）
         public readonly float Speed;
 
         // 横向速度，-1~1（左负右正）
@@ -77,8 +80,11 @@ namespace NBC.Game.Player
         // 是否死亡
         public readonly bool Dead;
 
+        // 是否正在落地缓冲
+        public readonly bool Landing;
+
         // 功能：把状态机算好的一帧参数打包。
-        // 入参：十个值，含义与同名字段一致。
+        // 入参：十一个值，含义与同名字段一致。
         // 返回：结构本身（值语义，调用方拿到的是副本）。
         // 步骤：逐个赋值，不做范围校验 —— 校验放在状态机里，避免每帧多做一次判断。
         // 上游/下游：PlayerStateContext.BuildParams 调用；PlayerAnimatorPublisher.Apply 读取。
@@ -92,7 +98,8 @@ namespace NBC.Game.Player
             float actionId,
             float stackSide,
             float poseIndex,
-            bool dead)
+            bool dead,
+            bool landing)
         {
             Speed = speed;
             Direction = direction;
@@ -104,6 +111,7 @@ namespace NBC.Game.Player
             StackSide = stackSide;
             PoseIndex = poseIndex;
             Dead = dead;
+            Landing = landing;
         }
     }
 }
