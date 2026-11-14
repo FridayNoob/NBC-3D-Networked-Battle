@@ -182,7 +182,7 @@ namespace NBC.Game.Player
         // 功能：找齐组件、构造状态机、订阅状态切换日志。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 找 PlayerMove（找不到就禁用自己）2) 找或加 Publisher 3) 关旧动画 4) 换控制器副本并清掉表情动作的收剑事件 5) 建上下文与状态机 6) 订阅日志。
+        // 步骤：1) 找 PlayerMove（找不到就禁用自己）2) 找或加 Publisher 3) 关旧动画 4) 换控制器副本、清掉表情动作的收剑事件、给蒙皮网格补包围盒守卫 5) 建上下文与状态机 6) 订阅日志。
         // 上游/下游：Unity 生命周期；下游 PlayerStateMachine 构造函数。
         private void Awake()
         {
@@ -219,6 +219,11 @@ namespace NBC.Game.Player
                 }
 
                 StripPoseClipEvents(animator);
+
+                if (GetComponent<PlayerSkinnedMeshGuard>() == null)
+                {
+                    gameObject.AddComponent<PlayerSkinnedMeshGuard>();
+                }
             }
 
             m_context = new PlayerStateContext(m_motion);

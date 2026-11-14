@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-14 | 按 F 摆姿势时角色/剑「闪一下」（Angry / Smile / Surprise 明显） | 蒙皮网格用绑定姿势烘焙的包围盒剔除（`updateWhenOffscreen=false`），抬手时剑和衣摆超出盒子被整块剔除一帧 | 新增 `Client/Assets/_Project/Game/Player/PlayerSkinnedMeshGuard.cs`；`PlayerBrain.Awake` 自动挂 | 七个姿势轮换时剑与衣摆不消失；把 `m_logApplied` 打开会打印「已把 15 个蒙皮网格改成逐帧算包围盒」 |
 | 2026-10-26 | Play 时报 `Location is invalid: 'AchievementConfig'` | YooAsset 模拟清单停在 09-23，而该表 09-26 才加 | 无（重跑一次构建） | 清单 `.bytes` 里能搜到该地址，Play 不再报错 |
 | 2026-10-26 | 起 Host 报「监听 9000 失败（WSAEACCES）」 | 9000 落在 Windows 保留段 8945–9044 | 无（改用 `--port=7778`） | `netsh int ipv4 show excludedportrange` 不含 7778；Host 起来 |
 | 2026-10-26 | 锁步模式下拖滑条，`单位-1` 不动 | 「自动追击」每帧把滑条值改写成 0 | `Editor/NetDebugWindow.cs`（追击改用自有字段） | 勾着自动追击时拖滑条，`单位-1` 仍能走 |
