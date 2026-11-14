@@ -304,14 +304,14 @@ namespace NBC.Game.Player
             m_context.ActionId = PlayerActionId.None;
         }
 
-        // 功能：请求播受击；受击优先级高于攻击，会把正在播的攻击打断。
+        // 功能：请求播受击；硬直期间免疫，死亡后拒绝，其余情况可打断攻击/技能。
         // 入参：fromLeft 为 true 表示从左侧被打（决定 StackSide 与 HitLeft/HitRight）。
-        // 返回：true 表示请求已受理；false 表示已死。
-        // 步骤：死亡直接拒绝；否则写 StackSide 并排队受击。
+        // 返回：true 表示请求已受理；false 表示已死或正在硬直。
+        // 步骤：死亡与硬直都直接拒绝；否则写 StackSide 并排队受击。
         // 上游/下游：PlayerBrain 受击调试键 / 将来网络受击消息调用。
         public bool NotifyHit(bool fromLeft)
         {
-            if (m_context.Dead)
+            if (m_context.Dead || IsStunned)
             {
                 return false;
             }
@@ -322,6 +322,30 @@ namespace NBC.Game.Player
             EPlayerState state = fromLeft ? EPlayerState.HitLeft : EPlayerState.HitRight;
             return BeginAction(state, PlayerActionId.Hit, m_timings.HitFrames);
         }
+
+        // 功能：请求进入硬直；硬直优先级高于动作层（能打断攻击、技能、冲刺、姿势），低于死亡。
+        // 入参：无。
+        // 返回：true 表示已受理；false 表示已死或已在硬直中。
+        // 步骤：死亡与重复硬直直接拒绝；否则清连击/格挡并排队硬直。
+        // 上游/下游：PlayerBrain 的 T 键调用 / 将来网络控制消息调用。
+        public bool NotifyStun()
+        {
+            if (m_context.Dead || IsStunned)
+            {
+                return false;
+            }
+
+            m_comboQueued = false;
+            m_blocking = false;
+            return BeginAction(EPlayerState.Stun, PlayerActionId.Stun, m_timings.StunFrames);
+        }
+
+        // 功能：当前是否处于硬直。
+        // 入参：无。
+        // 返回：true 表示硬直中。
+        // 步骤：硬直期间 ActionBusy 为 true 且 ActionId 为 11，两者都要判（最后一帧 ActionId 会先清）。
+        // 上游/下游：NotifyHit / 外部查询调用。
+        public bool IsStunned => m_context.ActionBusy && m_context.ActionId == PlayerActionId.Stun;
 
         // 功能：请求进入死亡状态，之后任何移动/动作请求都无效。
         // 入参：无。

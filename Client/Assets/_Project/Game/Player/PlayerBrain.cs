@@ -121,9 +121,17 @@ namespace NBC.Game.Player
         [SerializeField]
         private KeyCode m_attackKey = KeyCode.J;
 
-        // 受击调试键
+        // 受击调试键（左受击）
         [SerializeField]
         private KeyCode m_hitKey = KeyCode.K;
+
+        // 右受击调试键
+        [SerializeField]
+        private KeyCode m_hitRightKey = KeyCode.Y;
+
+        // 硬直调试键
+        [SerializeField]
+        private KeyCode m_stunKey = KeyCode.T;
 
         // 死亡调试键
         [SerializeField]
@@ -355,6 +363,19 @@ namespace NBC.Game.Player
             }
         }
 
+        // 功能：请求进入硬直。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：转给状态机；被拒绝（已死/已在硬直）时什么都不做。
+        // 上游/下游：Update 的 T 键、外部网络消息；下游 PlayerStateMachine.NotifyStun。
+        public void NotifyStun()
+        {
+            if (m_machine != null)
+            {
+                m_machine.NotifyStun();
+            }
+        }
+
         // 功能：请求进入死亡状态。
         // 入参：无。
         // 返回：无。
@@ -392,6 +413,16 @@ namespace NBC.Game.Player
                 if (Input.GetKeyDown(m_hitKey))
                 {
                     NotifyHit(true);
+                }
+
+                if (Input.GetKeyDown(m_hitRightKey))
+                {
+                    NotifyHit(false);
+                }
+
+                if (Input.GetKeyDown(m_stunKey))
+                {
+                    NotifyStun();
                 }
 
                 if (Input.GetKeyDown(m_dieKey))
