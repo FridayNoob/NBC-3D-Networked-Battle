@@ -244,25 +244,27 @@ namespace NBC.Tests.EditMode
             Assert.IsTrue(m_motion.MovementEnabled);
         }
 
-        // 功能：验证按 F 七次能把姿势轮换一整圈（1~6 再回 0）。
+        // 功能：验证按 F 能把姿势从第 1 个轮换到第 7 个、第 8 次回到第 1 个，且参数快照同步变化。
         // 入参：无。
         // 返回：无。
-        // 步骤：循环七次「请求姿势 → 推满 90 帧」→ 断言 PoseIndex 依次为 1..6、0。
+        // 步骤：循环七次「请求姿势 → 推满 90 帧」→ 断言 Parameters.PoseIndex 依次为 0..6；再按一次断言回到 0。
         // 上游/下游：NUnit 调用。
+        // 注意：这里必须断言 Parameters.PoseIndex（发给 Animator 的那份），只断言内部字段会漏掉「没写进上下文」的 bug。
         [Test]
         public void Pose_CyclesThroughSevenValues()
         {
-            for (int expected = 1; expected <= 6; expected++)
+            for (int expected = 0; expected <= 6; expected++)
             {
                 Assert.IsTrue(m_machine.NotifyPose());
                 Tick();
-                Assert.AreEqual(expected, m_machine.PoseIndex);
+                Assert.AreEqual((float)expected, m_machine.Parameters.PoseIndex, 0.001f, "参数快照里的 PoseIndex 必须同步");
+                Assert.AreEqual((expected + 1) % 7, m_machine.PoseIndex, "内部索引已经指向下一个表情");
                 AdvanceTo(90);
             }
 
             Assert.IsTrue(m_machine.NotifyPose());
             Tick();
-            Assert.AreEqual(0, m_machine.PoseIndex, "第七次之后回到 0");
+            Assert.AreEqual(0f, m_machine.Parameters.PoseIndex, 0.001f, "第八次回到第一个表情");
         }
 
         // 功能：验证蹲着做姿势，结束后回蹲而不是回站立。

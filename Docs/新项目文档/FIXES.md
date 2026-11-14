@@ -295,3 +295,12 @@
 - 根因二：`WorldPlayerSetup` 只在「PlayerAnimation 仍是启用」时打日志，而 `PlayerBrain.Awake` 更早把它关了 ⇒ 日志被跳过
 - 修法二：改成无论此前是否已关都打一行，并写明「本次由 WorldPlayerSetup 关掉」/「此前已被 PlayerBrain 关掉」
 - 判据：编辑器 Play 后 Console 必有「根节点上的 PlayerAnimation 已关闭」；按 K 出 `S_Hit_L`、按 L 出 `S_Die`
+
+## 2026-11-14 修复：按 F 七个表情只播第一个 + 角色/剑闪一下
+
+- 现象：R035b 06 第 9 条验收，按 F 始终只播 `CBG_Angry`，而且每次按下角色/剑会闪一下
+- 根因一：`PlayerStateMachine.NotifyPose()` 只改内部字段 `m_poseIndex`，**没写 `m_context.PoseIndex`**；`PlayerStateContext.BuildParams()` 发出去永远是 0 ⇒ Animator 的 `PoseIndex≈0` 恒命中第 55 条过渡，只有第一段能播
+- 修法一：`NotifyPose` 里补 `m_context.PoseIndex = m_poseIndex;`；单测改成断言 `Parameters.PoseIndex`（只断言内部字段会漏掉这类 bug）
+- 根因二：七个 `CBG_*` clip 在 t=0 都带一条 `SwitchSocket` 动画事件，字符串 `To_Put_Socket_Sword`，进姿势的瞬间把剑从右手切到背后、退出时再切回右手 ⇒ 视觉上就是「闪一下」；战斗/技能动作的事件是 `To_Hand_R_Socket`（剑本来就在右手，看不出变化），所以技能不闪
+- 修法二：`PlayerBrain.Awake` 里调 `StripPoseClipEvents`，遍历控制器 clip、把名字以 `CBG_` 开头的 `events` 清空；`AnimationClip.events` 运行期改动只在本次运行有效（退出 Play 还原、不写回美术包），所以控制器与美术包都不动
+- 判据：按 F 时第 1 次播 `CBG_Angry`、第 8 次回到第 1 个，PoseIndex 按 0..6 轮转；按下的瞬间没有角色/剑闪跳

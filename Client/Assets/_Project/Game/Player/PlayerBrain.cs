@@ -20,8 +20,11 @@ namespace NBC.Game.Player
         // 每秒逻辑帧数（动作帧数都按这个口径标）
         private const float FixedDeltaSeconds = 1f / 60f;
 
-        // 一帧最多补几个逻辑步（卡顿后防止一次补几百帧把角色瞬移）
+        // 一帧最多补几个逻辑步（卡顿后防止一次补几十帧把角色瞬移）
         private const int MaxCatchUpSteps = 4;
+
+        // 表情动作（CBG）的 clip 名前缀，用来只清这几段动画的收剑事件
+        private const string PoseClipPrefix = "CBG_";
 
         // 玩家身上的移动组件（Awake 自动找）
         [SerializeField]
@@ -179,7 +182,7 @@ namespace NBC.Game.Player
         // 功能：找齐组件、构造状态机、订阅状态切换日志。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 找 PlayerMove（找不到就禁用自己）2) 找或加 Publisher 3) 关旧动画 4) 换控制器副本 5) 建上下文与状态机 6) 订阅日志。
+        // 步骤：1) 找 PlayerMove（找不到就禁用自己）2) 找或加 Publisher 3) 关旧动画 4) 换控制器副本并清掉表情动作的收剑事件 5) 建上下文与状态机 6) 订阅日志。
         // 上游/下游：Unity 生命周期；下游 PlayerStateMachine 构造函数。
         private void Awake()
         {
@@ -207,13 +210,15 @@ namespace NBC.Game.Player
                 }
             }
 
-            if (m_animatorControllerOverride != null)
+            Animator animator = GetComponentInChildren<Animator>();
+            if (animator != null)
             {
-                Animator animator = GetComponentInChildren<Animator>();
-                if (animator != null && animator.runtimeAnimatorController != m_animatorControllerOverride)
+                if (m_animatorControllerOverride != null && animator.runtimeAnimatorController != m_animatorControllerOverride)
                 {
                     animator.runtimeAnimatorController = m_animatorControllerOverride;
                 }
+
+                StripPoseClipEvents(animator);
             }
 
             m_context = new PlayerStateContext(m_motion);
@@ -241,6 +246,33 @@ namespace NBC.Game.Player
             if (m_logStateChanges)
             {
                 m_machine.StateChanged += OnStateChanged;
+            }
+        }
+
+        // 功能：把七个表情动作（CBG）里的「收剑到背后」动画事件清掉，剑在姿势期间保持握在手里。
+        // 入参：animator 是玩家模型上的动画器。
+        // 返回：无。
+        // 步骤：1) 取控制器里的全部 clip 2) 只挑名字以 CBG 开头的 3) 把事件数组清空（改的是内存里的 clip，不会写回美术包）。
+        // 上游/下游：Awake 调用；下游 AnimationClip.events。
+        // 注意：这些 clip 第 0 帧带 SwitchSocket/To_Put_Socket_Sword，进姿势瞬间会把剑从右手切到背后，退出又切回来，看起来像闪一下。
+        private static void StripPoseClipEvents(Animator animator)
+        {
+            RuntimeAnimatorController controller = animator.runtimeAnimatorController;
+            if (controller == null)
+            {
+                return;
+            }
+
+            AnimationClip[] clips = controller.animationClips;
+            for (int i = 0; i < clips.Length; i++)
+            {
+                AnimationClip clip = clips[i];
+                if (clip == null || !clip.name.StartsWith(PoseClipPrefix) || clip.events.Length == 0)
+                {
+                    continue;
+                }
+
+                clip.events = new AnimationEvent[0];
             }
         }
 

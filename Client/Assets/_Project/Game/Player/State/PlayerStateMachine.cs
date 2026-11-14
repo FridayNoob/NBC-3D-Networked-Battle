@@ -253,8 +253,10 @@ namespace NBC.Game.Player
         // 功能：轮换到下一个姿势（七个 CBG 表情动作）。
         // 入参：无。
         // 返回：true 表示已排队；false 表示已死、有动作在播、或正在格挡。
-        // 步骤：先把 PoseIndex 加一并对 7 取模，再进 Pose。
+        // 步骤：先把当前 PoseIndex 写进参数上下文，再对 7 取模准备下一次，最后进 Pose。
         // 上游/下游：PlayerBrain 的 F 键调用；内部调用 BeginAction。
+        // 注意：PoseIndex 必须同时写进 m_context，否则 BuildParams 发出去永远是 0，七个表情只有第一个能命中；
+        // 用「先发布再自增」是为了第一次按 F 播第一个表情（Index 0 = CBG_Angry）。
         public bool NotifyPose()
         {
             if (m_context.Dead || m_context.ActionBusy || m_blocking)
@@ -262,6 +264,7 @@ namespace NBC.Game.Player
                 return false;
             }
 
+            m_context.PoseIndex = m_poseIndex;
             m_poseIndex = (m_poseIndex + 1) % 7;
             return BeginAction(EPlayerState.Pose, PlayerActionId.Pose, m_timings.PoseFrames);
         }
