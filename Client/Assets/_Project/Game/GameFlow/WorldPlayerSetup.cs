@@ -45,6 +45,13 @@ namespace NBC.Game.GameFlow
         [SerializeField]
         private float m_probeDistance = 50f;
 
+        // 贴地射线的命中缓冲（复用以避免每帧分配；16 个足够覆盖脚下几层物体）
+        private readonly RaycastHit[] m_groundHits = new RaycastHit[16];
+
+        // 贴地诊断：命中点让 y 变化超过 1 厘米时打一行日志（排查「角色上下跳」用；验收完可关掉）
+        [SerializeField]
+        private bool m_logGroundSnap = true;
+
         // 功能：启动时接线：相机跟人、关观察相机。
         // 入参：无
         // 返回：无
@@ -197,8 +204,9 @@ namespace NBC.Game.GameFlow
         // 入参：无
         // 返回：无
         // 步骤：
-        //   1) 从玩家上方往下打一条射线
-        //   2) 打到地面就把 y 设成命中点（保留 x/z）
+        //   1) 从玩家上方往下打一条射线（收集全部命中）
+        //   2) 跳过玩家自己身上的碰撞体（手里的剑有一个 BoxCollider，摆姿势时会被打到，角色就会往上跳一下又落回来）
+        //   3) 取最近的有效命中点，把 y 设成它（保留 x/z）
         // 上游：Unity
         // 下游：Transform.position
         // 注意：只改 y；水平移动仍由 PlayerMove 负责
@@ -212,12 +220,48 @@ namespace NBC.Game.GameFlow
             LogDiagnostics();
 
             Vector3 origin = m_player.position + Vector3.up * m_probeHeight;
+            int count = Physics.RaycastNonAlloc(origin, Vector3.down, m_groundHits, m_probeDistance, m_groundMask, QueryTriggerInteraction.Ignore);
 
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, m_probeDistance, m_groundMask, QueryTriggerInteraction.Ignore))
+            bool found = false;
+            float nearest = float.MaxValue;
+            RaycastHit ground = default;
+
+            for (int i = 0; i < count; i++)
             {
-                Vector3 position = m_player.position;
-                position.y = hit.point.y;
-                m_player.position = position;
+                RaycastHit hit = m_groundHits[i];
+                if (hit.collider == null)
+                {
+                    continue;
+                }
+
+                Transform hitTransform = hit.collider.transform;
+                if (hitTransform == m_player || hitTransform.IsChildOf(m_player))
+                {
+                    continue;
+                }
+
+                if (hit.distance < nearest)
+                {
+                    nearest = hit.distance;
+                    ground = hit;
+                    found = true;
+                }
+            }
+
+            if (!found)
+            {
+                return;
+            }
+
+            float previousY = m_player.position.y;
+            Vector3 position = m_player.position;
+            position.y = ground.point.y;
+            m_player.position = position;
+
+            if (m_logGroundSnap && Mathf.Abs(ground.point.y - previousY) > 0.01f)
+            {
+                Debug.Log("[贴地] y " + previousY.ToString("F3") + " -> " + ground.point.y.ToString("F3")
+                    + "（命中 " + ground.collider.name + "，layer=" + ground.collider.gameObject.layer + "）", this);
             }
         }
     }
