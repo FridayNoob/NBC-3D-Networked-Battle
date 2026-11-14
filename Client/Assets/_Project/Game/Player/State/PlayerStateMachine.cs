@@ -179,7 +179,7 @@ namespace NBC.Game.Player
         // 上游/下游：PlayerBrain 攻击键调用；内部调用 BeginAction，下一段在 AdvanceAction 里接。
         public bool NotifyAttack()
         {
-            if (m_context.Dead)
+            if (m_context.Dead || m_blocking)
             {
                 return false;
             }

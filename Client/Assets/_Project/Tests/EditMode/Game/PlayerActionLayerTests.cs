@@ -9,7 +9,7 @@ namespace NBC.Tests.EditMode
     // 主要功能：验证动作层的排队规则、时长、格挡常驻与姿势轮换，全在纯逻辑层跑，不需要打开场景。
     // 主要数据成员：m_motion（假位移）、m_context（共享状态）、m_machine（被测状态机）、m_frame（逻辑帧号）。
     // 主要外部方法：各个 [Test] 用例。
-    // 谁在用它：Unity Test Runner（EditMode）；AI 不能代跑，由负责人执行。
+    // 谁在用它：Unity Test Runner（EditMode）；按 AGENTS.md 4.3，由 AI 代跑并写回 05。
     public sealed class PlayerActionLayerTests
     {
         // 假位移：只记录闸门与速度，不做真实位移
@@ -87,10 +87,24 @@ namespace NBC.Tests.EditMode
         // 入参：targetFrame 目标帧（从进入动作算起）。
         // 返回：无。
         // 步骤：循环 Tick 直到 context.ActionFrame 达到目标或动作结束。
-        // 上游/下游：连击用例调用。
+        // 上游/下游：技能与姿势用例调用（不涉及连击）。
         private void AdvanceTo(int targetFrame)
         {
             while (m_context.ActionBusy && m_context.ActionFrame < targetFrame)
+            {
+                Tick();
+            }
+        }
+
+        // 功能：精确推进指定帧数。
+        // 入参：frames 要推进的逻辑帧数。
+        // 返回：无。
+        // 步骤：循环调用 Tick；连击用例必须用「精确帧数」而不是「推进到某帧」，
+        //      否则第 1 段结束接上第 2 段时，循环会继续把第 2 段也推完，断言就落在 Idle 上。
+        // 上游/下游：连击用例调用。
+        private void TickFrames(int frames)
+        {
+            for (int i = 0; i < frames; i++)
             {
                 Tick();
             }
@@ -108,25 +122,24 @@ namespace NBC.Tests.EditMode
             Tick();
             Assert.AreEqual(EPlayerState.Attack1, m_machine.State);
 
-            AdvanceTo(20);
+            TickFrames(20);
             Assert.IsTrue(m_machine.NotifyAttack(), "窗口内请求应该被排队");
 
-            AdvanceTo(60);
-            Tick();
-            Assert.AreEqual(EPlayerState.Attack2, m_machine.State);
+            TickFrames(40);
+            Assert.AreEqual(EPlayerState.Attack2, m_machine.State, "第 1 段结束应当直接接上第 2 段");
+            Assert.AreEqual(PlayerActionId.Attack2, m_machine.Parameters.ActionId, 0.001f);
 
-            AdvanceTo(20);
+            TickFrames(20);
             Assert.IsTrue(m_machine.NotifyAttack(), "第 2 段窗口内请求应该被排队");
 
-            AdvanceTo(60);
-            Tick();
-            Assert.AreEqual(EPlayerState.Attack3, m_machine.State);
+            TickFrames(40);
+            Assert.AreEqual(EPlayerState.Attack3, m_machine.State, "第 2 段结束应当直接接上第 3 段");
         }
 
         // 功能：验证窗口没开时连按不会接下一段。
         // 入参：无。
         // 返回：无。
-        // 步骤：起手后立刻再请求 → 断言拒绝 → 等第 1 段结束 → 断言回到移动层。
+        // 步骤：起手后立刻再请求 → 断言拒绝 → 推满 60 帧 → 断言回到移动层（无输入 = 站立）。
         // 上游/下游：NUnit 调用。
         [Test]
         public void ComboOutsideWindow_IsRejected()
@@ -135,37 +148,33 @@ namespace NBC.Tests.EditMode
             Tick();
             Assert.IsFalse(m_machine.NotifyAttack(), "第 18 帧之前不接受下一段");
 
-            AdvanceTo(60);
-            Tick();
-            Assert.AreEqual(EPlayerState.Run, m_machine.State);
+            TickFrames(60);
+            Assert.AreEqual(EPlayerState.Idle, m_machine.State, "没有排队就连击结束，回移动层");
         }
 
         // 功能：验证第 3 段之后不会再接第 1 段。
         // 入参：无。
         // 返回：无。
-        // 步骤：直接进第 3 段 → 窗口内请求 → 断言排队被拒 → 结束后回移动层。
+        // 步骤：精确推进打完三段 → 第 3 段窗口内请求断言被拒 → 推满 93 帧断言回移动层。
         // 上游/下游：NUnit 调用。
         [Test]
         public void AfterThirdAttack_DoesNotChain()
         {
             m_machine.NotifyAttack();
             Tick();
-            AdvanceTo(20);
+            TickFrames(20);
             m_machine.NotifyAttack();
-            AdvanceTo(60);
-            Tick();
-            AdvanceTo(20);
+            TickFrames(40);
+            TickFrames(20);
             m_machine.NotifyAttack();
-            AdvanceTo(60);
-            Tick();
+            TickFrames(40);
             Assert.AreEqual(EPlayerState.Attack3, m_machine.State);
 
-            AdvanceTo(20);
+            TickFrames(20);
             Assert.IsFalse(m_machine.NotifyAttack(), "第 3 段没有下一段");
 
-            AdvanceTo(93);
-            Tick();
-            Assert.AreEqual(EPlayerState.Run, m_machine.State);
+            TickFrames(73);
+            Assert.AreEqual(EPlayerState.Idle, m_machine.State);
         }
 
         // 功能：验证技能期间禁移动、到点回移动层。

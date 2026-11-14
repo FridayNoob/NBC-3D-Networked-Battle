@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-14 | 格挡中按左键/J 还能起手攻击；连击单测停在 Attack1/Idle | `NotifyAttack` 只判死亡没判格挡；测试辅助 `AdvanceTo` 会把下一段推过头 | `PlayerStateMachine.cs`（首行加 m_blocking 判断）、`PlayerActionLayerTests.cs`（新增 TickFrames） | Test Runner 全量 747/747 绿 |
 | 2026-11-14 | 按 F 摆姿势播到一半，角色整个人跳一下又落回（Angry / Smile / Surprise 明显） | 贴地射线遮罩是 `-1`，摆姿势时手里的剑（`Weapon_Sword` 的 `BoxCollider`）移到射线下面，被当成地面把玩家抬到剑的高度 | `Client/Assets/_Project/Game/GameFlow/WorldPlayerSetup.cs`（`LateUpdate` 改 `RaycastNonAlloc` 并跳过玩家自身碰撞体） | 七个姿势轮换时角色不再上下跳；站原地按 F，Console 无异常 |
 | 2026-10-26 | Play 时报 `Location is invalid: 'AchievementConfig'` | YooAsset 模拟清单停在 09-23，而该表 09-26 才加 | 无（重跑一次构建） | 清单 `.bytes` 里能搜到该地址，Play 不再报错 |
 | 2026-10-26 | 起 Host 报「监听 9000 失败（WSAEACCES）」 | 9000 落在 Windows 保留段 8945–9044 | 无（改用 `--port=7778`） | `netsh int ipv4 show excludedportrange` 不含 7778；Host 起来 |
