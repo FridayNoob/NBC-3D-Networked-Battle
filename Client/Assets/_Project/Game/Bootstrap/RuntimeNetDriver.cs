@@ -106,6 +106,18 @@ namespace NBC.Game.Bootstrap
         private const int PlayAreaHalfExtentMm = 5000;
         private PlayerAnimation m_playerAnimation;
 
+        // 本地英雄的大脑（血量为 0 时切到死亡状态；懒加载，只有 Battle 场景才存在）
+        private PlayerBrain m_playerBrain;
+
+        // 本地英雄是否还活着（死亡流程读它；还没收到快照时按活着算，避免开局误判）
+        private bool m_heroAlive = true;
+
+        // 当前快照里的英雄个数（1 = 单人副本，>1 = 多人副本；死亡后决定「退出」还是「旁观」）
+        private int m_heroEntityCount;
+
+        // 死亡分流组件是否已检查过（Battle 里只在第一次拿到英雄快照时挂一次）
+        private bool m_deathFlowChecked;
+
         // 剑上的 Trigger 碰撞体（R019：用「剑碰到谁」决定打谁）；只找/建一次
         private Collider m_swordCollider;
 
@@ -162,6 +174,39 @@ namespace NBC.Game.Bootstrap
         public bool IsJoined
         {
             get { return m_session != null && m_session.InRoom; }
+        }
+
+        // 功能：告诉调用方本地英雄是否还活着。
+        // 入参：无。
+        // 返回：true 表示活着；false 表示已倒下（或还没收到快照时按 true）。
+        // 步骤：直接返回缓存值，缓存每帧在 TrackHeroHealth 里更新。
+        // 上游/下游：PlayerDeathFlow.Update 读它；TrackHeroHealth 写它。
+        public bool HeroAlive
+        {
+            get { return m_heroAlive; }
+        }
+
+        // 功能：告诉调用方当前快照里有几个英雄。
+        // 入参：无。
+        // 返回：英雄实体个数；0 表示还没收到快照。
+        // 步骤：直接返回缓存值，缓存每帧在 TrackHeroHealth 里数一遍。
+        // 上游/下游：PlayerDeathFlow 用它区分单人/多人副本。
+        public int HeroEntityCount
+        {
+            get { return m_heroEntityCount; }
+        }
+
+        // 功能：主动退出当前房间（死亡后回世界用）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：会话存在就发 LeaveRoomRequest；没有会话时什么都不做（场景切换照常进行）。
+        // 上游/下游：PlayerDeathFlow 倒计时结束调用；下游 NetSession.LeaveRoom。
+        public void LeaveRoom()
+        {
+            if (m_session != null)
+            {
+                m_session.LeaveRoom();
+            }
         }
 
         // 功能：设置敌人模型 prefab（必须在本组件 Start 之前设置，或在 Play 前配好）。
@@ -844,8 +889,18 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
+            EnsureDeathFlow();
+
             HeroHp = hero.Hp;
             HeroMaxHp = hero.MaxHp;
+            m_heroAlive = hero.Alive;
+            m_heroEntityCount = CountHeroEntities();
+
+            // 血量为 0：让本地角色进死亡状态（只切一次，PlayerBrain 自己会拒绝重复请求）
+            if (!hero.Alive)
+            {
+                RequestPlayerDeathOnce();
+            }
 
             if (!m_heroHpKnown)
             {
@@ -872,6 +927,77 @@ namespace NBC.Game.Bootstrap
 
             m_heroLastHp = hero.Hp;
         }
+        // 功能：确保场景里有死亡分流组件（Battle 的英雄是运行时生成的，挂不到预制体上）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：场景里已经有 PlayerDeathFlow 就返回，没有就挂在本驱动所在物体上。
+        // 上游/下游：TrackHeroHealth 调用；下游 PlayerDeathFlow（它会自己去全场景找英雄引用）。
+        private void EnsureDeathFlow()
+        {
+            if (m_deathFlowChecked)
+            {
+                return;
+            }
+
+            m_deathFlowChecked = true;
+
+            if (UnityEngine.Object.FindObjectOfType<PlayerDeathFlow>() == null)
+            {
+                gameObject.AddComponent<PlayerDeathFlow>();
+            }
+        }
+
+        // 功能：数一数当前快照里有几个英雄。
+        // 入参：无。
+        // 返回：英雄实体个数（Kind == 0）；没有快照返回 0。
+        // 步骤：遍历表现层的实体列表，按 Kind 判英雄。
+        // 上游/下游：TrackHeroHealth 调用；下游 PlayerDeathFlow.HeroEntityCount。
+        private int CountHeroEntities()
+        {
+            if (m_feed == null || m_feed.View == null)
+            {
+                return 0;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+            int count = 0;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                if (entities[i].Kind == 0)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        // 功能：本地英雄倒下时把大脑切到死亡状态（幂等）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 懒加载 PlayerBrain 2) 已经死了就不重复请求 3) 调 NotifyDead。
+        // 上游/下游：TrackHeroHealth 调用；下游 PlayerBrain.NotifyDead。
+        private void RequestPlayerDeathOnce()
+        {
+            if (m_playerBrain == null)
+            {
+                m_playerBrain = UnityEngine.Object.FindObjectOfType<PlayerBrain>();
+            }
+
+            if (m_playerBrain == null || m_playerBrain.IsDead)
+            {
+                return;
+            }
+
+            m_playerBrain.NotifyDead();
+        }
+
+        // 功能：把模式、RTT、帧号写进 HUD 只读的静态统计。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：状态同步写快照 tick，帧同步写已步进帧；没有会话就保持上一帧的值。
+        // 上游/下游：Update 调用；下游 NetRuntimeStats（HUD 只读它）。
         private void PushStats()
         {
             NetRuntimeStats.SetRtt(m_session.RttMs);

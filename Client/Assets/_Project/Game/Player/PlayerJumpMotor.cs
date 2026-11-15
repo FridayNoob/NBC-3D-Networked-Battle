@@ -93,6 +93,18 @@ namespace NBC.Game.Player
             EnsureMotion();
         }
 
+        // 功能：把竖直积分器归零（复活传送后用，避免死亡时正在空中把角色吊在半空）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 确保积分器存在 2) 调 ResetToGround 把高度与竖直速度清零。
+        // 上游/下游：PlayerDeathFlow.ReviveInWorld 调用；下游 PlayerVerticalMotion.ResetToGround。
+        // 注意：不改 m_groundY，下一次 Step 的 ProbeGround 会重新采样地面高度。
+        public void ResetToGround()
+        {
+            EnsureMotion();
+            m_motion.ResetToGround();
+        }
+
         // 功能：请求起跳。
         // 入参：无。
         // 返回：true 表示真的跳了；false 表示在空中、已死、有动作在播或正在落地缓冲。

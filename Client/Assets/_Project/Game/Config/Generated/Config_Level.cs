@@ -16,5 +16,6 @@ namespace NBC.Game.Config
         public int monsterWaves;  // 怪物波数（int）
         public int timeLimitSeconds;  // 时限（秒）（int）
         public int bossSkillId;  // 首领技能（可空）（ref:Skill?），**0 表示无引用**（主键永远 >= 1，所以 0 不会被误认）
+        public int deathCountdownSeconds;  // 死亡倒计时（秒）（int）
     }
 }

@@ -1,0 +1,420 @@
+// 这个文件里有：
+//   PlayerDeathFlow：角色死后的分流处理（世界回出生点复活 / 副本单人退出 / 副本多人留房旁观）。
+
+using System;
+using NBC.Game.Bootstrap;
+using NBC.Game.Config;
+using NBC.Game.GameFlow;
+using NBC.Game.UI;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+namespace NBC.Game.Player
+{
+    // 主要功能：发现角色死亡 → 黑屏倒计时 → 按场景分流（世界复活、副本单人退出、副本多人旁观）。
+    // 主要数据成员：m_countdownSeconds（秒）、m_worldSpawn（世界出生点）、m_levelId（读 Level 表用）、m_brain / m_move / m_jumpMotor / m_driver。
+    // 主要外部方法：无（挂在玩家根节点上，Update 里自己驱动）。
+    // 谁在用它：World 与 Battle 两个场景里的 [Player_Hero] 根节点。
+    public sealed class PlayerDeathFlow : MonoBehaviour
+    {
+        // 世界场景名（用来区分「本地世界」与「联网副本」）
+        private const string WorldSceneName = "World";
+
+        // 读不到 Level 表时的兜底倒计时（秒）
+        private const float FallbackCountdownSeconds = 5f;
+
+        // 倒计时秒数；Start 里会优先用 Level 表的 deathCountdownSeconds
+        [SerializeField] private float m_countdownSeconds = FallbackCountdownSeconds;
+
+        // 世界出生点（村口，和 R034 记的坐标一致）
+        [SerializeField] private Vector3 m_worldSpawn = new Vector3(280.799f, 1.45f, 425.014f);
+
+        // 读哪一行 Level 配置（默认第 1 行）
+        [SerializeField] private int m_levelId = 1;
+
+        // 死亡期间要不要把角色藏起来（旁观模式用；世界复活不需要）
+        [SerializeField] private bool m_hideWhenDead = true;
+
+        // 要不要打诊断日志
+        [SerializeField] private bool m_logDiagnostics = true;
+
+        // 玩家根节点上的大脑 / 移动 / 跳跃电机（懒找）
+        private PlayerBrain m_brain;
+        private PlayerMove m_move;
+        private PlayerJumpMotor m_jumpMotor;
+
+        // 联网驱动（只有 Battle 场景有）
+        private RuntimeNetDriver m_driver;
+
+        // 角色身上所有渲染器（隐藏/恢复用）
+        private Renderer[] m_renderers;
+
+        // 是否正在倒计时
+        private bool m_counting;
+
+        // 剩余秒数
+        private float m_remaining;
+
+        // 是否已进入旁观模式
+        private bool m_spectating;
+
+        // 倒计时结束后的分流是否已经执行过
+        private bool m_resolved;
+
+        // 功能：缓存引用、读配置、确保死亡黑幕存在。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 找大脑/移动/跳跃电机 2) 收渲染器列表 3) 读 Level 表倒计时 4) 建黑幕单例。
+        // 上游/下游：Unity 生命周期；下游 LevelConfig.Get、DeathScreenOverlay.Ensure。
+        private void Awake()
+        {
+            m_brain = GetComponent<PlayerBrain>();
+            m_move = GetComponent<PlayerMove>();
+            m_jumpMotor = GetComponent<PlayerJumpMotor>();
+            m_renderers = GetComponentsInChildren<Renderer>(true);
+            m_countdownSeconds = ResolveCountdownSeconds();
+            DeathScreenOverlay.Ensure();
+        }
+
+        // 功能：补找 Component 式的引用（Battle 场景里本组件挂在别的物体上时用）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 缺大脑就全场景找一个 2) 缺移动就全场景找一个 3) 渲染器为空就从角色模型上收一遍。
+        // 上游/下游：BeginCountdown / EnterSpectator 前调用。
+        private void EnsureFallbackRefs()
+        {
+            if (m_brain == null)
+            {
+                m_brain = UnityEngine.Object.FindObjectOfType<PlayerBrain>();
+            }
+
+            if (m_move == null)
+            {
+                m_move = UnityEngine.Object.FindObjectOfType<PlayerMove>();
+            }
+
+            if (m_jumpMotor == null && m_move != null)
+            {
+                m_jumpMotor = m_move.GetComponent<PlayerJumpMotor>();
+            }
+
+            if ((m_renderers == null || m_renderers.Length == 0) && m_move != null)
+            {
+                m_renderers = m_move.GetComponentsInChildren<Renderer>(true);
+            }
+        }
+
+        // 功能：每帧看角色死没死，死了就开始倒计时，倒计时结束做分流。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 没死就返回 2) 第一次发现死亡就开倒计时 3) 倒计时递减并刷黑幕 4) 到点分流。
+        // 上游/下游：Unity 生命周期；下游 DeathScreenOverlay、ResolveWorld / ResolveBattle。
+        private void Update()
+        {
+            if (!IsDeadNow())
+            {
+                return;
+            }
+
+            if (!m_counting && !m_resolved)
+            {
+                BeginCountdown();
+            }
+
+            if (m_spectating)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    ExitToWorld("手动退出副本");
+                }
+
+                return;
+            }
+
+            if (!m_counting)
+            {
+                return;
+            }
+
+            m_remaining -= Time.deltaTime;
+            DeathScreenOverlay overlay = DeathScreenOverlay.Ensure();
+            overlay.SetCountdown(m_remaining);
+
+            if (m_remaining <= 0f)
+            {
+                m_counting = false;
+                m_resolved = true;
+                ResolveDeath();
+            }
+        }
+
+        // 功能：判断「现在算不算死了」。
+        // 入参：无。
+        // 返回：true 表示该走死亡流程。
+        // 步骤：本地世界看大脑的死亡标记；联网副本先看驱动有没有收到「英雄已倒下」。
+        // 上游/下游：Update 调用。
+        private bool IsDeadNow()
+        {
+            if (m_brain != null && m_brain.IsDead)
+            {
+                return true;
+            }
+
+            RuntimeNetDriver driver = GetDriver();
+
+            if (driver != null && driver.IsJoined && !driver.HeroAlive)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        // 功能：开始倒计时并显示黑幕。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 标记倒计时 2) 复位剩余秒数 3) 判断单人还是多人，写不同提示 4) 显示黑幕。
+        // 上游/下游：Update 调用；下游 DeathScreenOverlay.Show。
+        private void BeginCountdown()
+        {
+            EnsureFallbackRefs();
+            m_counting = true;
+            m_remaining = m_countdownSeconds;
+
+            DeathScreenOverlay overlay = DeathScreenOverlay.Ensure();
+            overlay.Show("你已倒下", HintForMode());
+            overlay.SetCountdown(m_remaining);
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 开始倒计时 " + m_countdownSeconds.ToString("0.0") + " 秒"
+                    + "（场景=" + SceneManager.GetActiveScene().name
+                    + "，英雄数=" + (GetDriver() != null ? GetDriver().HeroEntityCount : 0) + "）");
+            }
+        }
+
+        // 功能：倒计时结束后按场景与人数分流。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：世界场景直接复活；副本里多人留房旁观、单人退出回世界。
+        // 上游/下游：Update 调用；下游 ReviveInWorld / EnterSpectator / ExitToWorld。
+        private void ResolveDeath()
+        {
+            if (IsWorldScene())
+            {
+                ReviveInWorld();
+                return;
+            }
+
+            RuntimeNetDriver driver = GetDriver();
+            int heroes = driver != null ? driver.HeroEntityCount : 1;
+
+            if (heroes > 1)
+            {
+                EnterSpectator();
+            }
+            else
+            {
+                ExitToWorld("单人副本倒下");
+            }
+        }
+
+        // 功能：在世界里把角色原地复活并送回出生点。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 传送 2) 竖直积分清零 3) 让状态机复活 4) 关黑幕。
+        // 上游/下游：ResolveDeath 调用；下游 PlayerBrain.NotifyRevive、PlayerJumpMotor.ResetToGround。
+        private void ReviveInWorld()
+        {
+            transform.position = m_worldSpawn;
+
+            if (m_jumpMotor != null)
+            {
+                m_jumpMotor.ResetToGround();
+            }
+
+            if (m_brain != null)
+            {
+                m_brain.NotifyRevive();
+            }
+
+            SetRenderersVisible(true);
+            DeathScreenOverlay.Ensure().Hide();
+            m_resolved = false;
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 已在世界复活，位置=" + m_worldSpawn);
+            }
+        }
+
+        // 功能：多人副本里进入旁观：藏起自己、关掉操作、黑幕改成提示。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 标记旁观 2) 藏渲染器 3) 关移动与跳跃 4) 黑幕写「按 Esc 退出」。
+        // 上游/下游：ResolveDeath 调用；下游 DeathScreenOverlay。
+        private void EnterSpectator()
+        {
+            EnsureFallbackRefs();
+            m_spectating = true;
+
+            if (m_hideWhenDead)
+            {
+                SetRenderersVisible(false);
+            }
+
+            if (m_move != null)
+            {
+                m_move.MovementEnabled = false;
+            }
+
+            if (m_jumpMotor != null)
+            {
+                m_jumpMotor.enabled = false;
+            }
+
+            DeathScreenOverlay overlay = DeathScreenOverlay.Ensure();
+            overlay.Show("你已倒下", "正在观战，按 Esc 退出副本");
+            overlay.SetStatusText("观战中");
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 进入旁观（英雄数=" + (GetDriver() != null ? GetDriver().HeroEntityCount : 0) + "）");
+            }
+        }
+
+        // 功能：退出副本并回到世界场景。
+        // 入参：reason 退出原因（只用于日志）。
+        // 返回：无。
+        // 步骤：1) 让会话退出房间 2) 用 SceneFlow 载入 World 3) 结果写日志。
+        // 上游/下游：ResolveDeath / Update 的 Esc 调用；下游 RuntimeNetDriver.LeaveRoom、SceneFlow.LoadAsync。
+        private void ExitToWorld(string reason)
+        {
+            m_spectating = false;
+            m_counting = false;
+
+            RuntimeNetDriver driver = GetDriver();
+
+            if (driver != null)
+            {
+                driver.LeaveRoom();
+            }
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 退出副本回世界（原因=" + reason + "）");
+            }
+
+            SceneFlow flow = SceneFlow.Instance;
+
+            if (flow == null)
+            {
+                Debug.LogWarning("[死亡流程] 找不到 SceneFlow，直接 LoadScene(World)");
+                SceneManager.LoadScene(WorldSceneName);
+                return;
+            }
+
+            flow.LoadAsync(GameScene.World, (ok, error) =>
+            {
+                if (!ok)
+                {
+                    Debug.LogWarning("[死亡流程] 加载 World 失败：" + error);
+                }
+            });
+        }
+
+        // 功能：按模式给一行提示（世界写「秒后复活」，副本写「秒后退出/观战」）。
+        // 入参：无。
+        // 返回：提示文字。
+        // 步骤：世界固定文案；副本按人数给两种文案。
+        // 上游/下游：BeginCountdown 调用。
+        private string HintForMode()
+        {
+            if (IsWorldScene())
+            {
+                return "秒后回到出生点";
+            }
+
+            RuntimeNetDriver driver = GetDriver();
+            int heroes = driver != null ? driver.HeroEntityCount : 1;
+            return heroes > 1 ? "秒后进入观战" : "秒后退出副本";
+        }
+
+        // 功能：从 Level 表读死亡倒计时（秒）。
+        // 入参：无。
+        // 返回：倒计时秒数；读不到就返回兜底值。
+        // 步骤：1) 拿 LevelConfig 2) 按 m_levelId 取行 3) 夹到 1~15 秒。
+        // 上游/下游：Awake 调用；下游 ConfigMgr.TryGet、LevelConfig.Get。
+        private float ResolveCountdownSeconds()
+        {
+            LevelConfig table;
+
+            if (ConfigMgr.Instance == null || !ConfigMgr.Instance.TryGet<LevelConfig>(out table) || table == null)
+            {
+                return m_countdownSeconds > 0f ? m_countdownSeconds : FallbackCountdownSeconds;
+            }
+
+            try
+            {
+                Config_Level row = table.Get(m_levelId);
+
+                if (row != null && row.deathCountdownSeconds > 0)
+                {
+                    return Mathf.Clamp(row.deathCountdownSeconds, 1, 15);
+                }
+            }
+            catch (Exception)
+            {
+                // 表里没有这一行时保持 Inspector 上的值
+            }
+
+            return m_countdownSeconds > 0f ? m_countdownSeconds : FallbackCountdownSeconds;
+        }
+
+        // 功能：判断当前是不是世界场景。
+        // 入参：无。
+        // 返回：true 表示 World。
+        // 步骤：比较当前激活场景名。
+        // 上游/下游：IsDeadNow / HintForMode / ResolveDeath 调用。
+        private bool IsWorldScene()
+        {
+            return SceneManager.GetActiveScene().name == WorldSceneName;
+        }
+
+        // 功能：懒加载联网驱动。
+        // 入参：无。
+        // 返回：驱动；不在副本里返回 null。
+        // 步骤：第一次调用时 FindObjectOfType 并缓存。
+        // 上游/下游：IsDeadNow / BeginCountdown / ResolveDeath / ExitToWorld 调用。
+        private RuntimeNetDriver GetDriver()
+        {
+            if (m_driver == null)
+            {
+                m_driver = UnityEngine.Object.FindObjectOfType<RuntimeNetDriver>();
+            }
+
+            return m_driver;
+        }
+
+        // 功能：把所有渲染器一次开/关（旁观时藏起自己）。
+        // 入参：visible true 显示、false 隐藏。
+        // 返回：无。
+        // 步骤：遍历 Awake 缓存的渲染器数组逐个设置 enabled。
+        // 上游/下游：ReviveInWorld / EnterSpectator 调用。
+        private void SetRenderersVisible(bool visible)
+        {
+            if (m_renderers == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_renderers.Length; i++)
+            {
+                if (m_renderers[i] != null)
+                {
+                    m_renderers[i].enabled = visible;
+                }
+            }
+        }
+    }
+}

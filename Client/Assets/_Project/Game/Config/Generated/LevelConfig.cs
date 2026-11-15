@@ -94,6 +94,7 @@ namespace NBC.Game.Config
                 row.monsterWaves = ParseInt(Cell(cells, header, "monsterWaves"));
                 row.timeLimitSeconds = ParseInt(Cell(cells, header, "timeLimitSeconds"));
                 row.bossSkillId = ParseInt(Cell(cells, header, "bossSkillId"));
+                row.deathCountdownSeconds = ParseInt(Cell(cells, header, "deathCountdownSeconds"));
 
                 rows.Add(row);
             }

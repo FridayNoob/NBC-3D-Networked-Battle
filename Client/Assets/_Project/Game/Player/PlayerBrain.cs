@@ -420,6 +420,19 @@ namespace NBC.Game.Player
             }
         }
 
+        // 功能：把角色从死亡状态拉回可操作状态（复活用）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：转给状态机；本来没死时状态机自己拒绝。
+        // 上游/下游：PlayerDeathFlow 倒计时结束调用；下游 PlayerStateMachine.NotifyRevive。
+        public void NotifyRevive()
+        {
+            if (m_machine != null)
+            {
+                m_machine.NotifyRevive();
+            }
+        }
+
         // 当前是否已死亡
         public bool IsDead
         {

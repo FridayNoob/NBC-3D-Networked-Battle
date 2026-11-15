@@ -446,6 +446,33 @@ namespace NBC.Game.Player
             return true;
         }
 
+        // 功能：把角色从死亡状态拉回移动层（复活用）。
+        // 入参：无。
+        // 返回：true 表示这次真的复活了；false 表示本来就没死。
+        // 步骤：1) 清死亡标记与动作残留 2) 复位竖直状态（站回地面）3) 强制切到 Locomotion/Idle 4) 打开移动闸门。
+        // 上游/下游：PlayerDeathFlow 倒计时结束调用；下游 HierarchicalStateMachine.ForceChange。
+        public bool NotifyRevive()
+        {
+            if (!m_context.Dead)
+            {
+                return false;
+            }
+
+            m_context.Dead = false;
+            m_context.ResetAction();
+            m_hasPendingAction = false;
+            m_comboQueued = false;
+            m_blocking = false;
+            m_landingFrames = 0;
+            m_context.Landing = false;
+            m_context.Grounded = true;
+            m_context.VerticalSpeed = 0f;
+            m_context.Motion.SetMoveSpeed(0f);
+            m_context.Motion.MovementEnabled = true;
+            m_fsm.ForceChange(EPlayerState.Locomotion, EPlayerState.Idle);
+            return true;
+        }
+
         // 功能：按输入选一个移动状态（只在没有动作在播时用）。
         // 入参：input 这一帧的输入。
         // 返回：Idle / Walk / Run / Sprint / CrouchIdle / CrouchWalk / CrouchJog / Jump / Fall / Land 之一。
