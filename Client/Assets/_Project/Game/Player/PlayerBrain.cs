@@ -158,8 +158,10 @@ namespace NBC.Game.Player
         private KeyCode m_poseKey = KeyCode.F;
 
         // 跳跃键（R035d）
-        [SerializeField]
-        private KeyCode m_jumpKey = KeyCode.Space;
+        [SerializeField] private KeyCode m_jumpKey = KeyCode.Space;
+
+        // 站着按方向键起跳时的最小水平速度，米/秒（小于它就用它，保证「按了方向就一定往前跳」）
+        [SerializeField] private float m_jumpDriftMinSpeed = 2f;
 
         // 落地缓冲帧数（12 帧 = 0.2 秒，期间不能移动）
         [SerializeField]
@@ -328,9 +330,9 @@ namespace NBC.Game.Player
             m_machine.SetBlocking(m_enableLocalAttack && Input.GetMouseButton(1));
 
             // 跳跃：按下当帧请求；电机先算初速度，状态机拒绝（动作中/已死/空中）就回滚
-            if (Input.GetKeyDown(m_jumpKey))
+            if (Input.GetKeyDown(m_jumpKey) && m_jumpMotor.TryJump())
             {
-                m_jumpMotor.TryJump();
+                ApplyJumpDirection(input);
             }
 
             // 先把竖直位移推进一步，下面状态机就能读到这一帧的 Grounded / VerticalSpeed
@@ -428,6 +430,34 @@ namespace NBC.Game.Player
         public EPlayerState CurrentState
         {
             get { return m_machine != null ? m_machine.State : EPlayerState.Idle; }
+        }
+
+        // 功能：起跳成功当帧，把「方向键 + 相机朝向」换算成世界方向，锁定给电机。
+        // 入参：input 本帧输入（MoveX / MoveY，已归一化到 -1~1）。
+        // 返回：无。
+        // 步骤：1) 没有方向输入就原地跳 2) 有参考体就用它的前/右，没有就用世界轴 3) 压平并归一化 4) 速度取起跳瞬间的地面速度，站着起跳给最小速度。
+        // 上游/下游：Update 在 TryJump 成功后调用；下游 PlayerJumpMotor.SetJumpDrift。
+        private void ApplyJumpDirection(PlayerInput input)
+        {
+            if (Mathf.Abs(input.MoveX) < 0.01f && Mathf.Abs(input.MoveY) < 0.01f)
+            {
+                return;
+            }
+
+            Transform reference = m_move != null ? m_move.ReferenceAxes : null;
+            Vector3 forward = reference != null ? reference.forward : Vector3.forward;
+            Vector3 right = reference != null ? reference.right : Vector3.right;
+            forward.y = 0f;
+            right.y = 0f;
+
+            Vector3 direction = forward.normalized * input.MoveY + right.normalized * input.MoveX;
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            float speed = Mathf.Max(m_machine.Parameters.Speed, m_jumpDriftMinSpeed);
+            m_jumpMotor.SetJumpDrift(direction.normalized, speed);
         }
 
         // 功能：处理攻击/受击/死亡的按键请求。

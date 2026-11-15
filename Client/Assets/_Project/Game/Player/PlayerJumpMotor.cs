@@ -67,6 +67,15 @@ namespace NBC.Game.Player
         // 下一次允许打贴地日志的时间（秒），避免每帧刷屏
         private float m_nextAlignLogTime;
 
+        // 空中水平漂移方向（世界空间单位向量，起跳那刻锁定）
+        private Vector3 m_airDirection;
+
+        // 空中水平漂移速度，米/秒；0 表示原地跳
+        private float m_airSpeed;
+
+        // 空中转身的收敛速度（每秒），越大越快面向跳跃方向
+        [SerializeField] private float m_airTurnSharpness = 12f;
+
         // 是否在空中（离地且不是在落地缓冲）
         public bool IsAirborne
         {
@@ -111,6 +120,24 @@ namespace NBC.Game.Player
             return true;
         }
 
+        // 功能：起跳成功时锁定空中的水平方向与速度（起跳后不再接受转向输入）。
+        // 入参：worldDirection 世界空间方向，只取水平分量，零向量表示原地跳；speedMetersPerSecond 水平速度，米/秒。
+        // 返回：无。
+        // 步骤：1) 压平方向并归一化 2) 速度夹到非负 3) 存起来，Step 每帧按它平移与转身。
+        // 上游/下游：PlayerBrain 在 TryJump 成功后调用；下游 Step 使用 m_airDirection / m_airSpeed。
+        public void SetJumpDrift(Vector3 worldDirection, float speedMetersPerSecond)
+        {
+            Vector3 flat = new Vector3(worldDirection.x, 0f, worldDirection.z);
+            if (flat.sqrMagnitude < 0.0001f || speedMetersPerSecond <= 0f)
+            {
+                m_airSpeed = 0f;
+                return;
+            }
+
+            m_airDirection = flat.normalized;
+            m_airSpeed = speedMetersPerSecond;
+        }
+
         // 功能：推进一帧的竖直运动并写到 transform。
         // 入参：deltaSeconds 帧时长，秒。
         // 返回：无。
@@ -124,7 +151,22 @@ namespace NBC.Game.Player
 
             Vector3 position = transform.position;
             position.y = m_groundY + m_motion.Height;
+
+            // 空中漂移：起跳那一刻锁定的方向与速度，落地即清零（不提供空中转向）
+            if (!m_motion.Grounded && m_airSpeed > 0f)
+            {
+                position += m_airDirection * (m_airSpeed * deltaSeconds);
+                Quaternion targetRotation = Quaternion.LookRotation(m_airDirection, Vector3.up);
+                float blend = 1f - Mathf.Exp(-m_airTurnSharpness * deltaSeconds);
+                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, blend);
+            }
+
             transform.position = position;
+
+            if (m_motion.Grounded)
+            {
+                m_airSpeed = 0f;
+            }
 
             if (m_machine != null)
             {

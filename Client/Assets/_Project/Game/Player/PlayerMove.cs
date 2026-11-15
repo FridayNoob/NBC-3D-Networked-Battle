@@ -150,6 +150,16 @@ namespace NBC.Game.Player
             get { return m_currentSpeed; }
         }
 
+        // 功能：读移动用的参考坐标系（一般是相机），给跳跃锁定方向用。
+        // 入参：无。
+        // 返回：参考物体的 Transform；没设过就是 null（此时用世界轴）。
+        // 上游：PlayerBrain 起跳时按它把输入换算成世界方向。
+        // 下游：无。
+        public Transform ReferenceAxes
+        {
+            get { return m_reference; }
+        }
+
         // 功能：推进冲刺位移；没有冲刺或已过期就返回 false。
         // 入参：无。
         // 返回：true 表示这一帧由冲刺接管了移动，Update 不再读输入。
