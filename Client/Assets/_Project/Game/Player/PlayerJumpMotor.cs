@@ -16,8 +16,8 @@ namespace NBC.Game.Player
         // 重力加速度，米/秒²
         [SerializeField] private float m_gravity = PlayerVerticalMotion.DefaultGravity;
 
-        // 起跳高度，米（默认 0.9 米，约 0.86 秒滞空）
-        [SerializeField] private float m_jumpHeight = 0.9f;
+        // 起跳高度，米（默认 1.2 米，约 0.99 秒滞空）
+        [SerializeField] private float m_jumpHeight = 1.2f;
 
         // 地面探测的起点高度（相对脚底），米
         [SerializeField] private float m_probeHeight = 5f;
@@ -30,6 +30,15 @@ namespace NBC.Game.Player
 
         // 是否打印起跳/落地日志（验收时开，平时关）
         [SerializeField] private bool m_logDiagnostics = true;
+
+        // 是否用脚底把角色贴回地面（落地与站立时修正动画带来的下沉），默认开
+        [SerializeField] private bool m_alignFeetToGround = true;
+
+        // 单帧修正的最大幅度，米；超过它多半是地面探错，宁可不修，免得把角色弹飞
+        [SerializeField] private float m_alignMaxOffset = 2.0f;
+
+        // 修正死区，米；比它小的误差不动，避免站立时上下抖
+        [SerializeField] private float m_alignDeadZone = 0.005f;
 
         // 复用的射线命中缓冲，避免每帧分配（16 个够用：地面 + 少量装饰）
         private readonly RaycastHit[] m_hits = new RaycastHit[16];
@@ -45,6 +54,18 @@ namespace NBC.Game.Player
 
         // 是否已经拿到过地面高度
         private bool m_hasGround;
+
+        // 子物体上的 Animator，用来读两只脚骨骼的高度（可空）
+        private Animator m_animator;
+
+        // 脚骨骼到鞋底的距离，米（校准时量一次，之后按它把鞋底贴到地面）
+        private float m_soleOffset;
+
+        // 是否已经量过 m_soleOffset
+        private bool m_soleOffsetReady;
+
+        // 下一次允许打贴地日志的时间（秒），避免每帧刷屏
+        private float m_nextAlignLogTime;
 
         // 是否在空中（离地且不是在落地缓冲）
         public bool IsAirborne
@@ -116,7 +137,27 @@ namespace NBC.Game.Player
 
             if (m_logDiagnostics && m_motion.JustLanded)
             {
-                Debug.Log("[PlayerJumpMotor] 落地，地面高度 " + m_groundY.ToString("0.000") + " 米");
+                float foot = 0f;
+                float hip = 0f;
+                Animator animator = GetComponentInChildren<Animator>();
+                if (animator != null && animator.isInitialized)
+                {
+                    Transform leftFoot = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+                    Transform rightFoot = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+                    Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+                    if (leftFoot != null && rightFoot != null)
+                    {
+                        foot = Mathf.Min(leftFoot.position.y, rightFoot.position.y);
+                    }
+
+                    if (hips != null)
+                    {
+                        hip = hips.position.y;
+                    }
+                }
+
+                Debug.Log("[PlayerJumpMotor] 落地，地面高度 " + m_groundY.ToString("0.000") + " 米，脚骨 " + foot.ToString("0.000")
+                    + " 米，胯 " + hip.ToString("0.000") + " 米，鞋底偏移 " + m_soleOffset.ToString("0.000") + " 米");
             }
         }
 
@@ -184,6 +225,107 @@ namespace NBC.Game.Player
             {
                 m_motion = new PlayerVerticalMotion(m_gravity);
             }
+        }
+
+        // 功能：每帧在动画更新之后，把踩在地上的姿势“按”回地面。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 只在贴地（含落地缓冲）时修 2) 第一次先量鞋底偏移 3) 之后按脚底与地面的差修正 y。
+        // 上游/下游：Unity 生命周期调用（在 Animator 之后）；下游 AlignFeetToGround、TryCalibrateSole。
+        // 注意：必须在 LateUpdate 做 —— Update 里动画还没摆好，量到的是上一帧的姿势。
+        private void LateUpdate()
+        {
+            if (!m_alignFeetToGround || m_motion == null || !m_motion.Grounded)
+            {
+                return;
+            }
+
+            if (!m_soleOffsetReady)
+            {
+                TryCalibrateSole();
+                return;
+            }
+
+            AlignFeetToGround();
+        }
+
+        // 功能：量一次「脚骨骼比鞋底高多少」，供之后对齐使用。
+        // 入参：无。
+        // 返回：无；Animator 还没初始化或没有脚骨时静默返回，下一帧再试。
+        // 步骤：1) 取左右脚骨骼 2) 取所有渲染器包围盒的最低点 3) 两者相减存起来。
+        // 上游/下游：LateUpdate 调用；下游 AlignFeetToGround 使用 m_soleOffset。
+        private void TryCalibrateSole()
+        {
+            if (m_animator == null)
+            {
+                m_animator = GetComponentInChildren<Animator>();
+            }
+
+            if (m_animator == null || !m_animator.isInitialized)
+            {
+                return;
+            }
+
+            Transform leftFoot = m_animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+            Transform rightFoot = m_animator.GetBoneTransform(HumanBodyBones.RightFoot);
+            if (leftFoot == null || rightFoot == null)
+            {
+                return;
+            }
+
+            float lowest = float.MaxValue;
+            Renderer[] renderers = GetComponentsInChildren<Renderer>();
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                float minY = renderers[i].bounds.min.y;
+                if (minY < lowest)
+                {
+                    lowest = minY;
+                }
+            }
+
+            if (lowest == float.MaxValue)
+            {
+                return;
+            }
+
+            float footY = Mathf.Min(leftFoot.position.y, rightFoot.position.y);
+            m_soleOffset = footY - lowest;
+            m_soleOffsetReady = true;
+        }
+
+        // 功能：把当前姿势的鞋底对齐到 m_groundY。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 算两只脚骨骼里较低的那只 2) 减去鞋底偏移得到鞋底高度 3) 差值在死区内或过大就跳过 4) 否则平移 y。
+        // 上游/下游：LateUpdate 调用；读 m_groundY（ProbeGround 每帧更新）。
+        // 注意：修复的是「动画把腿伸到地面以下」这类下沉（例如 Mixamo 落地动作的深蹲），不动地面高度本身。
+        private void AlignFeetToGround()
+        {
+            Transform leftFoot = m_animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+            Transform rightFoot = m_animator.GetBoneTransform(HumanBodyBones.RightFoot);
+            if (leftFoot == null || rightFoot == null)
+            {
+                return;
+            }
+
+            float footY = Mathf.Min(leftFoot.position.y, rightFoot.position.y) - m_soleOffset;
+            float delta = m_groundY - footY;
+            if (Mathf.Abs(delta) <= m_alignDeadZone || Mathf.Abs(delta) > m_alignMaxOffset)
+            {
+                return;
+            }
+
+            if (m_logDiagnostics && Time.unscaledTime >= m_nextAlignLogTime)
+            {
+                m_nextAlignLogTime = Time.unscaledTime + 0.3f;
+                Debug.Log("[PlayerJumpMotor] 贴地修正 " + delta.ToString("0.000") + " 米（地面 " + m_groundY.ToString("0.000")
+                    + "，脚底 " + footY.ToString("0.000") + "，鞋底偏移 " + m_soleOffset.ToString("0.000") + "）");
+            }
+
+            Vector3 position = transform.position;
+            position.y += delta;
+            transform.position = position;
         }
 
         // 功能：初始化地面高度，避免第一帧把角色拽到 0。

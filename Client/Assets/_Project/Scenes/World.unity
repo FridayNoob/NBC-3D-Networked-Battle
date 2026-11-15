@@ -694,6 +694,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   m_probeHeight: 5
   m_probeDistance: 50
+  m_logGroundSnap: 1
   m_debugLog: 0
 --- !u!114 &1775856764
 MonoBehaviour:
@@ -762,15 +763,32 @@ MonoBehaviour:
   m_sprintSpeed: 8
   m_crouchWalkSpeed: 1.5
   m_crouchJogSpeed: 3
-  m_attackFrames: 36
+  m_attack1Frames: 60
+  m_attack2Frames: 60
+  m_attack3Frames: 93
+  m_skill1Frames: 240
+  m_skill2Frames: 144
+  m_skill3Frames: 264
   m_hitFrames: 18
-  m_skillFrames: 48
   m_dashFrames: 18
   m_stunFrames: 45
   m_poseFrames: 90
+  m_comboWindowStart: 18
+  m_comboEndBuffer: 4
+  m_dashSpeedMetersPerSecond: 8
+  m_dashSeconds: 0.18
   m_attackKey: 106
   m_hitKey: 107
+  m_hitRightKey: 121
+  m_stunKey: 116
   m_dieKey: 108
+  m_skill1Key: 113
+  m_skill2Key: 101
+  m_skill3Key: 114
+  m_dashKey: 118
+  m_poseKey: 102
+  m_jumpKey: 32
+  m_landFrames: 12
   m_enableLocalAttack: 1
   m_enableDebugKeys: 0
   m_logStateChanges: 1

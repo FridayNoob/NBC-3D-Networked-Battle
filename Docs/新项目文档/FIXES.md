@@ -306,3 +306,10 @@
 - 根因二：七个 `CBG_*` clip 在 t=0 都带一条 `SwitchSocket` 动画事件，字符串 `To_Put_Socket_Sword`，进姿势的瞬间把剑从右手切到背后、退出时再切回右手 ⇒ 视觉上就是「闪一下」；战斗/技能动作的事件是 `To_Hand_R_Socket`（剑本来就在右手，看不出变化），所以技能不闪
 - 修法二：`PlayerBrain.Awake` 里调 `StripPoseClipEvents`，遍历控制器 clip、把名字以 `CBG_` 开头的 `events` 清空；`AnimationClip.events` 运行期改动只在本次运行有效（退出 Play 还原、不写回美术包），所以控制器与美术包都不动
 - 判据：按 F 时第 1 次播 `CBG_Angry`、第 8 次回到第 1 个，PoseIndex 按 0..6 轮转；按下的瞬间没有角色/剑闪跳
+## 2026-11-15 跳跃高度不够 + 下落/落地陷进地面
+
+- 现象：按 Space 跳，最高点明显偏低；下落或落地时下半身像插进地面
+- 根因一：`m_jumpHeight` 默认 0.9 米，负责人要 1.2 米
+- 根因二：Mixamo 落地动作的深蹲段把腿压到根节点以下（脚骨 ≈ 0、胯 0.587），而角色根节点按物理高度贴地，模型就沉下去了；第一版贴地对齐的上限写 0.8 米，实际下沉超过它，每帧被跳过 ⇒ 看起来「还是一样」
+- 修法：`Client/Assets/_Project/Game/Player/PlayerJumpMotor.cs` —— `m_jumpHeight` 改 1.2；新增 `m_alignFeetToGround` / `m_alignMaxOffset`(2 米) / `m_alignDeadZone`(5 毫米) 与 `LateUpdate → TryCalibrateSole / AlignFeetToGround`；落地日志补脚骨/胯/鞋底偏移
+- 判据：Console 里 `[PlayerJumpMotor] 落地` 那行的脚骨 ≈ 地面高度；贴地修正日志不连续刷屏；起跳目标高度显示 1.20 米
