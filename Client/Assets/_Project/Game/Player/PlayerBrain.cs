@@ -432,11 +432,12 @@ namespace NBC.Game.Player
             get { return m_machine != null ? m_machine.State : EPlayerState.Idle; }
         }
 
-        // 功能：起跳成功当帧，把「方向键 + 相机朝向」换算成世界方向，锁定给电机。
+        // 功能：起跳成功当帧，把方向键换算成世界方向（与走路同一套相机轴），锁定给电机。
         // 入参：input 本帧输入（MoveX / MoveY，已归一化到 -1~1）。
         // 返回：无。
-        // 步骤：1) 没有方向输入就原地跳 2) 有参考体就用它的前/右，没有就用世界轴 3) 压平并归一化 4) 速度取起跳瞬间的地面速度，站着起跳给最小速度。
-        // 上游/下游：Update 在 TryJump 成功后调用；下游 PlayerJumpMotor.SetJumpDrift。
+        // 步骤：1) 没有方向输入就原地跳 2) 直接问 PlayerMove 要「走路会走的方向」 3) 有方向就按当前速度或最小速度锁进电机。
+        // 上游/下游：Update 在 TryJump 成功后调用；下游 PlayerMove.GetMoveDirection、PlayerJumpMotor.SetJumpDrift。
+        // 注意：方向和走路共用 PlayerMove.GetMoveDirection，才能保证「按 W 走的方向」与「按 W + Space 跳的方向」一致。
         private void ApplyJumpDirection(PlayerInput input)
         {
             if (Mathf.Abs(input.MoveX) < 0.01f && Mathf.Abs(input.MoveY) < 0.01f)
@@ -444,13 +445,10 @@ namespace NBC.Game.Player
                 return;
             }
 
-            Transform reference = m_move != null ? m_move.ReferenceAxes : null;
-            Vector3 forward = reference != null ? reference.forward : Vector3.forward;
-            Vector3 right = reference != null ? reference.right : Vector3.right;
-            forward.y = 0f;
-            right.y = 0f;
+            Vector3 direction = m_move != null
+                ? m_move.GetMoveDirection(input.MoveX, input.MoveY)
+                : Vector3.forward;
 
-            Vector3 direction = forward.normalized * input.MoveY + right.normalized * input.MoveX;
             if (direction.sqrMagnitude < 0.0001f)
             {
                 return;

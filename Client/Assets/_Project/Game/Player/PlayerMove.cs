@@ -150,14 +150,48 @@ namespace NBC.Game.Player
             get { return m_currentSpeed; }
         }
 
-        // 功能：读移动用的参考坐标系（一般是相机），给跳跃锁定方向用。
-        // 入参：无。
-        // 返回：参考物体的 Transform；没设过就是 null（此时用世界轴）。
-        // 上游：PlayerBrain 起跳时按它把输入换算成世界方向。
+        // 功能：把输入的左右/前后量换算成世界移动方向（与 Update 里真正用来位移的方向完全一致）。
+        // 入参：x 左右输入（-1~1，右为正）；z 前后输入（-1~1，前为正）。
+        // 返回：水平世界方向（单位向量）；没有输入时返回 Vector3.zero。
+        // 步骤：1) 先按「前/右主导轴」二选一 2) 参考体（相机）的轴压到水平面 3) 用主导轴乘符号。
+        // 上游：Update 每帧调用；PlayerBrain 起跳锁方向时也调它。
         // 下游：无。
-        public Transform ReferenceAxes
+        // 注意：跳跃与走路共用它，避免两处各写一套换算导致「跳的方向和走的方向不一致」。
+        public Vector3 GetMoveDirection(float x, float z)
         {
-            get { return m_reference; }
+            if (Mathf.Abs(x) < 0.0001f && Mathf.Abs(z) < 0.0001f)
+            {
+                return Vector3.zero;
+            }
+
+            // 四个基本方向：默认是世界轴；打开开关后改成「参考体的轴」（World 用相机轴）
+            Vector3 forwardAxis = new Vector3(0f, 0f, 1f);
+            Vector3 rightAxis = new Vector3(1f, 0f, 0f);
+
+            if (m_useReferenceAxes)
+            {
+                Transform reference = m_reference != null ? m_reference : (Camera.main != null ? Camera.main.transform : null);
+
+                if (reference != null)
+                {
+                    // 压到水平面：镜头俯视时也不能让角色往地里钻
+                    forwardAxis = Vector3.ProjectOnPlane(reference.forward, Vector3.up).normalized;
+                    rightAxis = Vector3.ProjectOnPlane(reference.right, Vector3.up).normalized;
+
+                    if (forwardAxis.sqrMagnitude < 0.0001f)
+                    {
+                        forwardAxis = new Vector3(0f, 0f, 1f);
+                    }
+
+                    if (rightAxis.sqrMagnitude < 0.0001f)
+                    {
+                        rightAxis = new Vector3(1f, 0f, 0f);
+                    }
+                }
+            }
+
+            bool forwardWins = Mathf.Abs(z) >= Mathf.Abs(x);
+            return forwardWins ? forwardAxis * Mathf.Sign(z) : rightAxis * Mathf.Sign(x);
         }
 
         // 功能：推进冲刺位移；没有冲刺或已过期就返回 false。
@@ -231,37 +265,8 @@ namespace NBC.Game.Player
                 return;
             }
 
-            bool forwardWins = Mathf.Abs(z) >= Mathf.Abs(x);
-
-            // 四个基本方向：默认是世界轴；打开开关后改成"参考体的轴"（World 用相机轴）
-            Vector3 forwardAxis = new Vector3(0f, 0f, 1f);
-            Vector3 rightAxis = new Vector3(1f, 0f, 0f);
-
-            if (m_useReferenceAxes)
-            {
-                Transform reference = m_reference != null ? m_reference : (Camera.main != null ? Camera.main.transform : null);
-
-                if (reference != null)
-                {
-                    // 压到水平面：镜头俯视时也不能让角色往地里钻
-                    forwardAxis = Vector3.ProjectOnPlane(reference.forward, Vector3.up).normalized;
-                    rightAxis = Vector3.ProjectOnPlane(reference.right, Vector3.up).normalized;
-
-                    if (forwardAxis.sqrMagnitude < 0.0001f)
-                    {
-                        forwardAxis = new Vector3(0f, 0f, 1f);
-                    }
-
-                    if (rightAxis.sqrMagnitude < 0.0001f)
-                    {
-                        rightAxis = new Vector3(1f, 0f, 0f);
-                    }
-                }
-            }
-
-            Vector3 targetDirection = forwardWins
-                ? forwardAxis * Mathf.Sign(z)
-                : rightAxis * Mathf.Sign(x);
+            // 方向换算统一走 GetMoveDirection：跳跃锁方向时也调它，保证「跳的方向 = 走的方向」
+            Vector3 targetDirection = GetMoveDirection(x, z);
 
             // 四向统一：先转身朝目标方向（限速），位移仍用目标方向，避免边走边转出弧线
             Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);
