@@ -310,6 +310,6 @@
 
 - 现象：按 Space 跳，最高点明显偏低；下落或落地时下半身像插进地面
 - 根因一：`m_jumpHeight` 默认 0.9 米，负责人要 1.2 米
-- 根因二：Mixamo 落地动作的深蹲段把腿压到根节点以下（脚骨 ≈ 0、胯 0.587），而角色根节点按物理高度贴地，模型就沉下去了；第一版贴地对齐的上限写 0.8 米，实际下沉超过它，每帧被跳过 ⇒ 看起来「还是一样」
-- 修法：`Client/Assets/_Project/Game/Player/PlayerJumpMotor.cs` —— `m_jumpHeight` 改 1.2；新增 `m_alignFeetToGround` / `m_alignMaxOffset`(2 米) / `m_alignDeadZone`(5 毫米) 与 `LateUpdate → TryCalibrateSole / AlignFeetToGround`；落地日志补脚骨/胯/鞋底偏移
+- 根因二：三条 Mixamo clip 把 `Root Transform Position (Y)` 勾了 `Bake Into Pose`，clip 自带的根 Y 曲线把整个身体压到原点以下 0.86 米（落地日志实据：地面 1.414、脚骨 0.554、胯 1.376），代码又把根节点按物理高度钉在地面 ⇒ 半身入地
+- 修法：三条 clip 的 `Root Transform Position (Y)` 改回不勾（`lockRootHeightY=false`、`keepOriginalPositionY=true`），竖直高度只由物理算；`Client/Assets/_Project/Game/Player/PlayerJumpMotor.cs` —— `m_jumpHeight` 改 1.2；新增 `m_alignFeetToGround` / `m_alignMaxOffset`(2 米) / `m_alignDeadZone`(5 毫米) 与 `LateUpdate → TryCalibrateSole / AlignFeetToGround`；落地日志补脚骨/胯/鞋底偏移
 - 判据：Console 里 `[PlayerJumpMotor] 落地` 那行的脚骨 ≈ 地面高度；贴地修正日志不连续刷屏；起跳目标高度显示 1.20 米
