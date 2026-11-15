@@ -108,9 +108,19 @@ namespace NBC.Boot
             //   ⚠️ 与 Editor 的「网络调试」窗口不要同时连 —— 会占两个座位。
             RegisterAttackInput();
 
-        RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
-        driver.MonsterPrefab = m_monsterPrefab;
-        m_driver = driver;
+            // R049：入口脚本可能已经建好跨场景的 [DungeonSession] 并挂了驱动，这里只在没有驱动时才补一个。
+            RuntimeNetDriver existing = FindObjectOfType<RuntimeNetDriver>();
+            if (existing != null)
+            {
+                existing.MonsterPrefab = m_monsterPrefab;
+                m_driver = existing;
+                Debug.Log("[HpBarDemo] 沿用已有的 RuntimeNetDriver（由副本入口创建）");
+                return;
+            }
+
+            RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
+            driver.MonsterPrefab = m_monsterPrefab;
+            m_driver = driver;
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
         }
 

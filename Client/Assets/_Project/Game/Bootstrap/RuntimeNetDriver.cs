@@ -47,6 +47,12 @@ namespace NBC.Game.Bootstrap
         // 副本编号（房号留空 = 服务端安排）
         [SerializeField] private int m_dungeonId = 1001;
 
+        // 握完手自动进房（入口脚本会先把它关掉，等切到副本再打开）
+        [SerializeField] private bool m_autoJoin = true;
+
+        // 是否把快照画成场景物体、并纠偏本地英雄（在 World 里连服时要关掉，否则会画出一堆副本怪）
+        [SerializeField] private bool m_bindPresentation = true;
+
         // 运行时同步方式
         [SerializeField] private ERuntimeSyncMode m_mode = ERuntimeSyncMode.StateSync;
 
@@ -229,6 +235,54 @@ namespace NBC.Game.Bootstrap
             get { return m_lastError; }
         }
 
+        // 功能：控制握手成功后是否自动进房。
+        // 入参：true = 在线就进房（默认）；false = 只握手，等外部叫进房
+        // 返回：属性值
+        // 步骤：直接读写序列化字段
+        // 上游：DungeonEntrance 在 World 里先设 false，切到 Battle 后再设 true
+        // 下游：Update 的进房判断
+        public bool AutoJoin
+        {
+            get { return m_autoJoin; }
+            set { m_autoJoin = value; }
+        }
+
+        // 功能：控制是否把快照画到场景里、并纠偏本地英雄。
+        // 入参：true = 正常表现（默认）；false = 只连服不画东西
+        // 返回：属性值
+        // 步骤：直接读写序列化字段
+        // 上游：DungeonEntrance 在 World 里设 false，进 Battle 后设 true
+        // 下游：RefreshPresentation 的首行判断
+        public bool BindPresentation
+        {
+            get { return m_bindPresentation; }
+            set { m_bindPresentation = value; }
+        }
+
+        // 功能：在 Start 之前改连接参数（入口脚本用）。
+        // 入参：host 服务器地址；port 端口；dungeonId 副本编号
+        // 返回：无
+        // 步骤：直接写序列化字段；账号密码沿用 Inspector 里的开发账号
+        // 上游：DungeonEntrance.BeginEnter
+        // 下游：Start 建会话时读取
+        public void ConfigureSession(string host, int port, int dungeonId)
+        {
+            if (!string.IsNullOrEmpty(host))
+            {
+                m_host = host;
+            }
+
+            if (port > 0)
+            {
+                m_port = port;
+            }
+
+            if (dungeonId > 0)
+            {
+                m_dungeonId = dungeonId;
+            }
+        }
+
         // 功能：建传输层与会话，订阅状态事件，并发起连接。
         // 入参：无（引擎在开始帧调一次）
         // 返回：无
@@ -291,7 +345,7 @@ namespace NBC.Game.Bootstrap
 
             DriveReconnect();
 
-            if (m_session.IsOnline && !m_joinRequested)
+            if (m_autoJoin && m_session.IsOnline && !m_joinRequested)
             {
                 m_joinRequested = true;
 
@@ -834,6 +888,11 @@ namespace NBC.Game.Bootstrap
         // 下游：PresentationFeed.Refresh、SnapshotSceneBinder.Ensure
         private void RefreshPresentation()
         {
+            if (!m_bindPresentation)
+            {
+                return;
+            }
+
             LockstepClient client = m_session.Lockstep;
 
             m_feed.UseLockstep = m_mode == ERuntimeSyncMode.Lockstep;
