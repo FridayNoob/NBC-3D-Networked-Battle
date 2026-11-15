@@ -435,22 +435,24 @@ namespace NBC.Game.Player
         // 功能：起跳成功当帧，把方向键换算成世界方向（与走路同一套相机轴），锁定给电机。
         // 入参：input 本帧输入（MoveX / MoveY，已归一化到 -1~1）。
         // 返回：无。
-        // 步骤：1) 没有方向输入就原地跳 2) 直接问 PlayerMove 要「走路会走的方向」 3) 有方向就按当前速度或最小速度锁进电机。
+        // 步骤：1) 没有方向输入就清掉漂移（原地跳）2) 问 m_motion 要「走路会走的方向」3) 有方向就按当前速度或最小速度锁进电机。
         // 上游/下游：Update 在 TryJump 成功后调用；下游 PlayerMove.GetMoveDirection、PlayerJumpMotor.SetJumpDrift。
-        // 注意：方向和走路共用 PlayerMove.GetMoveDirection，才能保证「按 W 走的方向」与「按 W + Space 跳的方向」一致。
+        // 注意：必须用 Awake 里解析出来的 m_motion，不能用 Inspector 字段 m_move——场景里 m_move 没拖引用时为 null，
+        //       那样会走 Vector3.forward 兜底，表现为「按哪个方向键都往世界 +Z 跳」。
         private void ApplyJumpDirection(PlayerInput input)
         {
-            if (Mathf.Abs(input.MoveX) < 0.01f && Mathf.Abs(input.MoveY) < 0.01f)
-            {
-                return;
-            }
+            Vector3 direction = Vector3.zero;
 
-            Vector3 direction = m_move != null
-                ? m_move.GetMoveDirection(input.MoveX, input.MoveY)
-                : Vector3.forward;
+            bool hasDirection = Mathf.Abs(input.MoveX) >= 0.01f || Mathf.Abs(input.MoveY) >= 0.01f;
+            if (hasDirection && m_motion != null)
+            {
+                direction = m_motion.GetMoveDirection(input.MoveX, input.MoveY);
+            }
 
             if (direction.sqrMagnitude < 0.0001f)
             {
+                // 原地跳：一定要清掉上一次的漂移，否则会在空中沿用上一跳的方向
+                m_jumpMotor.SetJumpDrift(Vector3.zero, 0f);
                 return;
             }
 
