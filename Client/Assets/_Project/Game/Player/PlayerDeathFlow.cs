@@ -226,6 +226,8 @@ namespace NBC.Game.Player
         // 上游/下游：ResolveDeath 调用；下游 PlayerBrain.NotifyRevive、PlayerJumpMotor.ResetToGround。
         private void ReviveInWorld()
         {
+            // 先关黑幕：后面的复活步骤任何一步出异常，画面也不能一直黑着
+            DeathScreenOverlay.Ensure().Hide();
             transform.position = m_worldSpawn;
 
             if (m_jumpMotor != null)
@@ -239,7 +241,6 @@ namespace NBC.Game.Player
             }
 
             SetRenderersVisible(true);
-            DeathScreenOverlay.Ensure().Hide();
             m_resolved = false;
 
             if (m_logDiagnostics)

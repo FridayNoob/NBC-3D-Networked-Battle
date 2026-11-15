@@ -102,6 +102,11 @@ namespace NBC.Game.UI
             m_title.text = title;
             m_hint.text = hint;
             m_countdown.text = string.Empty;
+            if (m_canvas != null)
+            {
+                m_canvas.gameObject.SetActive(true);
+            }
+
             m_background.gameObject.SetActive(true);
         }
 
@@ -143,6 +148,12 @@ namespace NBC.Game.UI
         // 上游/下游：PlayerDeathFlow 复活 / 退出副本时调用。
         public void Hide()
         {
+            // 必须关整块 Canvas：只关背景会留下「你已倒下 / 0 秒」两行字浮在画面上
+            if (m_canvas != null)
+            {
+                m_canvas.gameObject.SetActive(false);
+            }
+
             if (m_background != null)
             {
                 m_background.gameObject.SetActive(false);

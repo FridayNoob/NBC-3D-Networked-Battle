@@ -38,7 +38,7 @@ namespace NBC.Game.Player
         [SerializeField] private float m_alignMaxOffset = 2.0f;
 
         // 修正死区，米；比它小的误差不动，避免站立时上下抖
-        [SerializeField] private float m_alignDeadZone = 0.005f;
+        [SerializeField] private float m_alignDeadZone = 0.02f;
 
         // 复用的射线命中缓冲，避免每帧分配（16 个够用：地面 + 少量装饰）
         private readonly RaycastHit[] m_hits = new RaycastHit[16];
@@ -370,7 +370,7 @@ namespace NBC.Game.Player
                 return;
             }
 
-            if (m_logDiagnostics && Time.unscaledTime >= m_nextAlignLogTime)
+            if (m_logDiagnostics && Mathf.Abs(delta) > 0.05f && Time.unscaledTime >= m_nextAlignLogTime)
             {
                 m_nextAlignLogTime = Time.unscaledTime + 0.3f;
                 Debug.Log("[PlayerJumpMotor] 贴地修正 " + delta.ToString("0.000") + " 米（地面 " + m_groundY.ToString("0.000")
