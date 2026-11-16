@@ -229,6 +229,9 @@ namespace NBC.Game.GameFlow
             driver.AutoJoin = true;
             driver.BindPresentation = true;
 
+            // 新场景的相机不会自动认识这个跨场景带过来的玩家，这里补一次接线（旧 FollowCamera 的目标已被删掉）
+            PlayerPersist.BindCamera(m_player.gameObject);
+
             Log("已进入副本，打开自动进房与表现绑定");
             m_connecting = false;
             enabled = false;
