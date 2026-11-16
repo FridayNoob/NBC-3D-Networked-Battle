@@ -122,7 +122,10 @@ namespace NBC.Game.GameFlow
             bool ok = false;
             string error = string.Empty;
 
-            bool tryAsset = AssetManager.Instance != null && AssetManager.Instance.IsInitialized
+            // 编辑器里不试 YooAsset 加载场景：开发期资源包通常没打场景（World/Battle 都在 Build Settings 里），
+            // 试一次就会刷两行 YooAsset 红字。出包后（Application.isEditor == false）才优先走资源包。
+            bool tryAsset = !Application.isEditor
+                            && AssetManager.Instance != null && AssetManager.Instance.IsInitialized
                             && !s_assetSceneFailures.Contains(scene);
 
             if (tryAsset)
@@ -178,6 +181,8 @@ namespace NBC.Game.GameFlow
             if (!ok)
             {
                 // 兜底：YooAsset 没配好（地址缺失/收集器没覆盖）时用 SceneManager，避免"按了没反应"
+                Debug.Log("[SceneFlow] 改用 SceneManager 加载 " + address);
+
                 string fallbackError = string.Empty;
                 AsyncOperation operation = null;
 

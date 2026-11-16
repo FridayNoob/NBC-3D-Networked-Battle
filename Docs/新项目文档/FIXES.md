@@ -335,3 +335,4 @@
 - 现象五：死亡退出副本仍报错，第四段堆栈是 YooInternalException: Unexpected provider type: ErrorProvider（SceneFlow.cs:145 的 handle.Dispose）
 - 根因五：YooAsset 加载失败后 Dispose 会去卸载未加载成功的场景并抛异常，异常打断协程 ⇒ 第 154 行的 SceneManager 兜底根本没跑到
 - 修法五：失败时不 Dispose、成功时 Dispose 包 try/catch；SceneFlow 记 s_assetSceneFailures，资源包没有的场景本进程后续直接走 SceneManager
+- 补充六：编辑器里退出副本仍会刷两行 YooAsset 红字 ⇒ SceneFlow 在 Application.isEditor 时跳过 YooAsset、直接用 SceneManager（开发期资源包本来没打场景）；出包后仍保持 YooAsset 优先后兜底
