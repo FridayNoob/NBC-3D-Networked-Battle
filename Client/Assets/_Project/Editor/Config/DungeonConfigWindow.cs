@@ -1,5 +1,5 @@
 // 这个文件里有：
-//   DungeonConfigWindow（编辑器窗口）：列表方式编辑 DungeonConfig 的行，并提供导出 CSV、从 CSV 导入、校验三个动作
+//   DungeonConfigWindow（编辑器窗口）：带中文表头的副本表编辑器，导出 CSV、从 CSV 导入、校验
 
 using System.Collections.Generic;
 using NBC.Game.Config;
@@ -8,29 +8,62 @@ using UnityEngine;
 
 namespace NBC.EditorTools
 {
-    // 主要功能：Dungeon 表的可视化编辑窗口，改完点「导出到 CSV」才会写磁盘，点「从 CSV 导入」会把资产覆盖成文件内容。
-    // 主要数据成员：m_asset 是配置资产，m_errors 是最近一次校验的问题，m_status 是最近一次操作的结果。
+    // 主要功能：像表格一样编辑 DungeonConfig 的行，表头的中文名与规则直接读自 CSV 前 4 行。
+    // 主要数据成员：m_asset 是配置资产，m_columns 是列说明，m_errors 是最近一次校验的问题。
     // 主要外部方法：无公开方法，入口是菜单 Tools/NBC/配置表/副本表（SO ↔ CSV）。
-    // 谁在用它：负责人手工改副本配置；底层读写全部交给 DungeonCsvBridge。
+    // 谁在用它：负责人手工改副本配置；读写磁盘全部交给 DungeonCsvBridge。
     public sealed class DungeonConfigWindow : EditorWindow
     {
         // 资产文件名，拼在 ConfigImporter.AssetDirectory 后面
         private const string AssetFileName = "/DungeonConfig.asset";
 
+        // 各列宽度，按 CSV 字段名取；没配的字段给默认宽度
+        private const float IdWidth = 60f;
+
+        // 名称列宽
+        private const float NameWidth = 140f;
+
+        // 人数列宽
+        private const float PlayersWidth = 70f;
+
+        // 出生半径列宽
+        private const float RadiusWidth = 110f;
+
+        // 怪物编号列宽
+        private const float MonstersWidth = 240f;
+
+        // BOSS 列宽
+        private const float BossWidth = 70f;
+
+        // 删除按钮列宽
+        private const float RemoveWidth = 50f;
+
         // 当前编辑的资产，窗口打开时加载
         private DungeonConfig m_asset;
 
-        // 行列表的滚动位置，行数多时用
+        // 列说明，读自 CSV 表头，加载资产时一并读
+        private readonly List<CsvColumn> m_columns = new List<CsvColumn>();
+
+        // 读表头失败的原因，空表示成功
+        private string m_columnsError = string.Empty;
+
+        // 行区域滚动位置
         private Vector2 m_scroll;
 
-        // 最近一次操作的提示，成功或失败都写这里
+        // 最近一次操作的提示
         private string m_status = string.Empty;
 
-        // 最近一次提示是不是错误，用来决定提示框颜色
+        // 提示是不是错误，决定底色
         private bool m_statusIsError;
 
-        // 最近一次校验的问题列表，点「校验」或导出失败时填充
+        // 最近一次校验的问题列表
         private readonly List<string> m_errors = new List<string>();
+
+        // 怪物列的输入缓冲：按键过程中不能每帧从 row.monsters 重新拿文本，否则输入会被吞
+        private readonly Dictionary<Config_Dungeon, string> m_monsterDrafts = new Dictionary<Config_Dungeon, string>();
+
+        // 是否展开列说明
+        private bool m_showColumnHelp;
 
         // 功能：菜单入口，打开或聚焦本窗口。
         // 入参：无。
@@ -43,34 +76,39 @@ namespace NBC.EditorTools
             GetWindow<DungeonConfigWindow>("副本表");
         }
 
-        // 功能：窗口启用时加载资产。
+        // 功能：窗口启用时加载资产与表头。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：按导入器的资产目录拼路径并加载；加载不到就把提示写出来。
-        // 上游/下游：上游是 Unity 窗口生命周期；下游是 AssetDatabase。
+        // 步骤：先加载资产，再读 CSV 表头。
+        // 上游/下游：上游是 Unity 窗口生命周期；下游是 LoadAsset、LoadColumns。
         private void OnEnable()
         {
-            LoadAsset();
+            Reload();
         }
 
         // 功能：画整个窗口。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：先画工具栏与脏提示，再画行列表，最后画状态与错误。
-        // 上游/下游：上游是 Unity 的 IMGUI；下游是 DrawToolbar、DrawRows、DrawStatus。
+        // 步骤：说明行 → 工具栏 → 列说明 → 表头 → 数据行 → 状态。
+        // 上游/下游：上游是 IMGUI；下游是各 DrawXxx。
         private void OnGUI()
         {
+            EditorGUILayout.HelpBox(
+                "这里改的是 ScriptableObject；只有点「导出到 CSV」才会写磁盘并重新生成，服务端读的是 CSV。直接改 Inspector 不会同步服务端。",
+                MessageType.None);
+
             DrawToolbar();
-            DrawRows();
+            DrawColumnHelp();
+            DrawTable();
             DrawStatus();
         }
 
-        // 功能：加载资产并清掉旧提示。
+        // 功能：同时重新加载资产与列说明。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：拼路径加载；成功就清空提示，失败就写错误提示。
-        // 上游/下游：上游是 OnEnable 与刷新按钮；下游是 AssetDatabase。
-        private void LoadAsset()
+        // 步骤：先加载资产，再读表头，失败时把原因留着显示。
+        // 上游/下游：上游是 OnEnable 与刷新按钮；下游是 AssetDatabase、DungeonCsvBridge.ReadColumns。
+        private void Reload()
         {
             m_asset = AssetDatabase.LoadAssetAtPath<DungeonConfig>(ConfigImporter.AssetDirectory + AssetFileName);
 
@@ -79,21 +117,25 @@ namespace NBC.EditorTools
                 m_status = "读不到 " + ConfigImporter.AssetDirectory + AssetFileName + "，请先跑一次「导入 TSV → ScriptableObject」";
                 m_statusIsError = true;
             }
+
+            m_columns.Clear();
+            m_columns.AddRange(DungeonCsvBridge.ReadColumns(out m_columnsError));
+            m_monsterDrafts.Clear();
         }
 
-        // 功能：画顶部工具栏，包含刷新、校验、导出、导入四个按钮和脏提示。
+        // 功能：画工具栏，含刷新、校验、导出、导入与脏提示。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：先画按钮行，再调桥的 IsDirty 决定是否显示红字。
-        // 上游/下游：上游是 OnGUI；下游是 DungeonCsvBridge 的四个方法。
+        // 步骤：画按钮行 → 显示行数 → 显示脏提示。
+        // 上游/下游：上游是 OnGUI；下游是桥的四个方法。
         private void DrawToolbar()
         {
             EditorGUILayout.BeginHorizontal();
 
             if (GUILayout.Button("刷新", GUILayout.Width(60)))
             {
-                LoadAsset();
-                m_status = "已重新读取资产";
+                Reload();
+                m_status = "已重新读取资产与表头";
                 m_statusIsError = false;
             }
 
@@ -126,20 +168,48 @@ namespace NBC.EditorTools
             {
                 EditorGUILayout.HelpBox(detail, MessageType.Warning);
             }
+
+            if (!string.IsNullOrEmpty(m_columnsError))
+            {
+                EditorGUILayout.HelpBox(m_columnsError, MessageType.Error);
+            }
         }
 
-        // 功能：画所有数据行与「增加一行」按钮。
+        // 功能：折叠显示每一列的中文名、字段名、类型与规则。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：滚动区内逐行调 DrawRow；删除请求延后到循环结束再执行，避免遍历时改列表。
-        // 上游/下游：上游是 OnGUI；下游是 DrawRow。
-        private void DrawRows()
+        // 步骤：用 Foldout 控制展开，展开后逐列画一行说明。
+        // 上游/下游：上游是 OnGUI；下游是 m_columns。
+        private void DrawColumnHelp()
+        {
+            m_showColumnHelp = EditorGUILayout.Foldout(m_showColumnHelp, "列说明（来自 CSV 表头）", true);
+
+            if (!m_showColumnHelp)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_columns.Count; i++)
+            {
+                CsvColumn column = m_columns[i];
+                string rule = string.IsNullOrWhiteSpace(column.Rule) ? "无规则" : column.Rule;
+                EditorGUILayout.LabelField(column.Label + "（" + column.Name + "）", column.Type + " · " + rule);
+            }
+        }
+
+        // 功能：画表头与所有数据行。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：无资产直接返回；先画表头行，再在滚动区画数据行，删除延后执行。
+        // 上游/下游：上游是 OnGUI；下游是 DrawHeader、DrawRow。
+        private void DrawTable()
         {
             if (m_asset == null)
             {
                 return;
             }
 
+            DrawHeader();
             m_scroll = EditorGUILayout.BeginScrollView(m_scroll);
             int removeIndex = -1;
 
@@ -156,6 +226,7 @@ namespace NBC.EditorTools
             if (removeIndex >= 0)
             {
                 Undo.RecordObject(m_asset, "删除副本行");
+                m_monsterDrafts.Remove(m_asset.rows[removeIndex]);
                 m_asset.rows.RemoveAt(removeIndex);
                 EditorUtility.SetDirty(m_asset);
             }
@@ -168,28 +239,79 @@ namespace NBC.EditorTools
             }
         }
 
+        // 功能：画表头一行，中文名来自 CSV 第二行，鼠标悬停显示字段名与规则。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：按固定列宽依次画 Label，样式用 boldLabel。
+        // 上游/下游：上游是 DrawTable；下游是 LabelFor。
+        private void DrawHeader()
+        {
+            EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+
+            LabelFor("id", IdWidth);
+            LabelFor("name", NameWidth);
+            LabelFor("maxPlayers", PlayersWidth);
+            LabelFor("spawnRadiusMm", RadiusWidth);
+            LabelFor("monsters", MonstersWidth);
+            LabelFor("bossId", BossWidth);
+            GUILayout.Label(string.Empty, GUILayout.Width(RemoveWidth));
+
+            EditorGUILayout.EndHorizontal();
+        }
+
+        // 功能：按字段名找中文名并画成表头。
+        // 入参：fieldName 是 CSV 字段名；width 是列宽。
+        // 返回含义：无。
+        // 步骤：在 m_columns 里找同名字段，找不到就用字段名本身；tooltip 带类型与规则。
+        // 上游/下游：上游是 DrawHeader；下游是 GUILayout.Label。
+        private void LabelFor(string fieldName, float width)
+        {
+            string label = fieldName;
+            string tooltip = string.Empty;
+
+            for (int i = 0; i < m_columns.Count; i++)
+            {
+                if (!string.Equals(m_columns[i].Name, fieldName, System.StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                CsvColumn column = m_columns[i];
+                label = string.IsNullOrWhiteSpace(column.Label) ? fieldName : column.Label;
+                tooltip = column.Name + " · " + column.Type + " · " + (string.IsNullOrWhiteSpace(column.Rule) ? "无规则" : column.Rule);
+                break;
+            }
+
+            GUILayout.Label(new GUIContent(label, tooltip), EditorStyles.boldLabel, GUILayout.Width(width));
+        }
+
         // 功能：画一行数据，返回是否点了删除。
-        // 入参：row 是数据行；index 是行号（从 0 起，显示时加一）。
-        // 返回含义：true 表示这一行要删除。
-        // 步骤：一行里依次画主键、名称、人数、半径、怪物、BOSS 和删除按钮，改动后标记资产脏。
-        // 上游/下游：上游是 DrawRows；下游是 ParseMonsters。
+        // 入参：row 是数据行；index 是行号。
+        // 返回含义：true 表示要删除这一行。
+        // 步骤：单行横向排列六个字段和删除按钮；怪物用文本框加「应用」。
+        // 上游/下游：上游是 DrawTable；下游是 ParseMonsters。
         private bool DrawRow(Config_Dungeon row, int index)
         {
             bool remove = false;
 
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.BeginHorizontal();
 
-            EditorGUILayout.LabelField("#" + (index + 1), GUILayout.Width(34));
+            if (!m_monsterDrafts.TryGetValue(row, out string draft))
+            {
+                draft = string.Join(",", row.monsters);
+            }
 
             EditorGUI.BeginChangeCheck();
-            int id = EditorGUILayout.IntField(row.id, GUILayout.Width(70));
-            string name = EditorGUILayout.TextField(row.name, GUILayout.Width(120));
-            int maxPlayers = EditorGUILayout.IntField(row.maxPlayers, GUILayout.Width(40));
-            int spawnRadiusMm = EditorGUILayout.IntField(row.spawnRadiusMm, GUILayout.Width(70));
-            int bossId = EditorGUILayout.IntField(row.bossId, GUILayout.Width(70));
+            int id = EditorGUILayout.IntField(row.id, GUILayout.Width(IdWidth));
+            string name = EditorGUILayout.TextField(row.name, GUILayout.Width(NameWidth));
+            int maxPlayers = EditorGUILayout.IntField(row.maxPlayers, GUILayout.Width(PlayersWidth));
+            int spawnRadiusMm = EditorGUILayout.IntField(row.spawnRadiusMm, GUILayout.Width(RadiusWidth));
+            string monstersText = EditorGUILayout.TextField(draft, GUILayout.Width(MonstersWidth - 50f));
+            bool applyMonsters = GUILayout.Button("应用", GUILayout.Width(46f));
+            int bossId = EditorGUILayout.IntField(row.bossId, GUILayout.Width(BossWidth));
+            bool fieldsChanged = EditorGUI.EndChangeCheck();
 
-            if (EditorGUI.EndChangeCheck())
+            if (fieldsChanged || applyMonsters)
             {
                 Undo.RecordObject(m_asset, "修改副本行");
                 row.id = id;
@@ -197,37 +319,34 @@ namespace NBC.EditorTools
                 row.maxPlayers = maxPlayers;
                 row.spawnRadiusMm = spawnRadiusMm;
                 row.bossId = bossId;
+
+                if (applyMonsters)
+                {
+                    row.monsters = ParseMonsters(monstersText);
+                    m_monsterDrafts[row] = string.Join(",", row.monsters);
+                }
+                else
+                {
+                    m_monsterDrafts[row] = monstersText;
+                    row.monsters = ParseMonsters(monstersText);
+                }
+
                 EditorUtility.SetDirty(m_asset);
             }
 
-            if (GUILayout.Button("删除", GUILayout.Width(46)))
+            if (GUILayout.Button("删除", GUILayout.Width(RemoveWidth)))
             {
                 remove = true;
             }
 
             EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("普通怪（逗号分隔）", GUILayout.Width(130));
-            string monstersText = EditorGUILayout.TextField(string.Join(",", row.monsters));
-
-            if (GUILayout.Button("应用", GUILayout.Width(46)))
-            {
-                Undo.RecordObject(m_asset, "修改普通怪");
-                row.monsters = ParseMonsters(monstersText);
-                EditorUtility.SetDirty(m_asset);
-            }
-
-            EditorGUILayout.EndHorizontal();
-            EditorGUILayout.EndVertical();
-
             return remove;
         }
 
         // 功能：画底部状态与错误清单。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：有状态就按成功/失败选消息类型；有错误就逐条列出来。
+        // 步骤：有状态按成功/失败选类型；错误逐条列。
         // 上游/下游：上游是 OnGUI；下游是 EditorGUILayout。
         private void DrawStatus()
         {
@@ -245,8 +364,8 @@ namespace NBC.EditorTools
         // 功能：跑一次校验并刷新错误列表。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：清空错误 → 调桥校验 → 通过就把状态写成通过。
-        // 上游/下游：上游是工具栏与导出流程；下游是 DungeonCsvBridge.Validate。
+        // 步骤：清空 → 调桥 → 写状态。
+        // 上游/下游：上游是工具栏与导出；下游是 DungeonCsvBridge.Validate。
         private void RunValidate()
         {
             m_errors.Clear();
@@ -268,10 +387,10 @@ namespace NBC.EditorTools
             }
         }
 
-        // 功能：导入前弹一次确认，避免误覆盖资产。
+        // 功能：导入前弹确认框，避免误覆盖。
         // 入参：无。
         // 返回含义：无。
-        // 步骤：弹对话框 → 用户点「覆盖」才调 Import。
+        // 步骤：确认后调桥导入，再校验一次。
         // 上游/下游：上游是导入按钮；下游是 DungeonCsvBridge.Import。
         private void ImportWithConfirm()
         {
@@ -296,9 +415,9 @@ namespace NBC.EditorTools
 
         // 功能：新建一行默认数据，主键取现有最大值加一。
         // 入参：无。
-        // 返回含义：新建的数据行。
-        // 步骤：扫一遍现有主键求最大值，再填默认名称、人数、半径。
-        // 上游/下游：上游是「增加一行」按钮；下游是无。
+        // 返回含义：新行。
+        // 步骤：扫最大主键，填默认值。
+        // 上游/下游：上游是「增加一行」；下游是无。
         private Config_Dungeon NewRow()
         {
             int nextId = 1001;
@@ -322,11 +441,11 @@ namespace NBC.EditorTools
             };
         }
 
-        // 功能：把逗号分隔的文本解析成怪物编号数组。
-        // 入参：text 是用户输入的文本。
-        // 返回含义：整数数组，空文本给空数组。
-        // 步骤：切逗号后逐个 int.TryParse，解析不了当 0 交给校验去报。
-        // 上游/下游：上游是 DrawRow 的「应用」按钮；下游是无。
+        // 功能：把逗号分隔文本解析成怪物编号数组。
+        // 入参：text 用户输入。
+        // 返回含义：整数数组。
+        // 步骤：切逗号逐个 TryParse，失败当 0 交给校验报。
+        // 上游/下游：上游是 DrawRow；下游是无。
         private static int[] ParseMonsters(string text)
         {
             if (string.IsNullOrWhiteSpace(text))

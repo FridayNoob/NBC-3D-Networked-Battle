@@ -121,6 +121,24 @@ namespace NBC.Tests.EditMode
             Assert.GreaterOrEqual(errors.Count, 6, "每处问题都要有独立提示");
         }
 
+        // 功能：确认列说明读的是真实 CSV 的中文表头，窗口不会只显示英文字段名。
+        // 入参：无。
+        // 返回含义：无，用断言判断。
+        // 步骤：调 ReadColumns → 断列数 → 断关键列的中文名与规则。
+        // 上游/下游：上游是 Test Runner；下游是 DungeonCsvBridge.ReadColumns。
+        [Test]
+        public void ReadColumns_ReturnsChineseLabelsFromRealCsv()
+        {
+            List<CsvColumn> columns = DungeonCsvBridge.ReadColumns(out string error);
+
+            Assert.IsEmpty(error, "读表头不应该报错：" + error);
+            Assert.AreEqual(6, columns.Count, "Dungeon.csv 应有 6 列");
+            Assert.AreEqual("name", columns[1].Name);
+            Assert.AreEqual("名称", columns[1].Label, "第二列中文名应来自 CSV 第二行");
+            Assert.AreEqual("出生点半径（毫米）", columns[3].Label);
+            Assert.AreEqual("range(2,4)", columns[2].Rule);
+        }
+
         // 功能：造一行测试数据。
         // 入参：id、name、maxPlayers、spawnRadiusMm、monsters、bossId。
         // 返回含义：装好的 Config_Dungeon。

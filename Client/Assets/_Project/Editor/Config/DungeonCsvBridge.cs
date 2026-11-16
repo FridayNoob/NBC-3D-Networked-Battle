@@ -1,5 +1,6 @@
 // 这个文件里有：
 //   DungeonCsvBridge（静态类）：DungeonConfig.asset 与 Configs/Design/Dungeon.csv 的双向桥，含拼文本、解析、校验、写盘、调 ConfigKit
+//   CsvColumn（数据类）：CSV 一列的元数据，字段名、中文名、类型、规则，供窗口画表头用
 
 using System;
 using System.Collections.Generic;
@@ -14,9 +15,28 @@ using Debug = UnityEngine.Debug;
 
 namespace NBC.EditorTools
 {
+    // 主要功能：CSV 一列的说明，用来在窗口里显示中文表头与填写规则。
+    // 主要数据成员：Name 是字段名（对应 C# 字段）、Label 是中文名（带单位）、Type 是类型、Rule 是取值范围。
+    // 主要外部方法：无，纯数据。
+    // 谁在用它：DungeonConfigWindow 画表头；DungeonCsvBridge.ReadColumns 负责造。
+    public sealed class CsvColumn
+    {
+        // 字段名，和 CSV 第一行、C# 字段一致
+        public string Name;
+
+        // 中文名，带单位，例如「出生点半径（毫米）」
+        public string Label;
+
+        // 类型，例如 int、ref:Monster[]
+        public string Type;
+
+        // 规则，例如 range(2,4)，空表示没写
+        public string Rule;
+    }
+
     // 主要功能：把 Dungeon 配置资产的行导出成 CSV，或把 CSV 读回来覆盖资产，并在导出前后做校验与重新生成。
     // 主要数据成员：CsvRelativePath（仓库根下的 CSV）、ConfigToolRelativePath（ConfigKit 可执行文件）、表头 4 行常量。
-    // 主要外部方法：ResolveCsvPath、BuildCsvText、IsDirty、Validate、Export、Import、RunConfigKit、SplitLine。
+    // 主要外部方法：ResolveCsvPath、BuildCsvText、IsDirty、Validate、Export、Import、RunConfigKit、SplitLine、ReadColumns。
     // 谁在用它：DungeonConfigWindow 的按钮与 DungeonCsvBridgeTests。
     public static class DungeonCsvBridge
     {
@@ -460,6 +480,60 @@ namespace NBC.EditorTools
 
             cells.Add(current.ToString());
             return cells.ToArray();
+        }
+
+        // 功能：读磁盘 CSV 的前 4 行表头，拼成列说明。
+        // 入参：error 输出错误原因。
+        // 返回含义：列说明列表，读不到返回空列表。
+        // 步骤：读文件 → 逐行切分 → 按列下标把字段名/中文名/类型/规则配起来。
+        // 上游/下游：DungeonConfigWindow 画表头时调用；内部用 SplitLine。
+        public static List<CsvColumn> ReadColumns(out string error)
+        {
+            error = string.Empty;
+            List<CsvColumn> columns = new List<CsvColumn>();
+            string path = ResolveCsvPath();
+
+            if (path == null)
+            {
+                error = "找不到 " + CsvRelativePath;
+                return columns;
+            }
+
+            string[] lines = Normalize(File.ReadAllText(path, Encoding.UTF8)).Split('\n');
+
+            if (lines.Length < HeaderLineCount)
+            {
+                error = CsvRelativePath + " 的表头不足 " + HeaderLineCount + " 行";
+                return columns;
+            }
+
+            string[] names = SplitLine(lines[0]);
+            string[] labels = SplitLine(lines[1]);
+            string[] types = SplitLine(lines[2]);
+            string[] rules = SplitLine(lines[3]);
+
+            for (int i = 0; i < names.Length; i++)
+            {
+                columns.Add(new CsvColumn
+                {
+                    Name = names[i],
+                    Label = At(labels, i),
+                    Type = At(types, i),
+                    Rule = At(rules, i),
+                });
+            }
+
+            return columns;
+        }
+
+        // 功能：取一行表头的第 index 格，防止缺列时越界。
+        // 入参：cells 是切分后的表头行；index 是列下标。
+        // 返回含义：该格文本，取不到给空串。
+        // 步骤：比较下标与长度后返回。
+        // 上游/下游：ReadColumns 调用。
+        private static string At(string[] cells, int index)
+        {
+            return index < cells.Length ? cells[index] : string.Empty;
         }
 
         // 功能：把怪物数组写成单元格，多只时加引号。
