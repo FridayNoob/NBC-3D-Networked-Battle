@@ -118,6 +118,33 @@ namespace NBC.EditorTools
             }
         }
 
+        // 功能：判断一个 CSV 文件当前是不是 UTF-8 带 BOM。
+        // 入参：path 绝对路径。
+        // 返回含义：true 表示前三字节是 EF BB BF。
+        // 步骤：读前 3 字节比较；文件不存在或读不到都返回 false。
+        // 上游/下游：Export 决定写回时要不要带 BOM。
+        private static bool HasUtf8Bom(string path)
+        {
+            try
+            {
+                byte[] head = new byte[3];
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                           FileShare.ReadWrite | FileShare.Delete))
+                {
+                    if (stream.Read(head, 0, 3) < 3)
+                    {
+                        return false;
+                    }
+                }
+
+                return head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF;
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
         // 功能：共享方式读全部字节，遇到占用重试几次。
         // 入参：path 绝对路径。
         // 返回含义：文件字节。
@@ -663,11 +690,12 @@ namespace NBC.EditorTools
 
             string text = BuildCsvText(entry, rows, TakeHeaderBlock(disk));
             string backup = path + ".bak";
+            bool writeBom = !File.Exists(path) || HasUtf8Bom(path);
 
             try
             {
                 File.Copy(path, backup, true);
-                File.WriteAllText(path + ".tmp", text, new UTF8Encoding(true));
+                File.WriteAllText(path + ".tmp", text, new UTF8Encoding(writeBom));
                 File.Copy(path + ".tmp", path, true);
                 File.Delete(path + ".tmp");
             }
@@ -689,7 +717,7 @@ namespace NBC.EditorTools
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
             message = "已导出 " + rows.Count + " 行到 " + entry.CsvPath + "（原文件编码 " + sourceEncoding +
-                      "，已统一成 UTF-8 带 BOM），并已重新生成。\n" + toolMessage;
+                      (writeBom ? "，已统一成 UTF-8 带 BOM" : "，保持 UTF-8 无 BOM") + "），并已重新生成。\n" + toolMessage;
             return true;
         }
 
