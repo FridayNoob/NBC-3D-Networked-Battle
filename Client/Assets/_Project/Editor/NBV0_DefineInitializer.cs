@@ -175,7 +175,7 @@ namespace NBC.EditorTools
         //   4) 扫描异常只写进输出文本，不让诊断菜单本身崩掉
         // 上游：Unity 菜单 Tools/NBC 下的诊断项（人工点击）
         // 下游：FindProtobufDll / FindXLuaDll
-        [MenuItem("Tools/NBC/诊断 M0 探针依赖")]
+        [MenuItem("Tools/NBC/调试/诊断 M0 探针依赖")]
         private static void Diagnose()
         {
             var protobuf = FindProtobufDll();

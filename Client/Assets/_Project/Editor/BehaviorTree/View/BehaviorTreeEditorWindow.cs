@@ -52,7 +52,7 @@ namespace NBC.EditorTools.BehaviorTree
         // 步骤：取已有窗口或新建并显示
         // 上游：Unity 菜单
         // 下游：CreateGUI
-        [MenuItem("AI工具/BehaviorTree Editor")]
+        [MenuItem("Tools/NBC/行为树/行为树编辑器")]
         public static void OpenWindow()
         {
             BehaviorTreeEditorWindow window = GetWindow<BehaviorTreeEditorWindow>();

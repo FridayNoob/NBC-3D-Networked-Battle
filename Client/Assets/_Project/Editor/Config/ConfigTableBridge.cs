@@ -981,11 +981,56 @@ namespace NBC.EditorTools
         // 入参：asset SO。
         // 返回含义：rows 的 IList；没有该字段返回 null。
         // 步骤：GetField("rows") → 取 GetValue。
-        // 上游/下游：IsDirty、Export、Import 调用。
-        private static IList GetRows(ScriptableObject asset)
+        // 上游/下游：IsDirty、Export、Import 与通用窗口调用。
+        public static IList GetRows(ScriptableObject asset)
         {
             FieldInfo field = asset.GetType().GetField("rows", BindingFlags.Public | BindingFlags.Instance);
             return field == null ? null : field.GetValue(asset) as IList;
+        }
+
+        // 功能：新建一行（窗口的「增加一行」用）。
+        // 入参：entry 表登记。
+        // 返回含义：行类型的新实例。
+        // 步骤：Activator.CreateInstance(entry.RowType)。
+        // 上游/下游：通用窗口调用。
+        public static object CreateRow(ConfigTableEntry entry)
+        {
+            return Activator.CreateInstance(entry.RowType);
+        }
+
+        // 功能：把某个单元格读成「与 CSV 一致」的文本（窗口显示用）。
+        // 入参：entry 表登记；row 行；column 列。
+        // 返回含义：单元格文本。
+        // 步骤：取字段值 → FormatCell（带列类型）。
+        // 上游/下游：通用窗口调用。
+        public static string GetCellText(ConfigTableEntry entry, object row, ConfigColumn column)
+        {
+            return FormatCell(GetFieldValue(entry, row, column.Name), column.Type);
+        }
+
+        // 功能：把窗口里输入的文本写回某个单元格。
+        // 入参：entry 表登记；row 行；column 列；text 输入文本。
+        // 返回含义：true 表示解析成功并已写入。
+        // 步骤：按字段类型 TryParseCell → 赋值；失败只填 problem，不改字段。
+        // 上游/下游：通用窗口调用。
+        public static bool TrySetCell(ConfigTableEntry entry, object row, ConfigColumn column, string text, out string problem)
+        {
+            problem = string.Empty;
+            FieldInfo field = GetField(entry, column.Name);
+
+            if (field == null)
+            {
+                problem = entry.Name + " 缺少字段 " + column.Name;
+                return false;
+            }
+
+            if (!TryParseCell(text, field.FieldType, out object value, out problem))
+            {
+                return false;
+            }
+
+            field.SetValue(row, value);
+            return true;
         }
 
         // 功能：按列名拿行类型的字段（带缓存）。
