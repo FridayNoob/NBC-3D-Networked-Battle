@@ -1036,7 +1036,7 @@ namespace NBC.Game.Bootstrap
             // R020：玩家侧伤害反馈 + 把血量留给 HUD
             if (m_feed.View != null)
             {
-                TrackHeroHealth(m_feed.View.FindHero(m_session.PlayerId));
+                TrackHeroHealth(FindMyHeroSnapshot());
             }
 
             if (m_binder == null && m_feed.View != null)
@@ -1059,6 +1059,39 @@ namespace NBC.Game.Bootstrap
         // 上游：Update
         // 下游：NetRuntimeStats（HUD 只读它）
         // 注意：不写这里，HUD 会一直显示「离线」—— 它只读静态统计，不认识会话
+        // 功能：按「归属玩家」找我的英雄快照，**包括已经倒下的**。
+        // 入参：无
+        // 返回：我的英雄快照；还没生成或不在视野里返回 null
+        // 步骤：
+        //   1) 没会话/没表现层数据就返回 null
+        //   2) 遍历实体，按 Kind == 0 且 OwnerPlayerId == 我的 PlayerId 找
+        //   3) 找到就返回（不看 Alive）
+        // 上游：RefreshPresentation（喂 TrackHeroHealth）
+        // 下游：SnapshotView.Entities
+        // 注意：不能用 SnapshotView.FindHero —— 它只返回活着的英雄，英雄一死就返回 null，
+        //       于是 TrackHeroHealth 提前返回、HeroAlive 永远停在 true，结果「血量掉光但没有死亡流程」。
+        private EntitySnapshot FindMyHeroSnapshot()
+        {
+            if (m_session == null || m_feed == null || m_feed.View == null)
+            {
+                return null;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                EntitySnapshot candidate = entities[i];
+
+                if (candidate.Kind == 0 && candidate.OwnerPlayerId == m_session.PlayerId)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
         // 功能：盯住本地英雄的血量 —— 掉血时飘伤害数字 + 播受击，并把最新血量留给 HUD。
         // 入参：hero 本地英雄的快照（可为 null）
         // 返回：无

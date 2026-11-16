@@ -316,3 +316,12 @@
 - 根因二：三条 Mixamo clip 把 `Root Transform Position (Y)` 勾了 `Bake Into Pose`，clip 自带的根 Y 曲线把整个身体压到原点以下 0.86 米（落地日志实据：地面 1.414、脚骨 0.554、胯 1.376），代码又把根节点按物理高度钉在地面 ⇒ 半身入地
 - 修法：三条 clip 的 `Root Transform Position (Y)` 改回不勾（`lockRootHeightY=false`、`keepOriginalPositionY=true`），竖直高度只由物理算；`Client/Assets/_Project/Game/Player/PlayerJumpMotor.cs` —— `m_jumpHeight` 改 1.2；新增 `m_alignFeetToGround` / `m_alignMaxOffset`(2 米) / `m_alignDeadZone`(5 毫米) 与 `LateUpdate → TryCalibrateSole / AlignFeetToGround`；落地日志补脚骨/胯/鞋底偏移
 - 判据：Console 里 `[PlayerJumpMotor] 落地` 那行的脚骨 ≈ 地面高度；贴地修正日志不连续刷屏；起跳目标高度显示 1.20 米
+### 2026-11-16 副本里左键攻击不掉血 + 血量掉光没有黑幕（R042 验收返修）
+
+- 现象一：副本里用鼠标左键打怪，动画在播但怪物血量不动
+- 根因一：HpBarDemoBehaviour.RegisterAttackInput 只把动作 0 绑到 J，而 PlayerBrain 本机会处理鼠标左键 ⇒ 有动画、没有 ActionBits，服务端收不到攻击请求
+- 修法一：Client/Assets/_Project/Framework/Input/InputMapping.cs 新增备用键（BindAlternate / TryGetAlternateKey，Validate 一并查冲突）；LegacyInputSource 三条查询都改「主键或备用键」；HpBarDemoBehaviour 把备用键绑到 KeyCode.Mouse0
+- 现象二：血量掉光后角色不倒、没有黑幕、Console 也没有死亡相关日志
+- 根因二：SnapshotView.FindHero 的注释写明「只返回活着的英雄」，英雄一死就返回 null ⇒ RuntimeNetDriver.TrackHeroHealth(null) 提前 return，HeroAlive 永远是 true，PlayerDeathFlow.IsDeadNow() 永远 false
+- 修法二：RuntimeNetDriver 新增 FindMyHeroSnapshot()（按 OwnerPlayerId 扫 m_feed.View.Entities，不看 Alive），RefreshPresentation 改用它；SnapshotView 不动（它的语义对「操作目标」是对的）
+- 判据：Console 出现「攻击键已登记：J / 鼠标左键」；左键打怪怪掉血；血量归零后约 1 秒出现「你已倒下」黑幕与 5 秒倒计时；退出 Play 后 EditMode 全量 771/0

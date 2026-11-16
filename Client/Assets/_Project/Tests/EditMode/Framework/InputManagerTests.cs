@@ -491,5 +491,46 @@ namespace NBC.Tests.EditMode
             Assert.IsFalse(mapping.TryGetKey(m_skill1, out key));
             Assert.AreEqual(KeyCode.None, key);
         }
+
+        [Test]
+        public void InputMapping_AlternateKey_IsReadBack()
+        {
+            InputMapping mapping = InputMapping.CreateDefault();
+            mapping.Bind(m_skill1, KeyCode.J);
+            mapping.BindAlternate(m_skill1, KeyCode.Mouse0);
+
+            KeyCode primary;
+            Assert.IsTrue(mapping.TryGetKey(m_skill1, out primary));
+            Assert.AreEqual(KeyCode.J, primary, "主键不该被备用键覆盖");
+
+            KeyCode alternate;
+            Assert.IsTrue(mapping.TryGetAlternateKey(m_skill1, out alternate));
+            Assert.AreEqual(KeyCode.Mouse0, alternate);
+        }
+
+        [Test]
+        public void InputMapping_AlternateKey_ConflictsAreDetected()
+        {
+            InputMapping mapping = InputMapping.CreateDefault();
+            mapping.Bind(m_skill1, KeyCode.J);
+            mapping.BindAlternate(m_skill1, KeyCode.Mouse0);
+            mapping.Bind(m_skill2, KeyCode.Mouse0);
+
+            KeyCode conflict;
+            Assert.IsFalse(mapping.Validate(out conflict), "主键撞到别人的备用键也算冲突");
+            Assert.AreEqual(KeyCode.Mouse0, conflict);
+        }
+
+        [Test]
+        public void InputMapping_AlternateKey_CollidingWithMoveKeyIsDetected()
+        {
+            InputMapping mapping = InputMapping.CreateDefault();
+            mapping.Bind(m_skill1, KeyCode.J);
+            mapping.BindAlternate(m_skill1, mapping.MoveForward);
+
+            KeyCode conflict;
+            Assert.IsFalse(mapping.Validate(out conflict), "备用键抢 W 也算冲突");
+            Assert.AreEqual(KeyCode.W, conflict);
+        }
     }
 }

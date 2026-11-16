@@ -124,11 +124,19 @@ namespace NBC.Framework.Input
             // 步骤：
             //   1) 先查映射表，没绑定就直接 false——不把 KeyCode.None 递给 GetKeyDown
             //   2) 绑定了才问 GetKeyDown，边沿判定交给引擎
+            //   3) 主键没按下时再问一次备用键（例如普攻同时认鼠标左键与 J）
             // 上游：InputManager.Tick 遍历登记过的动作时调用，结果按位或进 ActionBits
-            // 下游：InputMapping.TryGetKey、UnityEngine.Input.GetKeyDown
+            // 下游：InputMapping.TryGetKey / TryGetAlternateKey、UnityEngine.Input.GetKeyDown
             // 注意：GetKeyDown 只在这一帧成立，同一帧重复问仍是 true；它不是「现在按住」，按住要用 IsActionHeld，否则按住不放会每帧各放一发。
             KeyCode key;
-            return m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKeyDown(key);
+
+            if (m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKeyDown(key))
+            {
+                return true;
+            }
+
+            KeyCode alternate;
+            return m_mapping.TryGetAlternateKey(action, out alternate) && UnityEngine.Input.GetKeyDown(alternate);
         }
 
         /// <summary>某个动作本帧是否刚松开；没绑定的动作返回 false，且不查键。</summary>
@@ -140,11 +148,19 @@ namespace NBC.Framework.Input
             // 步骤：
             //   1) 先查映射表，没绑定直接 false，不拿 KeyCode.None 去问引擎
             //   2) 绑定了才问 GetKeyUp，边沿判定交给引擎
+            //   3) 主键没松开时再问一次备用键，保证「左键按下、J 松开」这类混用也能正确报边沿
             // 上游：InputManager.Tick 遍历登记过的动作时调用，结果按位或进 ActionReleaseBits
-            // 下游：InputMapping.TryGetKey、UnityEngine.Input.GetKeyUp
+            // 下游：InputMapping.TryGetKey / TryGetAlternateKey、UnityEngine.Input.GetKeyUp
             // 注意：按下与松开两条边沿都要报，逻辑层才能重建「持续按住」；只报按下会「松手了还在开火」。
             KeyCode key;
-            return m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKeyUp(key);
+
+            if (m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKeyUp(key))
+            {
+                return true;
+            }
+
+            KeyCode alternate;
+            return m_mapping.TryGetAlternateKey(action, out alternate) && UnityEngine.Input.GetKeyUp(alternate);
         }
 
         /// <summary>某个动作当前是否被按住（持续状态，不是边沿）；没绑定的动作返回 false。</summary>
@@ -156,11 +172,19 @@ namespace NBC.Framework.Input
             // 步骤：
             //   1) 先查映射表，没绑定直接 false
             //   2) 绑定了才查 GetKey（持续按住，与 GetKeyDown 的边沿不同）
+            //   3) 主键没按住时再看备用键，两个键任一个按住都算按住
             // 上游：当前仓库里只有接口契约使用，InputManager 组装命令只读按下 / 松开两条边沿
-            // 下游：InputMapping.TryGetKey、UnityEngine.Input.GetKey
+            // 下游：InputMapping.TryGetKey / TryGetAlternateKey、UnityEngine.Input.GetKey
             // 注意：这是「现在按住」而不是「本帧新按下」，不能直接塞进 ActionBits，否则按住技能键会每帧触发一次。
             KeyCode key;
-            return m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKey(key);
+
+            if (m_mapping.TryGetKey(action, out key) && UnityEngine.Input.GetKey(key))
+            {
+                return true;
+            }
+
+            KeyCode alternate;
+            return m_mapping.TryGetAlternateKey(action, out alternate) && UnityEngine.Input.GetKey(alternate);
         }
     }
 }

@@ -16,6 +16,10 @@ namespace NBC.Framework.Input
         // 动作 → 物理键的字典；动作索引 0..31（InputCommand.ActionBits 是 32 位掩码），最多 32 条绑定。
         private readonly Dictionary<InputActionId, KeyCode> m_actions = new Dictionary<InputActionId, KeyCode>();
 
+        // 动作 → 备用物理键的字典；与主键同时生效（任一个按下都算这个动作）。
+        // 为什么要备用键：普攻既要能用鼠标左键、又要能用 J，而一个动作在主表里只能存一个键。
+        private readonly Dictionary<InputActionId, KeyCode> m_alternates = new Dictionary<InputActionId, KeyCode>();
+
         /// <summary>前进键（KeyCode 枚举值），默认 W。</summary>
         public KeyCode MoveForward { get; set; } = KeyCode.W;
 
@@ -60,6 +64,32 @@ namespace NBC.Framework.Input
             return m_actions.TryGetValue(action, out key);
         }
 
+        /// <summary>给一个动作补一个备用键；主键和备用键任一个按下都算这个动作。</summary>
+        public void BindAlternate(InputActionId action, KeyCode key)
+        {
+            // 功能：给一个动作补一个备用物理键，已有备用键就覆盖。
+            // 入参：action 动作标识（索引 0..31）；key 备用物理键，KeyCode.None 表示清掉备用键
+            // 返回：无
+            // 步骤：
+            //   1) 按动作索引写入备用表，不动主表
+            // 注意：备用键与主键绑同一个键时不会报错，会变成「一次按下算一次」，不重复计。
+            // 上游 / 下游：上游是 Boot 的 HpBarDemoBehaviour（普攻同时要认鼠标左键与 J）；下游只改备用表。
+            m_alternates[action] = key;
+        }
+
+        /// <summary>查一个动作的备用键；没绑定过返回 false。</summary>
+        public bool TryGetAlternateKey(InputActionId action, out KeyCode key)
+        {
+            // 功能：查一个动作的备用键。
+            // 入参：action 动作标识；key 输出备用键
+            // 返回：绑定过返回 true；没绑定返回 false，key 为 KeyCode.None
+            // 步骤：
+            //   1) 直接查备用表，不额外区分 KeyCode.None
+            // 注意：绑成 KeyCode.None 也算已绑定，判断没绑要看返回值而不是 key。
+            // 上游 / 下游：上游是 LegacyInputSource 的按下 / 松开 / 按住查询；下游是 Dictionary.TryGetValue。
+            return m_alternates.TryGetValue(action, out key);
+        }
+
         /// <summary>把全部绑定复制到调用方列表，供调试面板或序列化遍历。</summary>
         public void CopyBindings(List<KeyValuePair<InputActionId, KeyCode>> buffer)
         {
@@ -100,6 +130,24 @@ namespace NBC.Framework.Input
 
             Dictionary<KeyCode, InputActionId> seen = new Dictionary<KeyCode, InputActionId>();
             foreach (KeyValuePair<InputActionId, KeyCode> pair in m_actions)
+            {
+                if (pair.Value == KeyCode.None)
+                {
+                    continue;
+                }
+
+                InputActionId existing;
+                if (seen.TryGetValue(pair.Value, out existing))
+                {
+                    conflict = pair.Value;
+                    return false;
+                }
+
+                seen.Add(pair.Value, pair.Key);
+            }
+
+            // 备用键也要参与冲突检查：它同样能触发动作，撞键一样会让一次按下触发两个行为。
+            foreach (KeyValuePair<InputActionId, KeyCode> pair in m_alternates)
             {
                 if (pair.Value == KeyCode.None)
                 {

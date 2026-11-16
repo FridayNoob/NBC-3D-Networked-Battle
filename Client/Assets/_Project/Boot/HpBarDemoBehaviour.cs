@@ -139,11 +139,12 @@ namespace NBC.Boot
         // 返回：无
         // 步骤：
         //   1) 建一张键位表（构造时自带 WASD 默认键）
-        //   2) 声明动作 0（名字 Attack）并绑到 m_attackKey
+        //   2) 声明动作 0（名字 Attack），主键绑 m_attackKey、备用键绑鼠标左键
         //   3) 把键位表注入 InputManager，再登记该动作 —— 不登记就永远产不出动作位
         // 上游：HpBarDemoBehaviour 装配流程
         // 下游：LegacyInputSource、InputManager.TrackAction、RuntimeNetDriver（读 ActionBits 第 0 位）
         // 注意：动作 0 是**服务端约定**（RoomBattleService 里 `ActionBits & 1u` 就是普攻），别改成别的编号
+        // 注意：只绑 J 的话，玩家用鼠标左键只会看到本机动画、网络层不发攻击请求（表现成「打不掉血」）
         private void RegisterAttackInput()
         {
             if (InputManager.Instance == null)
@@ -155,11 +156,12 @@ namespace NBC.Boot
             InputMapping mapping = new InputMapping();
             InputActionId attack = InputActionId.Declare(0, "Attack");
             mapping.Bind(attack, m_attackKey);
+            mapping.BindAlternate(attack, KeyCode.Mouse0);
 
             InputManager.Instance.Source = new LegacyInputSource(mapping);
             InputManager.Instance.TrackAction(attack);
 
-            Debug.Log("[HpBarDemo] 攻击键已登记：" + m_attackKey + "（动作 0 = 普攻）");
+            Debug.Log("[HpBarDemo] 攻击键已登记：" + m_attackKey + " / 鼠标左键（动作 0 = 普攻）");
         }
         private void Update()
         {
