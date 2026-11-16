@@ -235,6 +235,17 @@ namespace NBC.Game.Bootstrap
             get { return m_lastError; }
         }
 
+        // 功能：返回会话层的失败原因（例如「账号登录被拒：没有这个账号」）。
+        // 入参：无
+        // 返回：失败原因（空 = 会话没失败过）
+        // 步骤：直接转发 NetSession.FailureReason；会话还没建时返回空
+        // 上游：DungeonEntrance 在连接失败时读取，用来把真实原因显示给玩家
+        // 下游：NetSession.FailureReason
+        public string FailureReason
+        {
+            get { return m_session != null ? m_session.FailureReason : string.Empty; }
+        }
+
         // 功能：控制握手成功后是否自动进房。
         // 入参：true = 在线就进房（默认）；false = 只握手，等外部叫进房
         // 返回：属性值

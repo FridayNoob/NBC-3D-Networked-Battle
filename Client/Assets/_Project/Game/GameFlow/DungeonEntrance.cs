@@ -166,15 +166,27 @@ namespace NBC.Game.GameFlow
             driver.BindPresentation = false;
 
             float deadline = Time.realtimeSinceStartup + Mathf.Max(1f, m_connectTimeoutSeconds);
-            while (!driver.IsOnline && Time.realtimeSinceStartup < deadline)
+            while (!driver.IsOnline
+                && string.IsNullOrEmpty(driver.FailureReason)
+                && string.IsNullOrEmpty(driver.LastError)
+                && Time.realtimeSinceStartup < deadline)
             {
                 yield return null;
             }
 
             if (!driver.IsOnline)
             {
-                // 提示里带上地址：连不上时第一眼要能看出「连的是谁」，否则只能猜是端口还是服务端没起
-                SetStatus("连接副本服务器失败：超时（" + m_host + ":" + m_port + "）");
+                // 原因优先级：会话失败原因（如「账号登录被拒」）> 重连放弃原因 > 纯超时
+                string reason = driver.FailureReason;
+                if (string.IsNullOrEmpty(reason))
+                {
+                    reason = driver.LastError;
+                }
+                if (string.IsNullOrEmpty(reason))
+                {
+                    reason = "超时（" + m_host + ":" + m_port + "）";
+                }
+                SetStatus("连接副本服务器失败：" + reason);
                 Destroy(session);
                 m_connecting = false;
                 yield break;
