@@ -332,4 +332,6 @@
 - 根因四：ExitToWorld 只依赖 SceneFlow 的回调写 warning，没有自己兜底，也没有清理 DontDestroyOnLoad 带进副本的玩家与会话物体
 - 修法四：PlayerDeathFlow.ExitToWorld 改协程：LeaveRoom → 关黑幕 → SceneFlow.LoadAsync → 失败退 SceneManager.LoadScene → 成功后 CleanupAfterExit() 销毁 [DungeonSession] 与带过来的玩家（DungeonEntrance.SessionObjectName 改为 public const）
 - 判据补充：砍中怪要有伤害且 Console 无「目标 0 不存在」；回 World 后 Hierarchy 里只有一个 [Player_Hero]
-
+- 现象五：死亡退出副本仍报错，第四段堆栈是 YooInternalException: Unexpected provider type: ErrorProvider（SceneFlow.cs:145 的 handle.Dispose）
+- 根因五：YooAsset 加载失败后 Dispose 会去卸载未加载成功的场景并抛异常，异常打断协程 ⇒ 第 154 行的 SceneManager 兜底根本没跑到
+- 修法五：失败时不 Dispose、成功时 Dispose 包 try/catch；SceneFlow 记 s_assetSceneFailures，资源包没有的场景本进程后续直接走 SceneManager

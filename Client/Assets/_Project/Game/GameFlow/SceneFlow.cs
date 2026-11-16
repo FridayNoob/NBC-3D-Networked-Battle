@@ -22,6 +22,10 @@ namespace NBC.Game.GameFlow
         // 单例（第一次访问时创建，切场景不销毁）
         private static SceneFlow s_instance;
 
+        // 本进程里「资源包加载失败过」的场景（失败过的场景下次直接走 SceneManager，避免每次都刷一屏红字）
+        private static readonly System.Collections.Generic.HashSet<GameScene> s_assetSceneFailures =
+            new System.Collections.Generic.HashSet<GameScene>();
+
         // 是否正在加载
         public bool IsLoading { get; private set; }
 
@@ -118,7 +122,10 @@ namespace NBC.Game.GameFlow
             bool ok = false;
             string error = string.Empty;
 
-            if (AssetManager.Instance != null && AssetManager.Instance.IsInitialized)
+            bool tryAsset = AssetManager.Instance != null && AssetManager.Instance.IsInitialized
+                            && !s_assetSceneFailures.Contains(scene);
+
+            if (tryAsset)
             {
                 ISceneHandle handle = null;
 
@@ -142,11 +149,28 @@ namespace NBC.Game.GameFlow
                     Progress = 1f;
                     ok = string.IsNullOrEmpty(handle.Error);
                     error = ok ? string.Empty : "YooAsset：" + handle.Error;
-                    handle.Dispose();
+
+                    // 注意：加载失败时**不能** Dispose。YooAsset 加载失败会换成 ErrorProvider，
+                    // 它的 SceneHandle.UnloadSceneAsync 会抛 YooInternalException（Unexpected provider type），
+                    // 这个异常在协程里没人接，会把整个 LoadRoutine 打断 —— 下面的 SceneManager 兜底就永远跑不到。
+                    if (!ok && !s_assetSceneFailures.Contains(scene))
+                    {
+                        s_assetSceneFailures.Add(scene);
+                        Debug.LogWarning("[SceneFlow] 资源包里没有 " + address + "，本进程后续这个场景直接走 SceneManager");
+                    }
 
                     if (ok)
                     {
                         LastPath = "YooAsset";
+
+                        try
+                        {
+                            handle.Dispose();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning("[SceneFlow] 释放场景句柄失败（已忽略）：" + ex.Message);
+                        }
                     }
                 }
             }
