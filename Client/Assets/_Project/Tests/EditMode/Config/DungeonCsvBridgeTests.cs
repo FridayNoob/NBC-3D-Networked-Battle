@@ -192,6 +192,34 @@ namespace NBC.Tests.EditMode
             }
         }
 
+        // 功能：别的程序（例如 Excel）正开着文件时也要能读，否则窗口每帧都会抛共享冲突。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：用 FileShare.ReadWrite 打开临时文件保持占用 → ReadCsvText 应成功。
+        // 上游/下游：上游是 NUnit；下游是 DungeonCsvBridge.ReadCsvText。
+        [Test]
+        public void ReadCsvText_ReadsWhileAnotherProcessHoldsTheFile()
+        {
+            string path = System.IO.Path.GetTempFileName();
+
+            try
+            {
+                System.IO.File.WriteAllText(path, "id,name\r\n1001,狼巢\r\n", new System.Text.UTF8Encoding(false));
+
+                using (new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.ReadWrite, System.IO.FileShare.ReadWrite))
+                {
+                    string text = DungeonCsvBridge.ReadCsvText(path, out string note);
+
+                    Assert.AreEqual("UTF-8", note);
+                    StringAssert.Contains("狼巢", text, "文件被别人打开时也要读得到");
+                }
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
         // 功能：造一行测试数据。
         // 入参：id、name、maxPlayers、spawnRadiusMm、monsters、bossId。
         // 返回含义：装好的 Config_Dungeon。

@@ -337,3 +337,4 @@
 - 修法五：失败时不 Dispose、成功时 Dispose 包 try/catch；SceneFlow 记 s_assetSceneFailures，资源包没有的场景本进程后续直接走 SceneManager
 - 补充六：编辑器里退出副本仍会刷两行 YooAsset 红字 ⇒ SceneFlow 在 Application.isEditor 时跳过 YooAsset、直接用 SceneManager（开发期资源包本来没打场景）；出包后仍保持 YooAsset 优先后兜底
 - 2026-11-16 副本表窗口表头乱码 + 「从 CSV 导入」不生效：CSV 被 Excel 另存成 GBK（无 BOM），桥按 UTF-8 读导致中文列名变乱码、路径解析后仍按英文列名匹配时全部落空；同时 Excel 把怪物列 6001,6001 变成 600,160,016,001。修法：ReadCsvText 先看 BOM（UTF-8/UTF-16），无 BOM 时严格 UTF-8 解码失败即按 GBK 读；导出统一写 UTF-8 带 BOM；校验对不足 4 位的怪物编号提示「Excel 加了千位分隔符」。判据：GBK 文件读回中文正常、导入后 SO 半径跟着变、千位分隔符被明确拒绝。
+- 2026-11-16 副本表窗口报 IOException: Sharing violation（打开 Excel 时每帧刷异常、窗口画不出来）：File.ReadAllBytes 默认只允许别家只读打开，Excel 存盘期间持有独占句柄；异常抛在 OnGUI 里导致整个面板 ImmediateModeException。修法：ReadAllBytesShared 用 FileShare.ReadWrite | Delete 打开并重试 5×80ms；IsDirty/ReadColumns 捕获 IOException 转成红字提示（不抛），Import/Export 给出「请先关闭 Excel」。判据：Excel 开着时窗口不报错、导入能读、写盘失败时提示人话。

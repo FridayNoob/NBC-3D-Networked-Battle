@@ -124,14 +124,64 @@ namespace NBC.EditorTools
         private const string NoteUtf8 = "UTF-8";
         private const string NoteGbk = "GBK";
 
+        // 读文件被占用时的重试次数与间隔（Excel 存完盘的一瞬间会短暂独占）
+        private const int ReadRetryCount = 5;
+        private const int ReadRetryDelayMs = 80;
+
+        // 功能：以共享方式读整个文件的字节，允许别的程序同时持有文件。
+        // 入参：path 文件绝对路径。
+        // 返回含义：文件字节；多次重试仍失败会抛出原始 IOException。
+        // 步骤：用 FileShare.ReadWrite 打开（Excel 打开着也能读）→ 读进内存 → 失败就短等再试。
+        // 上游/下游：ReadCsvText 调用；下游是 FileStream。
+        private static byte[] ReadAllBytesShared(string path)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        byte[] buffer = new byte[stream.Length];
+
+                        int offset = 0;
+
+                        while (offset < buffer.Length)
+                        {
+                            int read = stream.Read(buffer, offset, buffer.Length - offset);
+
+                            if (read <= 0)
+                            {
+                                break;
+                            }
+
+                            offset += read;
+                        }
+
+                        if (offset == buffer.Length)
+                        {
+                            return buffer;
+                        }
+
+                        byte[] exact = new byte[offset];
+                        System.Array.Copy(buffer, exact, offset);
+                        return exact;
+                    }
+                }
+                catch (IOException) when (attempt < ReadRetryCount)
+                {
+                    System.Threading.Thread.Sleep(ReadRetryDelayMs);
+                }
+            }
+        }
+
         // 功能：按 BOM 与字节合法性识别编码，把 CSV 读成文本。
         // 入参：path CSV 绝对路径；encodingNote 输出识别到的编码名。
-        // 返回含义：去掉 BOM 的文本；文件不存在会由 File.ReadAllBytes 抛异常。
+        // 返回含义：去掉 BOM 的文本；文件被占用会抛 IOException（由调用方转成人话）。
         // 步骤：先看 BOM（UTF-8 / UTF-16LE / UTF-16BE），没有 BOM 就按严格 UTF-8 试解码，失败当 GBK。
         // 上游/下游：IsDirty、Export、Import、ReadColumns 调用。
         public static string ReadCsvText(string path, out string encodingNote)
         {
-            byte[] bytes = File.ReadAllBytes(path);
+            byte[] bytes = ReadAllBytesShared(path);
             encodingNote = NoteUtf8;
             string raw;
 
@@ -189,7 +239,18 @@ namespace NBC.EditorTools
                 return true;
             }
 
-            string disk = Normalize(ReadCsvText(path, out _));
+            string disk;
+
+            try
+            {
+                disk = Normalize(ReadCsvText(path, out _));
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                // OnGUI 每帧都会走到这里，读不到不能抛异常，否则整个窗口画不出来
+                detail = "读不到 CSV（可能正被 Excel 占用）：" + exception.Message;
+                return false;
+            }
 
             if (!string.Equals(disk, BuildCsvText(asset, TakeHeaderBlock(disk)), StringComparison.Ordinal))
             {
@@ -320,16 +381,36 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            string disk = Normalize(ReadCsvText(path, out string sourceEncoding));
+            string disk;
+            string sourceEncoding;
+
+            try
+            {
+                disk = Normalize(ReadCsvText(path, out sourceEncoding));
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                message = "读不到 CSV（可能正被 Excel 打开）：" + exception.Message + "\n请先关闭 Excel 再导出。";
+                return false;
+            }
+
             string text = BuildCsvText(asset, TakeHeaderBlock(disk));
             string backup = path + ".bak";
 
-            File.Copy(path, backup, true);
+            try
+            {
+                File.Copy(path, backup, true);
 
-            // 统一写成 UTF-8 带 BOM：Excel 打开不乱码，ConfigKit 也能识别
-            File.WriteAllText(path + ".tmp", text, new UTF8Encoding(true));
-            File.Copy(path + ".tmp", path, true);
-            File.Delete(path + ".tmp");
+                // 统一写成 UTF-8 带 BOM：Excel 打开不乱码，ConfigKit 也能识别
+                File.WriteAllText(path + ".tmp", text, new UTF8Encoding(true));
+                File.Copy(path + ".tmp", path, true);
+                File.Delete(path + ".tmp");
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                message = "写不进 CSV（可能正被 Excel 打开）：" + exception.Message + "\n请先关闭 Excel 再导出。";
+                return false;
+            }
 
             if (!RunConfigKit(out string toolMessage))
             {
@@ -366,7 +447,19 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            string csvText = ReadCsvText(path, out string sourceEncoding);
+            string csvText;
+            string sourceEncoding;
+
+            try
+            {
+                csvText = ReadCsvText(path, out sourceEncoding);
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                message = "读不到 CSV（可能正被 Excel 打开）：" + exception.Message + "\n请先关闭 Excel 再导入。";
+                return false;
+            }
+
             string[] lines = Normalize(csvText).Split('\n');
             List<Config_Dungeon> parsed = new List<Config_Dungeon>();
             string[] header = SplitLine(lines[0]);
@@ -556,7 +649,20 @@ namespace NBC.EditorTools
                 return columns;
             }
 
-            string[] lines = Normalize(ReadCsvText(path, out _)).Split('\n');
+            string csvText;
+
+            try
+            {
+                csvText = ReadCsvText(path, out _);
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                // 表头画不出来也要让窗口活着，把原因写进 error 由窗口显示
+                error = "读不到 CSV（可能正被 Excel 占用）：" + exception.Message;
+                return columns;
+            }
+
+            string[] lines = Normalize(csvText).Split('\n');
 
             if (lines.Length < HeaderLineCount)
             {
