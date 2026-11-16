@@ -19,15 +19,18 @@ MonoBehaviour:
     monsterWaves: 3
     timeLimitSeconds: 300
     bossSkillId: 0
+    deathCountdownSeconds: 5
   - id: 2
     sceneName: Level_02
     displayName: "\u5E7D\u6697\u68EE\u6797"
     monsterWaves: 5
     timeLimitSeconds: 600
     bossSkillId: 2001
+    deathCountdownSeconds: 5
   - id: 3
     sceneName: Level_03
     displayName: "\u706B\u7130\u5CE1\u8C37"
     monsterWaves: 8
     timeLimitSeconds: 900
     bossSkillId: 2003
+    deathCountdownSeconds: 5
