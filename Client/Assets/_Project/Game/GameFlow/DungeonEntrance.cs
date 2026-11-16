@@ -16,7 +16,8 @@ namespace NBC.Game.GameFlow
     public sealed class DungeonEntrance : MonoBehaviour
     {
         // 会话物体名：跨场景保留，Battle 里的 HpBarDemo 会复用它而不是再建一个
-        private const string SessionObjectName = "[DungeonSession]";
+        // 会话物体的名字（进副本时创建；死亡退出副本时按这个名字把它销毁）
+        public const string SessionObjectName = "[DungeonSession]";
 
         // 触发半径（米）：玩家根节点与入口的距离小于它就显示提示
         [SerializeField] private float m_triggerRadius = 3.5f;

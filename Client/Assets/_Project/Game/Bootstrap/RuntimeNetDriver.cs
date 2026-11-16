@@ -132,6 +132,15 @@ namespace NBC.Game.Bootstrap
         // 是否已经找过剑（避免每次都深搜层级）
         private bool m_swordLooked;
 
+        // 下一次允许重找剑的时间（秒，unscaled）；找到之前每秒最多重试一次
+        private float m_swordRetryTime;
+
+        // 找剑失败的时间间隔（秒）
+        private const float SwordRetrySeconds = 1f;
+
+        // 「找不到玩家 / 找不到剑」的告警是否已经打过（只打一次，避免刷屏）
+        private bool m_swordMissingLogged;
+
         // 本地英雄的当前血量（0 = 还不知道）；HUD 每帧读它（R020）
         public int HeroHp { get; private set; }
 
@@ -859,46 +868,95 @@ namespace NBC.Game.Bootstrap
             return bestId;
         }
 
-        // 功能：找到武器骨骼并准备好一个 Trigger 碰撞体（只做一次）。
+        // 功能：找到「本地玩家」的根节点，作为找武器骨骼的锚点。
+        // 入参：无
+        // 返回：玩家根 Transform；还没生成或找不到 ⇒ null
+        // 步骤：
+        //   1) 优先用已缓存的 PlayerMove（走路组件一直启用）
+        //   2) 其次用已缓存的 PlayerBrain（状态机一直启用）
+        //   3) 都没有再各查一次场景
+        // 上游：EnsureSwordCollider
+        // 下游：FindBone
+        // 注意：刻意不用 PlayerAnimation —— 它在 World 里会被 PlayerBrain 关掉，FindObjectOfType 默认跳过未激活组件
+        private Transform ResolvePlayerRoot()
+        {
+            if (m_playerMove == null)
+            {
+                m_playerMove = UnityEngine.Object.FindObjectOfType<PlayerMove>();
+            }
+
+            if (m_playerMove != null)
+            {
+                return m_playerMove.transform;
+            }
+
+            if (m_playerBrain == null)
+            {
+                m_playerBrain = UnityEngine.Object.FindObjectOfType<PlayerBrain>();
+            }
+
+            return m_playerBrain != null ? m_playerBrain.transform : null;
+        }
+
+        // 功能：找到武器骨骼并准备好一个 Trigger 碰撞体（找不到会按秒重试）。
         // 入参：无
         // 返回：无
         // 步骤：
-        //   1) 找玩家物体（第一个 PlayerAnimation）
+        //   1) 用 PlayerMove / PlayerBrain 找玩家根节点（不用被关掉的 PlayerAnimation）
         //   2) 深度搜名字含 weapon_sword 且激活的骨骼；找不到退到 hand_r
         //   3) 骨骼上已有碰撞体（负责人会在 prefab 上加）就复用，任意类型都行
         //   4) 一个都没有才自己按 Renderer 包围盒建一个 Trigger 盒
         //   5) 无论来源，运行时都保证它是 Trigger（否则会推动带刚体的怪）
         // 上游：FindSwordHitTarget
         // 下游：Physics.OverlapBox
-        // 注意：换模型后若没有这些骨骼，这里会静默留空 —— 结果就是「打不到人」，不会崩
+        // 注意：换模型后若没有这些骨骼，这里会告警一次并每秒重试 —— 结果就是「打不到人」，不会崩
         private void EnsureSwordCollider()
         {
-            if (m_swordLooked)
+            if (m_swordCollider != null && m_swordCollider.enabled)
+            {
+                return;
+            }
+
+            // 找失败要允许重试：角色是进副本以后才出现的，第一次可能还没生成完
+            if (m_swordLooked && Time.unscaledTime < m_swordRetryTime)
             {
                 return;
             }
 
             m_swordLooked = true;
+            m_swordRetryTime = Time.unscaledTime + SwordRetrySeconds;
 
-            if (m_playerAnimation == null)
-            {
-                m_playerAnimation = UnityEngine.Object.FindObjectOfType<PlayerAnimation>();
-            }
+            // 注意：不能用 FindObjectOfType<PlayerAnimation>() 找玩家 —— World 里 PlayerBrain 会把这个旧组件关掉，
+            // 而 FindObjectOfType 默认跳过未激活组件，结果就是「剑永远找不到、每刀都打空」。
+            // 这里改用始终启用的 PlayerMove / PlayerBrain 当锚点。
+            Transform playerRoot = ResolvePlayerRoot();
 
-            if (m_playerAnimation == null)
+            if (playerRoot == null)
             {
+                if (!m_swordMissingLogged)
+                {
+                    m_swordMissingLogged = true;
+                    Debug.LogWarning("[攻击] 场景里找不到玩家（PlayerMove / PlayerBrain），本刀不判定命中");
+                }
+
                 return;
             }
 
-            Transform weapon = FindBone(m_playerAnimation.transform, "weapon_sword");
+            Transform weapon = FindBone(playerRoot, "weapon_sword");
 
             if (weapon == null)
             {
-                weapon = FindBone(m_playerAnimation.transform, "hand_r");
+                weapon = FindBone(playerRoot, "hand_r");
             }
 
             if (weapon == null)
             {
+                if (!m_swordMissingLogged)
+                {
+                    m_swordMissingLogged = true;
+                    Debug.LogWarning("[攻击] 玩家身上找不到 weapon_sword / hand_r 骨骼，本刀不判定命中");
+                }
+
                 return;
             }
 
@@ -1001,7 +1059,10 @@ namespace NBC.Game.Bootstrap
             }
             else
             {
-                m_session.SendInput(command);
+                // 注意：这里必须把「攻击位」抹掉。HandleAttack 返回 false 有两种情况：窗口没开，或
+                // 「按了但还在冷却里」；后者会让本帧 command.ActionBits 仍然带着攻击位，如果原样发出去，
+                // 服务端就会收到一条「目标 = 0」的普攻，日志刷「目标 0 不存在」。
+                m_session.SendInput(command.MoveX, command.MoveY, command.ActionBits & ~AttackBitMask, 0u, 0);
             }
         }
 

@@ -2,6 +2,7 @@
 //   PlayerDeathFlow：角色死后的分流处理（世界回出生点复活 / 副本单人退出 / 副本多人留房旁观）。
 
 using System;
+using System.Collections;
 using NBC.Game.Bootstrap;
 using NBC.Game.Config;
 using NBC.Game.GameFlow;
@@ -318,8 +319,10 @@ namespace NBC.Game.Player
         // 功能：退出副本并回到世界场景。
         // 入参：reason 退出原因（只用于日志）。
         // 返回：无。
-        // 步骤：1) 让会话退出房间 2) 用 SceneFlow 载入 World 3) 结果写日志。
+        // 步骤：1) 让会话退出房间 2) 关黑幕 3) 协程载入 World（YooAsset 失败会退 SceneManager）
+        //       4) 成功后销毁「带进副本的玩家」和会话物体，让 World 用自己场景里的玩家重新开始。
         // 上游/下游：ResolveDeath / Update 的 Esc 调用；下游 RuntimeNetDriver.LeaveRoom、SceneFlow.LoadAsync。
+        // 注意：玩家是 DontDestroyOnLoad 带进副本的；不销毁就会和 World 场景里的 [Player_Hero] 变成两个人。
         private void ExitToWorld(string reason)
         {
             m_spectating = false;
@@ -332,27 +335,85 @@ namespace NBC.Game.Player
                 driver.LeaveRoom();
             }
 
+            DeathScreenOverlay.Ensure().Hide();
+
             if (m_logDiagnostics)
             {
                 Debug.Log("[死亡流程] 退出副本回世界（原因=" + reason + "）");
             }
 
+            StartCoroutine(ExitToWorldRoutine());
+        }
+
+        // 功能：真正切回 World 的协程（等 SceneFlow 回调，失败再兜底）。
+        // 入参：无
+        // 返回：迭代器
+        // 步骤：1) 没有 SceneFlow 就直接 SceneManager 2) 有就走 SceneFlow 并等回调
+        //       3) 失败再用 SceneManager 兜底 4) 成功清场
+        // 上游：ExitToWorld
+        // 下游：SceneFlow.LoadAsync、SceneManager.LoadScene、CleanupAfterExit
+        private IEnumerator ExitToWorldRoutine()
+        {
             SceneFlow flow = SceneFlow.Instance;
 
             if (flow == null)
             {
                 Debug.LogWarning("[死亡流程] 找不到 SceneFlow，直接 LoadScene(World)");
                 SceneManager.LoadScene(WorldSceneName);
-                return;
+                yield break;
             }
 
-            flow.LoadAsync(GameScene.World, (ok, error) =>
+            bool done = false;
+            bool ok = false;
+
+            flow.LoadAsync(GameScene.World, (result, error) =>
             {
-                if (!ok)
+                ok = result;
+
+                if (!result && m_logDiagnostics)
                 {
-                    Debug.LogWarning("[死亡流程] 加载 World 失败：" + error);
+                    Debug.LogWarning("[死亡流程] SceneFlow 加载 World 失败：" + error + "，改用 SceneManager 兜底");
                 }
+
+                done = true;
             });
+
+            while (!done)
+            {
+                yield return null;
+            }
+
+            if (!ok)
+            {
+                SceneManager.LoadScene(WorldSceneName);
+                yield break;
+            }
+
+            CleanupAfterExit();
+        }
+
+        // 功能：回 World 后清掉「副本残留」——会话物体与带过来的玩家。
+        // 入参：无
+        // 返回：无
+        // 步骤：1) 销毁 [DungeonSession]（里面有 RuntimeNetDriver） 2) 销毁玩家根节点
+        // 上游：ExitToWorldRoutine（只在 World 已经加载成功后调用）
+        // 下游：Object.Destroy
+        // 注意：玩家根节点上就是本组件自己，所以这一句之后本对象不再存在，后面不要再写逻辑。
+        private void CleanupAfterExit()
+        {
+            GameObject session = GameObject.Find(DungeonEntrance.SessionObjectName);
+
+            if (session != null)
+            {
+                Destroy(session);
+            }
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 已回到 World，销毁副本残留（会话物体 + 带过来的玩家）");
+            }
+
+            Destroy(gameObject);
         }
 
         // 功能：按模式给一行提示（世界写「秒后复活」，副本写「秒后退出/观战」）。

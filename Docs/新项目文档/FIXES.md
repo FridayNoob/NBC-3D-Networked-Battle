@@ -325,3 +325,11 @@
 - 根因二：SnapshotView.FindHero 的注释写明「只返回活着的英雄」，英雄一死就返回 null ⇒ RuntimeNetDriver.TrackHeroHealth(null) 提前 return，HeroAlive 永远是 true，PlayerDeathFlow.IsDeadNow() 永远 false
 - 修法二：RuntimeNetDriver 新增 FindMyHeroSnapshot()（按 OwnerPlayerId 扫 m_feed.View.Entities，不看 Alive），RefreshPresentation 改用它；SnapshotView 不动（它的语义对「操作目标」是对的）
 - 判据：Console 出现「攻击键已登记：J / 鼠标左键」；左键打怪怪掉血；血量归零后约 1 秒出现「你已倒下」黑幕与 5 秒倒计时；退出 Play 后 EditMode 全量 771/0
+- 现象三：剑砍到怪身上也不掉血；服务端反复打印「玩家 1 的普攻没打出去：目标 0 不存在」
+- 根因三：EnsureSwordCollider 用 FindObjectOfType<PlayerAnimation>() 当玩家锚点，而 World 的 PlayerAnimation 被 PlayerBrain 关掉（FindObjectOfType 跳过未激活组件）⇒ 剑碰撞盒永远为空；且 m_swordLooked 先置 true、只失败一次就再不重试。另外冷却期内的攻击位会被 PumpInput 的周期发送原样带出去（目标 0）
+- 修法三：RuntimeNetDriver 新增 ResolvePlayerRoot()（先 PlayerMove、再 PlayerBrain）；EnsureSwordCollider 改成找不到就每秒重试、只告警一次；PumpInput 周期发送改为 `command.ActionBits & ~AttackBitMask`
+- 现象四：死亡倒计时结束退出副本，YooAsset 报 Location is invalid: World，且回 World 可能出现两个 [Player_Hero]
+- 根因四：ExitToWorld 只依赖 SceneFlow 的回调写 warning，没有自己兜底，也没有清理 DontDestroyOnLoad 带进副本的玩家与会话物体
+- 修法四：PlayerDeathFlow.ExitToWorld 改协程：LeaveRoom → 关黑幕 → SceneFlow.LoadAsync → 失败退 SceneManager.LoadScene → 成功后 CleanupAfterExit() 销毁 [DungeonSession] 与带过来的玩家（DungeonEntrance.SessionObjectName 改为 public const）
+- 判据补充：砍中怪要有伤害且 Console 无「目标 0 不存在」；回 World 后 Hierarchy 里只有一个 [Player_Hero]
+
