@@ -89,10 +89,10 @@
 - **场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`**（负责人 2026-11-16 定）：场景里 `PrefabInstance` 用到的 prefab，只要是我们维护的（含从美术包复制出来、只被场景当"积木"用的那些），都放到这个目录，场景改引用这里的那份；美术包原件保持不动（升级/重导不覆盖我们的改动）。
   - 目的：场景依赖一处可查，出包与 YooAsset 收集器只需盯一个目录；避免"场景引用埋在几 GB 美术包里"。
   - 复制美术包 prefab 时注意：它引用的模型/材质仍在美术包内，**美术包不进仓库 ⇒ 只复制 prefab 不能让别人克隆后就跑起来**；要么连必要美术资源一起纳入版本库，要么在 README 写明需要先导入哪个美术包。
-  - 当前已合规：`Client/Assets/_Project/Prefabs/Forest Wolf - Grey.prefab`（Battle 用）。
+  - 当前已合规：`Client/Assets/_Project/Prefabs/Forest Wolf - Grey.prefab`（Battle 用）、`ModuleA.prefab`（World 门面）、`SwordGirl_FullBody.prefab`（World 玩家模型）。后两个 2026-11-16 用 `AssetDatabase.MoveAsset` 从美术包搬入，GUID 不变 ⇒ 场景引用自动跟着走，不需要手改 YAML。
 - 搬目录不会破坏引用（Unity 用 GUID），但**必须同步改** YooAsset 收集器路径与 `.gitignore`。
 - 已知 TODO（打包前必做）：`scene_battle`/`hero`/`monster` 收集器还是空的，`_Project/Prefabs` 与外部美术包尚未纳入收集器。
-- 待搬清单（负责人 2026-11-16 定：等 R049 验收完再搬）：`ModuleA.prefab`（World 门面，在 `_Project/Art/Scenes/...`）、`SwordGirl_FullBody.prefab`（World 玩家模型，在 `_Project/Art/Model/...`）；搬完要同步改 `World.unity` 的 `PrefabInstance` 引用。`Forest Wolf - Grey.prefab` 已合规。
+- 待搬清单：**已清空**（2026-11-16 R049 验收后用 `AssetDatabase.MoveAsset` 把 `ModuleA.prefab`、`SwordGirl_FullBody.prefab` 从美术包搬进 `_Project/Prefabs`；GUID 保持，`World.unity` 的 39 处引用自动跟随，无需改 YAML）。以后新增场景引用时直接放这个目录。
 > 2026-11-13：负责人把 `Assets/Art` 整体并入 `Assets/_Project/Art`；`.gitignore` 规则已同步改到新路径（Model 约 4.7GB、Scenes 约 2.9GB 仍不进仓库）。
 
 ## 1. 通用规则 2~15（全项目适用）
@@ -413,7 +413,7 @@ dotnet build Server\_api-probe\ApiProbe.csproj -m:1 -t:Rebuild     # 0 错 / 10 
 
 | 日期 | 变更 |
 | --- | --- |
-| 2026-11-16 | §0.6 增加「场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`」，并登记待搬清单（`ModuleA`、`SwordGirl_FullBody`，等 R049 验收完再搬） |
+| 2026-11-16 | §0.6 增加「场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`」；当天 R049 验收后已用 `AssetDatabase.MoveAsset` 把 `ModuleA`、`SwordGirl_FullBody` 搬入（GUID 不变、场景引用自动跟随），待搬清单清空 |
 | 2026-11-14 | **Test Runner 改为 AI 代跑**：新增 §4.3 授权（EditMode/PlayMode 测试由 AI 通过 MCP 触发并把真实结果写进 05）；§4.2、规则 13、§5.4 判据同步改口，仍禁止点编辑器窗口 / 手工 Play 实测 / 打包上传 |
 | 2026-11-08 | **本文件成为唯一规则真源**：`Docs/00-项目工作规则.md` 全量迁移入本文件后删除；新增 §0.1 代码量预算（500 行）、§0.2 通用 SOLID、§0.3 交互规则（提问一律弹窗，最多 6 个） |
 | 2026-10-26 | 阶段 Rxxx 化：8 篇文档固定结构 + 逐篇过审 + 每篇 60 行（04 例外）+ 轻量通道 FIXES |
