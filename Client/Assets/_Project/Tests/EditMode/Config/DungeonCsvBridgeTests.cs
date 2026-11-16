@@ -139,6 +139,59 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual("range(2,4)", columns[2].Rule);
         }
 
+        // 功能：Excel 另存的 GBK 文件也要能读，否则表头会变乱码、导入对不上列名。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：把一段中文按 GBK 写成临时文件 → ReadCsvText → 断言编码名与中文。
+        // 上游/下游：上游是 NUnit；下游是 DungeonCsvBridge.ReadCsvText。
+        [Test]
+        public void ReadCsvText_DecodesGbkFile()
+        {
+            string path = System.IO.Path.GetTempFileName();
+
+            try
+            {
+                System.Text.Encoding gbk = System.Text.Encoding.GetEncoding(936);
+                System.IO.File.WriteAllBytes(path, gbk.GetBytes("id,name\r\n1001,狼巢\r\n"));
+
+                string text = DungeonCsvBridge.ReadCsvText(path, out string note);
+
+                Assert.AreEqual("GBK", note, "没有 BOM 且不是合法 UTF-8 时按 GBK 解");
+                StringAssert.Contains("狼巢", text, "中文必须正确解码");
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        // 功能：带 BOM 的 UTF-8 读出来不能把 BOM 留在第一个字段名里。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：写 UTF-8 带 BOM 的临时文件 → ReadCsvText → 断言首个字符不是 BOM。
+        // 上游/下游：上游是 NUnit；下游是 DungeonCsvBridge.ReadCsvText。
+        [Test]
+        public void ReadCsvText_StripsUtf8Bom()
+        {
+            string path = System.IO.Path.GetTempFileName();
+
+            try
+            {
+                System.IO.File.WriteAllText(path, "id,name\r\n1001,狼巢\r\n", new System.Text.UTF8Encoding(true));
+
+                string text = DungeonCsvBridge.ReadCsvText(path, out string note);
+
+                Assert.AreEqual("UTF-8", note);
+                // 必须用 Ordinal：文化敏感比较会把 U+FEFF 当成可忽略字符，导致 StartsWith 恒为 true
+                Assert.IsFalse(text.StartsWith("\uFEFF", System.StringComparison.Ordinal), "BOM 不能留在文本里，否则列名会多一个隐藏字符");
+                Assert.IsTrue(text.StartsWith("id,", System.StringComparison.Ordinal), "第一列名必须还是 id");
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
         // 功能：造一行测试数据。
         // 入参：id、name、maxPlayers、spawnRadiusMm、monsters、bossId。
         // 返回含义：装好的 Config_Dungeon。

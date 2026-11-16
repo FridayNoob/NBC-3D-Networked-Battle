@@ -117,6 +117,55 @@ namespace NBC.EditorTools
             return builder.ToString();
         }
 
+        // CSV 可能是 Excel 另存的 GBK，也可能带 UTF-8 / UTF-16 的 BOM，统一在这里探测
+        private static readonly Encoding GbkEncoding = Encoding.GetEncoding(936);
+
+        // 读到的编码名字，写进提示里让用户知道文件被谁改过
+        private const string NoteUtf8 = "UTF-8";
+        private const string NoteGbk = "GBK";
+
+        // 功能：按 BOM 与字节合法性识别编码，把 CSV 读成文本。
+        // 入参：path CSV 绝对路径；encodingNote 输出识别到的编码名。
+        // 返回含义：去掉 BOM 的文本；文件不存在会由 File.ReadAllBytes 抛异常。
+        // 步骤：先看 BOM（UTF-8 / UTF-16LE / UTF-16BE），没有 BOM 就按严格 UTF-8 试解码，失败当 GBK。
+        // 上游/下游：IsDirty、Export、Import、ReadColumns 调用。
+        public static string ReadCsvText(string path, out string encodingNote)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            encodingNote = NoteUtf8;
+            string raw;
+
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                raw = Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+            }
+            else if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            {
+                encodingNote = "UTF-16LE";
+                raw = Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            }
+            else if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            {
+                encodingNote = "UTF-16BE";
+                raw = Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+            }
+            else
+            {
+                try
+                {
+                    raw = new UTF8Encoding(false, true).GetString(bytes);
+                }
+                catch (DecoderFallbackException)
+                {
+                    encodingNote = NoteGbk;
+                    raw = GbkEncoding.GetString(bytes);
+                }
+            }
+
+            // 双保险：某些编辑器会写两个 BOM，或 BOM 被当成普通字符留在文本里，这里统一去掉
+            return raw.Length > 0 ? raw.TrimStart('\uFEFF') : raw;
+        }
+
         // 功能：判断资产与磁盘是否一致。
         // 入参：asset 配置资产；detail 输出差异说明。
         // 返回含义：true 表示有未导出改动或文件读不到。
@@ -140,7 +189,7 @@ namespace NBC.EditorTools
                 return true;
             }
 
-            string disk = Normalize(File.ReadAllText(path, Encoding.UTF8));
+            string disk = Normalize(ReadCsvText(path, out _));
 
             if (!string.Equals(disk, BuildCsvText(asset, TakeHeaderBlock(disk)), StringComparison.Ordinal))
             {
@@ -229,7 +278,12 @@ namespace NBC.EditorTools
                     {
                         if (!monsterIds.Contains(row.monsters[m]))
                         {
-                            errors.Add(prefix + "怪物 " + row.monsters[m] + " 不在 Monster 表里");
+                            // 4 位编号被 Excel 拆成 600,160,016,001 时，会得到 600/160/16/1 这种小于 1000 的数
+                            string hint = row.monsters[m] < 1000
+                                ? "（编号不足 4 位，像是 Excel 给 6001,6001 自动加了千位分隔符；请把这一格设成「文本」再填）"
+                                : string.Empty;
+
+                            errors.Add(prefix + "怪物 " + row.monsters[m] + " 不在 Monster 表里" + hint);
                         }
                     }
                 }
@@ -266,12 +320,14 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            string disk = Normalize(File.ReadAllText(path, Encoding.UTF8));
+            string disk = Normalize(ReadCsvText(path, out string sourceEncoding));
             string text = BuildCsvText(asset, TakeHeaderBlock(disk));
             string backup = path + ".bak";
 
             File.Copy(path, backup, true);
-            File.WriteAllText(path + ".tmp", text, new UTF8Encoding(false));
+
+            // 统一写成 UTF-8 带 BOM：Excel 打开不乱码，ConfigKit 也能识别
+            File.WriteAllText(path + ".tmp", text, new UTF8Encoding(true));
             File.Copy(path + ".tmp", path, true);
             File.Delete(path + ".tmp");
 
@@ -285,7 +341,7 @@ namespace NBC.EditorTools
             File.Delete(backup);
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
-            message = "已导出 " + asset.rows.Count + " 行到 " + CsvRelativePath + "，并已重新生成。\n请重启服务端让新配置生效。";
+            message = "已导出 " + asset.rows.Count + " 行到 " + CsvRelativePath + "（原文件编码 " + sourceEncoding + "，已统一成 UTF-8 带 BOM），并已重新生成。\n请重启服务端让新配置生效。";
             return true;
         }
 
@@ -310,7 +366,8 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            string[] lines = Normalize(File.ReadAllText(path, Encoding.UTF8)).Split('\n');
+            string csvText = ReadCsvText(path, out string sourceEncoding);
+            string[] lines = Normalize(csvText).Split('\n');
             List<Config_Dungeon> parsed = new List<Config_Dungeon>();
             string[] header = SplitLine(lines[0]);
 
@@ -358,7 +415,7 @@ namespace NBC.EditorTools
             asset.RebuildIndex();
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
-            message = "已从 " + CsvRelativePath + " 导入 " + parsed.Count + " 行，资产已保存。";
+            message = "已从 " + CsvRelativePath + " 导入 " + parsed.Count + " 行（文件编码 " + sourceEncoding + "），资产已保存。";
             return true;
         }
 
@@ -499,7 +556,7 @@ namespace NBC.EditorTools
                 return columns;
             }
 
-            string[] lines = Normalize(File.ReadAllText(path, Encoding.UTF8)).Split('\n');
+            string[] lines = Normalize(ReadCsvText(path, out _)).Split('\n');
 
             if (lines.Length < HeaderLineCount)
             {
