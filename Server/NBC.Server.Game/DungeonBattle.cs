@@ -508,6 +508,64 @@ public sealed class DungeonBattle
     /// <summary>本局结束了吗（怪物清空 或 英雄全灭）。</summary>
     public bool IsFinished => AliveMonsterCount == 0 || AliveHeroCount == 0;
 
+    /// <summary>本局已击杀的怪物数（含 BOSS；= 怪物总数 - 活着的怪物数）。</summary>
+    public int MonsterKills
+    {
+        get
+        {
+            int total = 0;
+            int alive = 0;
+
+            for (int i = 0; i < _entities.Count; i++)
+            {
+                if (_entities[i].Kind != 1)
+                {
+                    continue;
+                }
+
+                total++;
+
+                if (_entities[i].Alive)
+                {
+                    alive++;
+                }
+            }
+
+            return total - alive;
+        }
+    }
+
+    /// <summary>本局死亡的英雄数（= 英雄总数 - 活着的英雄数）。</summary>
+    public int HeroDeaths
+    {
+        get
+        {
+            int total = 0;
+            int alive = 0;
+
+            for (int i = 0; i < _entities.Count; i++)
+            {
+                if (_entities[i].Kind != 0)
+                {
+                    continue;
+                }
+
+                total++;
+
+                if (_entities[i].Alive)
+                {
+                    alive++;
+                }
+            }
+
+            return total - alive;
+        }
+    }
+
+    /// <summary>本局已进行的毫秒数（= Tick 乘以每帧毫秒）。</summary>
+    public int ElapsedMs => (int)(Tick * NetContract.TickIntervalMs);
+
+
     /// <summary>造一个世界（数值全来自配置表，见 <see cref="FromDungeon"/>）。</summary>
     /// <param name="roomId">房号。</param>
     /// <param name="dungeonId">副本编号。</param>

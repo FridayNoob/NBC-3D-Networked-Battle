@@ -2,10 +2,12 @@
 //   ERuntimeSyncMode（枚举）、RuntimeNetDriver（类）：运行时的会话驱动（自动连服/进房/发输入/喂表现）
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Framework.Net.Adapter;
+using NBC.Game.GameFlow;
 using NBC.Game.Net;
 using NBC.Protocol;
 using NBC.Game.Player;
@@ -215,6 +217,120 @@ namespace NBC.Game.Bootstrap
             }
         }
 
+        // 副本结算（R042）：一局结束时服务端只发一次，这里是唯一的转发点。
+        public event Action<DungeonResult> DungeonEnded;
+
+        // 功能：处理后端发来的副本结算：弹面板，并把两个按钮接到本驱动的动作上。
+        // 入参：result 服务端结算（胜负/用时/击杀/死亡）。
+        // 返回：无。
+        // 步骤：
+        //   1) 先抛事件（外部想看数据可以订阅）
+        //   2) 再让面板显示，两个回调分别指向 RestartDungeon / ReturnToWorld
+        // 上游/下游：NetSession.DungeonEnded；下游 DungeonResultPanel.Show。
+        private void OnDungeonEnded(DungeonResult result)
+        {
+            Action<DungeonResult> handler = DungeonEnded;
+
+            if (handler != null)
+            {
+                handler(result);
+            }
+
+            DungeonResultPanel.Ensure().Show(result, RestartDungeon, ReturnToWorld);
+        }
+
+        // 功能：再打一局：退房、等一拍、重新进同一副本、重载 Battle。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 关掉结算面板
+        //   2) 退房（服务端把这一局清掉）
+        //   3) 先暂停自动进房，等 0.5 秒让退房请求被处理
+        //   4) 重新允许自动进房，并重载 Battle（新房间天然是新一局）
+        // 上游/下游：DungeonResultPanel 的「再来一次」；下游 NetSession.LeaveRoom、SceneFlow.LoadAsync。
+        public void RestartDungeon()
+        {
+            DungeonResultPanel.Ensure().Hide();
+            StartCoroutine(RestartRoutine());
+        }
+
+        // 功能：回世界：退房、把玩家放回 World 出生点、切到 World 场景。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 关掉结算面板
+        //   2) 退房
+        //   3) 找到玩家身上的 PlayerDeathFlow，让它把玩家挪回世界出生点
+        //   4) 切回 World
+        // 上游/下游：DungeonResultPanel 的「返回世界」；下游 NetSession.LeaveRoom、PlayerDeathFlow.TeleportToWorldSpawn、SceneFlow.LoadAsync。
+        public void ReturnToWorld()
+        {
+            DungeonResultPanel.Ensure().Hide();
+            StartCoroutine(ReturnToWorldRoutine());
+        }
+
+        // 功能：再打一局的协程（退房 → 等一拍 → 重进 → 重载场景）。
+        // 入参：无。
+        // 返回：协程迭代器。
+        // 步骤：见 RestartDungeon 的步骤说明
+        // 上游/下游：RestartDungeon 启动。
+        private IEnumerator RestartRoutine()
+        {
+            if (m_session != null)
+            {
+                m_session.LeaveRoom();
+            }
+
+            // 退房请求还在路上时别立刻 JoinRoom，否则服务端可能判「你已经在房里」
+            m_joinRequested = true;
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            m_joinRequested = false;
+
+            SceneFlow.Instance.LoadAsync(GameScene.Battle, OnDungeonSceneLoaded);
+        }
+
+        // 功能：回世界的协程（退房 → 挪回出生点 → 切 World）。
+        // 入参：无。
+        // 返回：协程迭代器。
+        // 步骤：见 ReturnToWorld 的步骤说明
+        // 上游/下游：ReturnToWorld 启动。
+        private IEnumerator ReturnToWorldRoutine()
+        {
+            if (m_session != null)
+            {
+                m_session.LeaveRoom();
+            }
+
+            m_joinRequested = true;
+
+            PlayerDeathFlow deathFlow = FindObjectOfType<PlayerDeathFlow>();
+
+            if (deathFlow != null)
+            {
+                deathFlow.TeleportToWorldSpawn();
+            }
+
+            yield return new WaitForSecondsRealtime(0.2f);
+
+            m_joinRequested = false;
+
+            SceneFlow.Instance.LoadAsync(GameScene.World, OnDungeonSceneLoaded);
+        }
+
+        // 功能：场景切完后的统一回调（只记日志，切失败时把原因留给 Console）。
+        // 入参：ok 是否成功；message 失败原因。
+        // 返回：无。
+        // 步骤：失败才打日志，成功不打（避免刷屏）
+        // 上游/下游：SceneFlow.LoadAsync 的回调。
+        private static void OnDungeonSceneLoaded(bool ok, string message)
+        {
+            if (!ok)
+            {
+                Debug.LogWarning("[RuntimeNetDriver] 结算后切场景失败：" + message);
+            }
+        }
+
         // 功能：设置敌人模型 prefab（必须在本组件 Start 之前设置，或在 Play 前配好）。
         // 入参：prefab 敌人模型；null = 回落胶囊
         // 返回：无
@@ -326,6 +442,7 @@ namespace NBC.Game.Bootstrap
 
             m_session.StateChanged += OnStateChanged;
             m_session.HandshakeCompleted += OnHandshakeCompleted;
+            m_session.DungeonEnded += OnDungeonEnded;
 
             m_session.Connect(m_host, m_port);
         }

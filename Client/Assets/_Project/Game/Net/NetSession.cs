@@ -574,6 +574,9 @@ namespace NBC.Game.Net
         // 收到一条死亡事件，怪与英雄都走这里，按 kind 分派。
         public event Action<DeathEvent> DeathReceived;
 
+        // 副本结算（R042）：一局结束服务端只发一次，客户端据此弹结算面板。
+        public event Action<DungeonResult> DungeonEnded;
+
         /// <summary>值得记一句的事情（人话），日志面板靠它。</summary>
         public event Action<string> Note;
 
@@ -1100,6 +1103,10 @@ namespace NBC.Game.Net
                     HandleMatchResult(message.MatchResult);
                     break;
 
+                case ServerMessage.PayloadOneofCase.DungeonResult:
+                    HandleDungeonResult(message.DungeonResult);
+                    break;
+
                 case ServerMessage.PayloadOneofCase.None:
                     // 0 长度帧解出来就是它：协议违规，别装作没看见
                     Fail("服务端发来一条没有 payload 的消息（协议违规）");
@@ -1522,6 +1529,34 @@ namespace NBC.Game.Net
                 "（击杀 " + result.KillsA + "/" + result.KillsB + "）⇒ " +
                 (agreed ? "复算一致" : "**复算不一致**（见不一致事件）") +
                 "；" + m_lockstep.Describe());
+        }
+
+        // 功能：处理副本结算消息（R042）：转成事件交给上层弹面板。
+        // 入参：result 服务端算好的结算（胜负/用时/击杀/死亡）。
+        // 返回：无。
+        // 步骤：
+        //   1) 空消息直接丢（协议违规，但没必要为此断线）
+        //   2) 记一行日志，验收时能从 Console 看出收到的是什么
+        //   3) 抛 DungeonEnded 事件；谁订阅谁负责弹 UI
+        // 上游：Handle 的分发 switch
+        // 下游：DungeonEnded → RuntimeNetDriver → DungeonResultPanel
+        private void HandleDungeonResult(DungeonResult result)
+        {
+            if (result == null)
+            {
+                return;
+            }
+
+            Log("收到**副本结算**：" + (result.Outcome == NBC.Game.UI.DungeonOutcomeText.Win ? "胜" : "负") +
+                "，用时 " + result.DurationMs + "ms，击杀 " + result.MonsterKills +
+                "，死亡 " + result.HeroDeaths);
+
+            Action<DungeonResult> handler = DungeonEnded;
+
+            if (handler != null)
+            {
+                handler(result);
+            }
         }
 
         // 注意：本局的数 —— 新一局换新运行器所以从 0 开始，要跨局累计得在会话外记。

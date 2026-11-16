@@ -861,6 +861,11 @@ public sealed class RoomBattleService
             return;     // 这一局已经交过了（见上面第 1 条）
         }
 
+        // R042：副本结束这一次，先把房间相位改成 Finished，再广播一次结算。
+        // 放在 handler 判空之前：没人订阅战绩（例如 `_net-probe`）时，客户端也要收到结果。
+        room.Phase = RoomPhase.Finished;
+        BroadcastDungeonResult(room, battle);
+
         Action<BattleRecordDraft>? handler = BattleFinished;
 
         if (handler == null)
@@ -876,12 +881,26 @@ public sealed class RoomBattleService
         handler(draft);
     }
 
+    // 功能：把这一局的结算发给房里的每个人（每局只发一次，去重由 RecordIfFinished 负责）。
+    // 入参：room 房间；battle 这一局的世界。
+    // 返回：成功发出去几份（按席位计）。
+    // 步骤：
+    //   1) 用 DungeonResults.Build 把世界现状拼成 DungeonResult
+    //   2) 包进 ServerMessage，序列化一次
+    //   3) 走 SendToRoom 把同一份字节发给全房
+    // 上游/下游：RecordIfFinished 调用；下游 SendToRoom。
+    private int BroadcastDungeonResult(Room room, DungeonBattle battle)
+    {
+        var message = new ServerMessage { DungeonResult = DungeonResults.Build(battle) };
+
+        return SendToRoom(message.ToByteArray(), room);
+    }
+
     /// <summary>把一局的现状拼成战绩草稿。</summary>
     /// <param name="room">房间。</param>
     /// <param name="battle">这一局的世界。</param>
     /// <returns>草稿。</returns>
-    private BattleRecordDraft BuildDraft(Room room, DungeonBattle battle)
-    {
+    private BattleRecordDraft BuildDraft(Room room, DungeonBattle battle)    {
         var draft = new BattleRecordDraft
         {
             RoomId = room.RoomId,

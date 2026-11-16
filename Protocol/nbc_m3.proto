@@ -252,6 +252,21 @@ message ServerEvent
 //  信封：一条消息 = 一个 payload（**帧格式另行加长度前缀**，见 Docs\25 D1）
 // ============================================================================
 
+/// 服务端 → 客户端：**这一局副本的结算**（R042）。
+///
+/// 为什么由服务端发：胜负、击杀数、死亡数都是战斗世界里的结果，
+/// 客户端自己数会和服务端对不上（漏事件、重连、延迟都会数错）。
+///
+/// ⚠️ `outcome` 用**数字**（1 = 胜；2 = 负），与 `MatchResult.outcome`、`owner_kind`
+///    同一套路：枚举名会改，数字不会；改数字是**不兼容改动**。
+message DungeonResult
+{
+    int32 outcome       = 1;   // 1 = 胜（怪清光）；2 = 负（英雄全灭）
+    int32 duration_ms   = 2;   // 本局用时（毫秒，服务端 Tick 换算）
+    int32 monster_kills = 3;   // 已击杀怪物数（含 BOSS）
+    int32 hero_deaths   = 4;   // 死亡英雄数（单人为 0 或 1）
+}
+
 /// 一条条件的**权威进度**。
 message ConditionProgressEntry
 {
@@ -431,6 +446,7 @@ message ServerMessage
         LockstepFrame lockstep_frame = 9;  // M4-S4 S4-c 追加（兼容：同上）
         LockstepStart lockstep_start = 10; // M4-S4 S4-c 第二半 追加（兼容：同上）
         MatchResult   match_result  = 11; // M4-S4 S4-d 追加（兼容：只是多一个 oneof 分支）
+        DungeonResult dungeon_result = 12; // R042 追加（兼容：只是多一个 oneof 分支）
     }
 }
 

@@ -111,6 +111,12 @@ namespace NBC.Game.Player
         // 上游/下游：Unity 生命周期；下游 DeathScreenOverlay、ResolveWorld / ResolveBattle。
         private void Update()
         {
+            // R042：结算面板已经接管屏幕时，死亡流程让位（结算优先，不让「你已倒下」再压上去）
+            if (NBC.Game.UI.DungeonResultPanel.IsShowing)
+            {
+                return;
+            }
+
             if (!IsDeadNow())
             {
                 return;
@@ -246,6 +252,31 @@ namespace NBC.Game.Player
             if (m_logDiagnostics)
             {
                 Debug.Log("[死亡流程] 已在世界复活，位置=" + m_worldSpawn);
+            }
+        }
+
+        // 功能：把玩家挪回世界出生点（结算面板点「返回世界」时用，不要求角色已死）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 传送到出生点 2) 竖直积分清零 3) 恢复渲染器（旁观时可能被藏起来）
+        // 上游/下游：RuntimeNetDriver.ReturnToWorldRoutine 调用；下游 PlayerJumpMotor.ResetToGround。
+        public void TeleportToWorldSpawn()
+        {
+            EnsureFallbackRefs();
+            transform.position = m_worldSpawn;
+
+            if (m_jumpMotor != null)
+            {
+                m_jumpMotor.ResetToGround();
+            }
+
+            SetRenderersVisible(true);
+            m_resolved = false;
+            m_spectating = false;
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 结算后回到世界出生点，位置=" + m_worldSpawn);
             }
         }
 
