@@ -62,6 +62,12 @@ namespace NBC.EditorTools
         // 怪物列的输入缓冲：按键过程中不能每帧从 row.monsters 重新拿文本，否则输入会被吞
         private readonly Dictionary<Config_Dungeon, string> m_monsterDrafts = new Dictionary<Config_Dungeon, string>();
 
+        // 上一次检查「资产有没有被别的操作换掉」的时间，避免每帧都查
+        private double m_assetCheckTime;
+
+        // 资产被换掉的检查间隔，秒
+        private const double AssetCheckInterval = 1.0;
+
         // 是否展开列说明
         private bool m_showColumnHelp;
 
@@ -93,14 +99,45 @@ namespace NBC.EditorTools
         // 上游/下游：上游是 IMGUI；下游是各 DrawXxx。
         private void OnGUI()
         {
+            CheckAssetReplaced();
+
             EditorGUILayout.HelpBox(
-                "这里改的是 ScriptableObject；只有点「导出到 CSV」才会写磁盘并重新生成，服务端读的是 CSV。直接改 Inspector 不会同步服务端。",
+                "服务端只读 Configs/Design/Dungeon.csv。这里改的是 SO：红字=SO 与 CSV 不一致；「导出到 CSV」=把 SO 推给 CSV 并重新生成；「从 CSV 导入」=丢掉 SO 改动、以 CSV 为准。",
                 MessageType.None);
 
             DrawToolbar();
             DrawColumnHelp();
             DrawTable();
             DrawStatus();
+        }
+
+        // 功能：发现资产被重新导入或被别的窗口替换时，自动重新加载，避免对着旧对象编辑。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：每秒最多查一次；按路径重新加载，拿到的对象不是当前对象就 Reload。
+        // 上游/下游：上游是 OnGUI；下游是 Reload。
+        private void CheckAssetReplaced()
+        {
+            if (EditorApplication.timeSinceStartup - m_assetCheckTime < AssetCheckInterval)
+            {
+                return;
+            }
+
+            m_assetCheckTime = EditorApplication.timeSinceStartup;
+
+            if (m_asset == null)
+            {
+                return;
+            }
+
+            DungeonConfig current = AssetDatabase.LoadAssetAtPath<DungeonConfig>(ConfigImporter.AssetDirectory + AssetFileName);
+
+            if (current != null && !ReferenceEquals(current, m_asset))
+            {
+                m_status = "检测到资产被重新导入，已自动刷新";
+                m_statusIsError = false;
+                Reload();
+            }
         }
 
         // 功能：同时重新加载资产与列说明。
