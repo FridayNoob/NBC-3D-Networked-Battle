@@ -17,7 +17,7 @@
 //  ---------------------------------------------------------------------------
 //  · 命令行优先：`--port=7778` 是**运维/自动化**用的（`_net-probe` 与手顺书都靠它），
 //    不能被一个配置文件悄悄盖掉。
-//  · **来源要印出来**（`端口 9000（appsettings.json）`）：
+//  · **来源要印出来**（`端口 7778（appsettings.json）`）：
 //    否则"我改的到底生效了没有"又要靠猜 —— 而这正是本类存在的理由。
 //
 //  ---------------------------------------------------------------------------
@@ -46,8 +46,8 @@ namespace NBC.Server.Host;
 /// <summary>服务端启动配置（见文件头：优先级与"来源要印出来"）。</summary>
 internal sealed class HostConfig
 {
-    /// <summary>监听端口。</summary>
-    public int ListenPort { get; private set; } = 9000;
+    /// <summary>监听端口（兜底值；9000 会落进 Windows 保留段，统一用 7778）。</summary>
+    public int ListenPort { get; private set; } = 7778;
 
     /// <summary>端口是哪来的（`命令行` / `appsettings.json` / `内置默认值`）。</summary>
     public string ListenPortSource { get; private set; } = "内置默认值";

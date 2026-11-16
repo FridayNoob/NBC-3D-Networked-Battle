@@ -41,8 +41,8 @@ namespace NBC.EditorTools
         // 服务端地址；默认验收就是本机。
         [SerializeField] private string m_host = "127.0.0.1";
 
-        // 端口；9000 与服务端 appsettings.json 的 ListenPort 一致 —— 早期用代码兜底值 7777 碰巧能连，配置生效后就对不上，别让两边各写默认值。
-        [SerializeField] private int m_port = 9000;
+        // 端口；7778 与服务端 appsettings.json 的 ListenPort 一致（9000 落在 Windows 保留段，别用）—— 两边各写默认值就会对不上。
+        [SerializeField] private int m_port = 7778;
 
         // 玩家名；游客用，登录成功后显示服务端给的档案昵称。
         [SerializeField] private string m_playerName = "剑士";

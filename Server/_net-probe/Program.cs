@@ -296,7 +296,7 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【S4e3】端到端：`NetSession` + **真 `TcpTransport`** 连**真 Host**（默认不启用）");
             EndToEnd_LockstepOverRealSocket(
-                Array.IndexOf(args, "--e2e") >= 0, ReadIntArg(args, "--e2e-port", 9000));
+                Array.IndexOf(args, "--e2e") >= 0, ReadIntArg(args, "--e2e-port", 7778));
 
             Console.WriteLine("通过 " + s_passed + "，失败 " + s_failed + "。");
             Console.WriteLine(s_failed == 0 ? "结果：✅ 全绿" : "结果：❌ 有红");
@@ -8433,10 +8433,10 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
         /// <c>[SKIP] 端到端：未启用/不可达 ⇒ 本节未验</c>，且**一条都不计入「通过」数**
         /// （不许静默跳过，更不许算绿）。</para>
         /// <para>⚠️ 断言**全部**用协议消息 / 对象状态，**不抓日志中文**（W26）。</para>
-        /// <para>⚠️ Host 由**外部**起：`NBC.Server.Host.exe --port=9000 --dev-accounts --fill-seats=4`。</para>
+        /// <para>⚠️ Host 由**外部**起：`NBC.Server.Host.exe --port=7778 --dev-accounts --fill-seats=4`。</para>
         /// </summary>
         /// <param name="enabled">是否带 `--e2e`。</param>
-        /// <param name="port">端口（`--e2e-port`，默认 9000）。</param>
+        /// <param name="port">端口（`--e2e-port`，默认 7778）。</param>
         private static void EndToEnd_LockstepOverRealSocket(bool enabled, int port)
         {
             const string skipLine = "[SKIP] 端到端：未启用/不可达 ⇒ 本节未验";

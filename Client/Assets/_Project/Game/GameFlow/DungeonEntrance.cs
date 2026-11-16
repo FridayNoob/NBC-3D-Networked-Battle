@@ -173,7 +173,8 @@ namespace NBC.Game.GameFlow
 
             if (!driver.IsOnline)
             {
-                SetStatus("连接副本服务器失败：超时");
+                // 提示里带上地址：连不上时第一眼要能看出「连的是谁」，否则只能猜是端口还是服务端没起
+                SetStatus("连接副本服务器失败：超时（" + m_host + ":" + m_port + "）");
                 Destroy(session);
                 m_connecting = false;
                 yield break;
