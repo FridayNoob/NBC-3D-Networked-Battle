@@ -92,6 +92,7 @@
   - 当前已合规：`Client/Assets/_Project/Prefabs/Forest Wolf - Grey.prefab`（Battle 用）。
 - 搬目录不会破坏引用（Unity 用 GUID），但**必须同步改** YooAsset 收集器路径与 `.gitignore`。
 - 已知 TODO（打包前必做）：`scene_battle`/`hero`/`monster` 收集器还是空的，`_Project/Prefabs` 与外部美术包尚未纳入收集器。
+- 待搬清单（负责人 2026-11-16 定：等 R049 验收完再搬）：`ModuleA.prefab`（World 门面，在 `_Project/Art/Scenes/...`）、`SwordGirl_FullBody.prefab`（World 玩家模型，在 `_Project/Art/Model/...`）；搬完要同步改 `World.unity` 的 `PrefabInstance` 引用。`Forest Wolf - Grey.prefab` 已合规。
 > 2026-11-13：负责人把 `Assets/Art` 整体并入 `Assets/_Project/Art`；`.gitignore` 规则已同步改到新路径（Model 约 4.7GB、Scenes 约 2.9GB 仍不进仓库）。
 
 ## 1. 通用规则 2~15（全项目适用）
@@ -412,12 +413,11 @@ dotnet build Server\_api-probe\ApiProbe.csproj -m:1 -t:Rebuild     # 0 错 / 10 
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-11-16 | §0.6 增加「场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`」，并登记待搬清单（`ModuleA`、`SwordGirl_FullBody`，等 R049 验收完再搬） |
 | 2026-11-14 | **Test Runner 改为 AI 代跑**：新增 §4.3 授权（EditMode/PlayMode 测试由 AI 通过 MCP 触发并把真实结果写进 05）；§4.2、规则 13、§5.4 判据同步改口，仍禁止点编辑器窗口 / 手工 Play 实测 / 打包上传 |
 | 2026-11-08 | **本文件成为唯一规则真源**：`Docs/00-项目工作规则.md` 全量迁移入本文件后删除；新增 §0.1 代码量预算（500 行）、§0.2 通用 SOLID、§0.3 交互规则（提问一律弹窗，最多 6 个） |
 | 2026-10-26 | 阶段 Rxxx 化：8 篇文档固定结构 + 逐篇过审 + 每篇 60 行（04 例外）+ 轻量通道 FIXES |
 | 2026-10-26 | 强制代码注释规范（文件头/类四句/字段带单位/方法五段/禁 Markdown 符号） |
-| 2026-10-26 | 工作模式换轨：AI 辅助 + 教学优先 + 可见优先（八步流程 + 三条硬规则） |
-| 2026-09-27 | 环境坑入规：`$PSScriptRoot` 在 `param()` 默认值为空（PS 5.1）、中文路径不进命令行 |
 
 ---
 
