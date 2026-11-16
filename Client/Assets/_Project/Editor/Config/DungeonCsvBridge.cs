@@ -462,6 +462,7 @@ namespace NBC.EditorTools
 
             string[] lines = Normalize(csvText).Split('\n');
             List<Config_Dungeon> parsed = new List<Config_Dungeon>();
+            List<string> recovered = new List<string>();
             string[] header = SplitLine(lines[0]);
 
             try
@@ -474,13 +475,20 @@ namespace NBC.EditorTools
                     }
 
                     string[] cells = SplitLine(lines[i]);
+                    int[] monsterIds = ParseMonsterIds(Cell(header, cells, "monsters"), out string monsterNote);
+
+                    if (!string.IsNullOrEmpty(monsterNote))
+                    {
+                        recovered.Add("第 " + (i + 1) + " 行：" + monsterNote);
+                    }
+
                     parsed.Add(new Config_Dungeon
                     {
                         id = ParseInt(Cell(header, cells, "id")),
                         name = Cell(header, cells, "name"),
                         maxPlayers = ParseInt(Cell(header, cells, "maxPlayers")),
                         spawnRadiusMm = ParseInt(Cell(header, cells, "spawnRadiusMm")),
-                        monsters = ParseIntArray(Cell(header, cells, "monsters")),
+                        monsters = monsterIds,
                         bossId = ParseInt(Cell(header, cells, "bossId")),
                     });
                 }
@@ -509,6 +517,13 @@ namespace NBC.EditorTools
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
             message = "已从 " + CsvRelativePath + " 导入 " + parsed.Count + " 行（文件编码 " + sourceEncoding + "），资产已保存。";
+
+            if (recovered.Count > 0)
+            {
+                message += "\n自动修复了 Excel 的千位分隔符：\n" + string.Join("\n", recovered) +
+                           "\n建议在 Excel 里把「普通怪」这一列设成「文本」格式，避免它下次再加逗号。";
+            }
+
             return true;
         }
 
@@ -864,6 +879,67 @@ namespace NBC.EditorTools
             }
 
             return result;
+        }
+
+        // 功能：解析怪物编号格，容忍 Excel 自动加的千位分隔符。
+        // 入参：raw 原始单元格文本（可能是 6001,6001 或 600,160,016,001）。
+        // 返回含义：怪物编号数组；修复过时 note 写原因，没问题时 note 为空。
+        // 步骤：先按逗号正常解析 → 全部命中 Monster 表就直接用 →
+        //       否则去掉所有逗号，用已知编号做前缀切分 → 能完整切完才算修复成功。
+        // 上游/下游：Import 调用；内部用 LoadMonsterIds、ParseIntArray。
+        private static int[] ParseMonsterIds(string raw, out string note)
+        {
+            note = string.Empty;
+            int[] direct = ParseIntArray(raw);
+            HashSet<int> known = LoadMonsterIds();
+
+            if (direct.Length > 0 && AllKnown(direct, known))
+            {
+                return direct;
+            }
+
+            string digits = raw.Replace(",", string.Empty).Replace("，", string.Empty).Trim();
+
+            if (digits.Length >= 8 && digits.Length % 4 == 0)
+            {
+                int[] chunks = new int[digits.Length / 4];
+
+                for (int i = 0; i < chunks.Length; i++)
+                {
+                    chunks[i] = ParseInt(digits.Substring(i * 4, 4));
+                }
+
+                if (AllKnown(chunks, known))
+                {
+                    note = "识别到千位分隔符，已按 4 位编号还原成 " + string.Join(",", chunks);
+                    return chunks;
+                }
+            }
+
+            return direct;
+        }
+
+        // 功能：判断一组编号是不是都在 Monster 表里。
+        // 入参：ids 编号数组；known Monster 表主键。
+        // 返回含义：true 表示全部存在。
+        // 步骤：逐个检查，空数组算不通过。
+        // 上游/下游：ParseMonsterIds 调用。
+        private static bool AllKnown(int[] ids, HashSet<int> known)
+        {
+            if (ids.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (int id in ids)
+            {
+                if (!known.Contains(id))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         // 功能：尽力杀掉超时进程。

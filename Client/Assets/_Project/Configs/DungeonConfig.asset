@@ -16,7 +16,7 @@ MonoBehaviour:
   - id: 1001
     name: "\u72FC\u5DE2"
     maxPlayers: 4
-    spawnRadiusMm: 500
+    spawnRadiusMm: 3000
     monsters: 711700007117000071170000
     bossId: 6003
   - id: 1002
