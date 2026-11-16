@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-16 | 进 Battle 后看不到玩家，Console 每 5 秒刷「找不到我的英雄快照：PlayerId=1，在线=True，实体数=0」 | 切场景时挂在 World 物体上的协程被销毁，`yield` 之后的「开 AutoJoin / 开 BindPresentation / 接相机 / 摆出生点」永远不执行 | `Client/Assets/_Project/Game/GameFlow/DungeonEntrance.cs`（收尾搬进 `SceneFlow.LoadAsync` 回调 + `FinishEnter` + `m_battleSpawn`） | 进副本 Console 出现「已进入副本，打开自动进房与表现绑定」；玩家在原点、相机跟随、实体数 > 0 |
 | 2026-11-16 | 进副本后玩家模型上多出一堆脚本，Animator 控制器也不是 World 里那份 | Battle.unity 遗留旧玩家预制体实例 962813207（自带 PlayerMove/PlayerAnimation/PlayerBrain），与跨场景带过来的玩家并存；相机 m_target 仍指向它 | 删实例 + SceneRoots 项 + m_target 置 0；PlayerPersist.BindCamera 在 Battle 加载后接相机到带过来的玩家 | Battle 层级里只有一个 [Player_Hero]；相机跟随正常 |
 | 2026-11-16 | 按 E 只报「连接超时」，实际是服务端 9000 / 客户端 7778 不一致；改成 7778 后又报「账号登录被拒：没有这个账号 dev1」 | 端口各写一份；--dev-accounts 没开时 dev1 不存在 | 端口全部对齐 7778（appsettings / HostConfig / TcpServerTransport / net-probe / NetDebugWindow / Docs 11）；入口失败提示改为显示真实原因（FailureReason > LastError > 超时） | 服务端加 --dev-accounts 启动；横幅出现「调试账号 已启用」 |
 | 2026-11-14 | 格挡中按左键/J 还能起手攻击；连击单测停在 Attack1/Idle | `NotifyAttack` 只判死亡没判格挡；测试辅助 `AdvanceTo` 会把下一段推过头 | `PlayerStateMachine.cs`（首行加 m_blocking 判断）、`PlayerActionLayerTests.cs`（新增 TickFrames） | Test Runner 全量 747/747 绿 |

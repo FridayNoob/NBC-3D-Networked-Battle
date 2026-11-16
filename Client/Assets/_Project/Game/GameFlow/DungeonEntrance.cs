@@ -36,6 +36,10 @@ namespace NBC.Game.GameFlow
         // 握手超时（秒）：超过这个时间还没连上就提示失败
         [SerializeField] private float m_connectTimeoutSeconds = 8f;
 
+        // 副本出生点（世界坐标，单位：米）：进副本后把跨场景带过来的玩家放到这里；
+        // 副本地面在原点附近，World 的坐标（约 280, 1.45, 425）在副本里是空地外，不挪过去就看不到人
+        [SerializeField] private Vector3 m_battleSpawn = Vector3.zero;
+
         // 是否打印诊断日志
         [SerializeField] private bool m_logDiagnostics = true;
 
@@ -202,6 +206,12 @@ namespace NBC.Game.GameFlow
                 yield break;
             }
 
+            // 加载成功后的收尾必须写在回调里，不能写在 yield 之后：
+            //   1) LoadAsync 用的是单场景模式，场景一换，挂在 DungeonEntrance 上的协程会被一起销毁
+            //   2) 销毁之后 yield 后面的代码永远不会执行（之前副本里「没进房、没相机、没实体」就是这个原因）
+            //   3) 回调由常驻的 SceneFlow 执行，它 DontDestroyOnLoad，切场景也活着
+            GameObject playerRoot = m_player.gameObject;
+
             bool finished = false;
             bool loaded = false;
             string error = null;
@@ -211,8 +221,14 @@ namespace NBC.Game.GameFlow
                 loaded = ok;
                 error = message;
                 finished = true;
+
+                if (ok)
+                {
+                    FinishEnter(playerRoot, driver);
+                }
             });
 
+            // 只有失败时协程还活着（场景没换），这里兜底提示；成功时协程已被销毁，走不到下面
             while (!finished)
             {
                 yield return null;
@@ -223,18 +239,43 @@ namespace NBC.Game.GameFlow
                 SetStatus("加载副本场景失败：" + error);
                 Destroy(session);
                 m_connecting = false;
-                yield break;
+            }
+        }
+
+        // 功能：副本加载成功后的收尾 —— 把玩家放进副本出生点、打开自动进房与表现绑定、重新接相机。
+        // 入参：playerRoot 跨场景带过来的玩家根物体；driver 常驻的会话驱动
+        // 返回：无
+        // 步骤：
+        //   1) 玩家放到副本出生点：World 的坐标（约 280, 1.45, 425）在副本里是空地外，不挪过去会看不到人
+        //   2) 打开自动进房与表现绑定：进房后服务器才下发英雄与怪物快照，HUD 与纠偏才有数据
+        //   3) 把副本相机接到玩家身上：旧场景的相机随 World 一起销毁了，新相机不认识这个带过来的玩家
+        // 上游：SceneFlow.LoadAsync 的完成回调（由常驻的 SceneFlow 执行，DungeonEntrance 此时可能已被销毁）
+        // 下游：RuntimeNetDriver.AutoJoin/BindPresentation、PlayerPersist.BindCamera
+        private void FinishEnter(GameObject playerRoot, RuntimeNetDriver driver)
+        {
+            if (playerRoot == null)
+            {
+                // 走到这里说明 DontDestroyOnLoad 没生效（玩家被 World 卸载带走），是最难查的一类
+                Debug.LogError("[DungeonEntrance] 玩家物体没被带进副本（DontDestroyOnLoad 未生效）");
+            }
+            else
+            {
+                playerRoot.transform.position = m_battleSpawn;
             }
 
-            driver.AutoJoin = true;
-            driver.BindPresentation = true;
+            if (driver != null)
+            {
+                driver.AutoJoin = true;
+                driver.BindPresentation = true;
+            }
+            else
+            {
+                Debug.LogError("[DungeonEntrance] 副本里找不到会话驱动，无法进房");
+            }
 
-            // 新场景的相机不会自动认识这个跨场景带过来的玩家，这里补一次接线（旧 FollowCamera 的目标已被删掉）
-            PlayerPersist.BindCamera(m_player.gameObject);
+            PlayerPersist.BindCamera(playerRoot);
 
-            Log("已进入副本，打开自动进房与表现绑定");
-            m_connecting = false;
-            enabled = false;
+            Debug.Log("[DungeonEntrance] 已进入副本，打开自动进房与表现绑定");
         }
 
         // 功能：找到 World 里的玩家根节点并缓存。
