@@ -86,6 +86,10 @@
 | `Assets/Resources`、`StreamingAssets`、`Settings`、`Gizmos`、`link.xml` | **Unity/插件按名字找**：名字与位置都不能改 |
 
 - 判断口径：**"我们自己做的" ⇒ `_Project`；"别人给的" ⇒ 根目录 + 忽略 + 登记。**
+- **场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`**（负责人 2026-11-16 定）：场景里 `PrefabInstance` 用到的 prefab，只要是我们维护的（含从美术包复制出来、只被场景当"积木"用的那些），都放到这个目录，场景改引用这里的那份；美术包原件保持不动（升级/重导不覆盖我们的改动）。
+  - 目的：场景依赖一处可查，出包与 YooAsset 收集器只需盯一个目录；避免"场景引用埋在几 GB 美术包里"。
+  - 复制美术包 prefab 时注意：它引用的模型/材质仍在美术包内，**美术包不进仓库 ⇒ 只复制 prefab 不能让别人克隆后就跑起来**；要么连必要美术资源一起纳入版本库，要么在 README 写明需要先导入哪个美术包。
+  - 当前已合规：`Client/Assets/_Project/Prefabs/Forest Wolf - Grey.prefab`（Battle 用）。
 - 搬目录不会破坏引用（Unity 用 GUID），但**必须同步改** YooAsset 收集器路径与 `.gitignore`。
 - 已知 TODO（打包前必做）：`scene_battle`/`hero`/`monster` 收集器还是空的，`_Project/Prefabs` 与外部美术包尚未纳入收集器。
 > 2026-11-13：负责人把 `Assets/Art` 整体并入 `Assets/_Project/Art`；`.gitignore` 规则已同步改到新路径（Model 约 4.7GB、Scenes 约 2.9GB 仍不进仓库）。
