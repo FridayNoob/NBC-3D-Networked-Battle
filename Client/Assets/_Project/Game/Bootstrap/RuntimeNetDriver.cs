@@ -332,6 +332,19 @@ namespace NBC.Game.Bootstrap
 
             m_joinRequested = true;
 
+            // ⚠️ 回世界前先把「表现层」彻底关掉：
+            //    切场景会把 Battle 里的绑定器连槽位一起销毁，但驱动是跨场景常驻的，
+            //    `m_feed` 里还留着上一局的实体快照 ⇒ 下一帧 `RefreshPresentation` 会在
+            //    **World 场景里重新建一个绑定器**，把副本里的狼当成 World 的单位画出来。
+            m_bindPresentation = false;
+            m_feed.Clear();
+
+            if (m_binder != null)
+            {
+                m_binder.ClearSlots();
+                m_binder = null;
+            }
+
             PlayerDeathFlow deathFlow = FindObjectOfType<PlayerDeathFlow>();
 
             if (deathFlow != null)
@@ -363,6 +376,8 @@ namespace NBC.Game.Bootstrap
             m_binder = null;
             m_feed.Clear();
 
+            // World 场景不需要表现层（没人观战）；下次进副本时 DungeonEntrance 会重新打开它。
+            m_bindPresentation = false;
             PlayerMove player = FindObjectOfType<PlayerMove>();
 
             if (player != null)
