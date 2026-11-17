@@ -16,7 +16,7 @@ MonoBehaviour:
   - id: 6001
     name: "\u91CE\u72FC"
     hp: 300
-    attack: 20
+    attack: 0
     skillIds: d3070000
     aggroRangeMm: 4000
     attackRangeMm: 2000
@@ -26,7 +26,7 @@ MonoBehaviour:
   - id: 6002
     name: "\u68EE\u6797\u8718\u86DB"
     hp: 200
-    attack: 15
+    attack: 0
     skillIds: d2070000d3070000
     aggroRangeMm: 4000
     attackRangeMm: 2000
@@ -36,7 +36,7 @@ MonoBehaviour:
   - id: 6003
     name: "\u72FC\u738B"
     hp: 1000
-    attack: 60
+    attack: 0
     skillIds: d1070000d2070000
     aggroRangeMm: 4000
     attackRangeMm: 2000
