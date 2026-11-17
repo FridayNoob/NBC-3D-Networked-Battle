@@ -70,6 +70,11 @@ namespace NBC.Game.Bootstrap
         // 3D 绑定器（缓存，不每帧找）
         private SnapshotSceneBinder m_binder;
 
+    // 「再来一次」的计时探针：记录点了按钮的时刻，等第一张含活怪的快照到了就打一条总耗时。
+    // 只用于诊断「重开后怪多久才出现」，不影响任何逻辑。
+    private float m_restartWentAt;
+    private bool m_restartWatching;
+
         // 是否已经发过进房请求（只发一次）
         private bool m_joinRequested;
 
@@ -293,6 +298,10 @@ namespace NBC.Game.Bootstrap
                 m_session.RestartDungeon();
             }
 
+            m_restartWentAt = Time.realtimeSinceStartup;
+            m_restartWatching = true;
+            Debug.Log("[重开] 已请求服务端重开这一局（t=" + m_restartWentAt.ToString("F2") + "s）");
+
             // 等服务端把旧世界丢掉、下一帧建好新的，再重载场景。
             // 30Hz 一帧 33ms，0.1 秒足够跨过两三个 tick；等太久只会让人觉得「怪半天不出来」。
             yield return new WaitForSecondsRealtime(0.1f);
@@ -346,6 +355,9 @@ namespace NBC.Game.Bootstrap
             // 让第一张新快照到达时按当前模型重新建槽（否则会短暂沿用上一局的尸体列表）。
             m_binder = null;
             m_feed.Clear();
+
+            Debug.Log("[重开] 副本场景已就绪（距点击 " +
+                      (Time.realtimeSinceStartup - m_restartWentAt).ToString("F2") + "s），等第一张新快照");
 
             PlayerMove player = FindObjectOfType<PlayerMove>();
 
@@ -1119,6 +1131,7 @@ namespace NBC.Game.Bootstrap
             if (m_feed.View != null)
             {
                 TrackHeroHealth(FindMyHeroSnapshot());
+                WatchRestartMonsters();
             }
 
             if (m_binder == null && m_feed.View != null)
@@ -1136,6 +1149,44 @@ namespace NBC.Game.Bootstrap
             }
         }
 
+        // 功能：诊断用 —— 「再来一次」之后，第一张带活怪的快照到达时打一条总耗时。
+        // 入参：无（读 m_feed.View）
+        // 返回：无
+        // 步骤：
+        //   1) 不在观察期就直接返回（平时每帧都走这一句，零分配）
+        //   2) 数一遍活着、且不是英雄的实体
+        //   3) 数到 > 0 就停在第一条日志上，结束观察
+        // 上游：RefreshPresentation 每帧
+        // 下游：无
+        private void WatchRestartMonsters()
+        {
+            if (!m_restartWatching || m_feed.View == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+            int alive = 0;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                EntitySnapshot e = entities[i];
+
+                if (e.Alive && e.Kind == 1)
+                {
+                    alive++;
+                }
+            }
+
+            if (alive <= 0)
+            {
+                return;
+            }
+
+            m_restartWatching = false;
+            Debug.Log("[重开] 第一张含活怪的快照到了：距点击 " +
+                      (Time.realtimeSinceStartup - m_restartWentAt).ToString("F2") + "s，活怪 " + alive + " 只");
+        }
         // 功能：把模式、RTT、帧号写进 HUD 只读的静态统计。
         // 入参：无
         // 返回：无
@@ -1299,6 +1350,15 @@ namespace NBC.Game.Bootstrap
             m_playerBrain.NotifyDead();
         }
 
+        // 功能：诊断用 —— 「再来一次」之后，第一张带活怪的快照到达时打一条总耗时。
+        // 入参：无（读 m_feed.View）
+        // 返回：无
+        // 步骤：
+        //   1) 不在观察期就直接返回（平时每帧都走这一句，零分配）
+        //   2) 数一遍活着、且不是英雄的实体
+        //   3) 数到 > 0 就停在第一条日志上，结束观察
+        // 上游：RefreshPresentation 每帧
+        // 下游：无
         // 功能：把模式、RTT、帧号写进 HUD 只读的静态统计。
         // 入参：无。
         // 返回：无。
