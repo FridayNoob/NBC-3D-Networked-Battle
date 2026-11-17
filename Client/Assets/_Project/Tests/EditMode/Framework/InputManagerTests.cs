@@ -532,5 +532,27 @@ namespace NBC.Tests.EditMode
             Assert.IsFalse(mapping.Validate(out conflict), "备用键抢 W 也算冲突");
             Assert.AreEqual(KeyCode.W, conflict);
         }
+
+        [Test]
+        public void InputActionId_GetOrDeclare_IsRepeatable()
+        {
+            // 场景重载会让「启动即登记」的代码再跑一遍：第二次必须是取回，而不是抛「索引已被声明」。
+            // 用 SetUp 没占用的索引 7，免得撞上 m_skill1 已经声明过的 0。
+            InputActionId first = InputActionId.GetOrDeclare(7, "Attack");
+            InputActionId second = InputActionId.GetOrDeclare(7, "Attack");
+
+            Assert.AreEqual(first.Index, second.Index);
+            Assert.AreEqual(7, second.Index);
+        }
+
+        [Test]
+        public void InputActionId_GetOrDeclare_KeepsFirstName()
+        {
+            InputActionId first = InputActionId.GetOrDeclare(8, "Attack");
+            InputActionId second = InputActionId.GetOrDeclare(8, "Another");
+
+            Assert.AreEqual(first.Index, second.Index);
+            Assert.AreEqual("Attack", second.Name, "重复登记不覆盖第一次的名字");
+        }
     }
 }

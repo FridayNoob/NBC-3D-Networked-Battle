@@ -170,7 +170,9 @@ namespace NBC.Boot
             }
 
             InputMapping mapping = new InputMapping();
-            InputActionId attack = InputActionId.Declare(0, "Attack");
+            // 用 GetOrDeclare 而不是 Declare：重开副本会重载场景、Start 会再跑一遍，
+            //   而动作声明是进程级的静态表，第二次 Declare 会抛「索引 0 已经被声明过了」。
+            InputActionId attack = InputActionId.GetOrDeclare(0, "Attack");
             mapping.Bind(attack, m_attackKey);
             mapping.BindAlternate(attack, KeyCode.Mouse0);
 

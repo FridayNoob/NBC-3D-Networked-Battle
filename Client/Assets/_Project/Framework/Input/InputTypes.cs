@@ -106,6 +106,28 @@ namespace NBC.Framework.Input
             return new InputActionId(index);
         }
 
+        /// <summary>取索引对应的动作标识：没声明过就声明，声明过就原样取回（可重复调用）。</summary>
+        /// <returns>索引对应的动作标识。</returns>
+        // 功能：给「每个场景启动时都会跑一遍」的登记代码用，重复调用不抛异常，避免场景重载后崩在声明处。
+        // 入参：index 稠密索引（0..31）；name 名字，只在第一次声明时生效
+        // 返回：对应索引的动作标识；越界抛 ArgumentOutOfRangeException
+        // 步骤：
+        //   1) 先查范围，越界交给 Declare 抛（保持与 Declare 同一套提示）
+        //   2) 已声明过就直接取回，不再写名字：名字是调试文本，改它没有意义
+        //   3) 没声明过才走 Declare，把名字登记进去
+        // 上游：Boot 的 HpBarDemoBehaviour 等「场景加载即登记」的代码
+        // 下游：Declare
+        // 注意：已声明但名字不同时保持第一次的名字，不覆盖也不告警——重复登记的动作本就该是同一个。
+        public static InputActionId GetOrDeclare(int index, string name)
+        {
+            if (index >= 0 && index < MaxActionCount && s_declared.Contains(index))
+            {
+                return new InputActionId(index);
+            }
+
+            return Declare(index, name);
+        }
+
         /// <summary>按索引比较两个动作标识。</summary>
         // 功能：只比索引 —— 索引在声明时唯一分配，索引相等就是同一个动作。
         // 入参：other 另一个动作标识
