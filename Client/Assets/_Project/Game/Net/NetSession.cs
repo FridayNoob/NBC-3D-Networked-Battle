@@ -1246,7 +1246,17 @@ namespace NBC.Game.Net
                 return;
             }
 
+            string previousRoomId = m_room != null ? m_room.RoomId : null;
+
             m_room = state;
+
+            // 换房号（离开 / 进入另一个房间）⇒ 服务端的快照帧号从别处继续。
+            // 不清本地 `SnapshotView.ServerTick`，新房间的快照会被判成「旧的」全部丢掉。
+            if (previousRoomId != state.RoomId)
+            {
+                m_world.Clear();
+                m_loggedFirstSnapshot = false;
+            }
 
             if (string.IsNullOrEmpty(state.RoomId))
             {

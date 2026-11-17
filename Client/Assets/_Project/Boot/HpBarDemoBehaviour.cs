@@ -241,5 +241,28 @@ namespace NBC.Boot
 
             return newest;
         }
+
+        // 功能：离开副本场景时把 HUD 面板关掉。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 先取 UIManager 单例；没初始化（例如编辑器里只打开了 World）就直接返回
+        //   2) 依次关闭血条面板与网络面板，让它们从屏幕上消失
+        // 上游：Unity 在 Battle 场景卸载时调用
+        // 下游：UIManager.HidePanel
+        // 注意：面板挂在 DontDestroyOnLoad 的 Canvas 下，不会随场景一起销毁；
+        //       不在这里关，回到 World 后血条会一直留在屏幕上。
+        private void OnDestroy()
+        {
+            UIManager ui = UIManager.Instance;
+
+            if (ui == null)
+            {
+                return;
+            }
+
+            ui.HidePanel("HpBarPanel");
+            ui.HidePanel("NetHudPanel");
+        }
     }
 }

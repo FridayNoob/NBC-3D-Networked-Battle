@@ -89,12 +89,14 @@ public sealed class RoomBattleService
     private readonly ServerTables _tables;
     private readonly Dictionary<string, DungeonBattle> _battles = new(StringComparer.Ordinal);
 
-    // 功能：每个房间已经发出的最大快照帧号（`WorldSnapshot.ServerTick` 的真源）。
-    // 单位：帧（30Hz）。作用域：一个房间，从 r1 出现开始。
-    // 注意：重开这一局时**故意不复位** —— 客户端的 `SnapshotView.Apply` 会拒收
-    //       `ServerTick` 不比上一张小的时间快照（拒收是为了防画面倒退），而新一局战斗世界
-    //       的 `Tick` 从 0 重新数；不复位就等于让客户端把新世界的快照全当旧的丢掉。
-    private readonly Dictionary<string, int> _serverTicks = new(StringComparer.Ordinal);
+    // 功能：本进程已经发出的最大快照帧号（`WorldSnapshot.ServerTick` 的真源）。
+    // 单位：帧（30Hz 的发送次数，不是任何一局世界的 `Tick`）。作用域：**整个进程**。
+    // 注意：**故意全局单调、永不归零**。客户端的 `SnapshotView.Apply` 会拒收
+    //       `ServerTick` 不比上一张小的时间快照（拒收是为了防画面倒退），而：
+    //         · 新一局战斗世界的 `Tick` 从 0 重新数（「再来一次」）
+    //         · 新房间的编号复用 r1/r2…，一局换房也是新世界
+    //       任何一处归零，客户端都会把新快照全当旧的丢掉，表现为「怪迟迟不出现」。
+    private int _serverTick;
 
     /// <summary>
     /// **开不了的房间**（副本号不在 `Dungeon` 表里）：记在这里 ⇒ 从推进里摘掉、也不重复刷日志。
@@ -303,7 +305,7 @@ public sealed class RoomBattleService
             battle.Step();                      // ④
             BroadcastCombatEvents(battle, room); // ⑤ 伤害 + 死亡事件（M4-S1）：顺序就是客户端的因果顺序
             BroadcastDrops(battle, room);       // ⑥ 掉落事件（S7）：**同一份字节发给全房**
-            BroadcastSnapshot(battle, room, NextServerTick(room));    // ⑦
+            BroadcastSnapshot(battle, room, NextServerTick());    // ⑦
             RecordIfFinished(room, battle);     // ⑧ SRV-13：打完了就交一份战绩草稿（**只交一次**）
             ApplyProgressFacts(battle);         // ⑨ M4-S3 权威：把"击杀/拾取"事实喂给服务端成就判定
             TicksRun++;
@@ -657,27 +659,22 @@ public sealed class RoomBattleService
         public readonly HashSet<int> SelfEntityIds = new();
     }
 
-    // 功能：给这一帧的快照取一个房间级的单调帧号。
-    // 入参：room 房间
-    // 返回：该房间下一个快照帧号（从 1 开始，只增不减）
-    // 步骤：
-    //   1) 从 `_serverTicks` 取该房间的上一帧（没有就当 0）
-    //   2) +1 写回并返回
+    // 功能：取下一个快照帧号（全局单调）。
+    // 入参：无
+    // 返回：本进程的下一个快照帧号（从 1 开始，只增不减，跨房间/跨重开连续）
+    // 步骤：`_serverTick` 自增后返回
     // 上游：RoomBattleService.Tick
     // 下游：BroadcastSnapshot（写进 `WorldSnapshot.ServerTick`）
-    // 注意：**重开这一局时不复位**。客户端 `SnapshotView.Apply` 会拒收不比上一张新的快照，
-    //       而新一局战斗世界的 `Tick` 从 0 开始；若这里也用世界的 tick，重开后十几秒内
-    //       客户端会把所有新快照当成「旧的」丢掉，表现为「点了再来一次，怪迟迟不出现」。
-    private int NextServerTick(Room room)
+    // 注意：不能用世界的 `Tick`，也不能按房间计数 —— 新一局、新房间都会让客户端
+    //       看到「帧号倒退」，而拒收比上一张旧的快照是它的正确行为。
+    private int NextServerTick()
     {
-        _serverTicks.TryGetValue(room.RoomId, out int last);
-        int next = last + 1;
-        _serverTicks[room.RoomId] = next;
-        return next;
+        _serverTick++;
+        return _serverTick;
     }
 
     // 功能：按 AOI 把快照发给房里的人（同格玩家共用一份，远处实体不发）。
-    // 入参：battle 世界；room 房间；serverTick 本次快照的帧号（房间级单调，见 `NextServerTick`）
+    // 入参：battle 世界；room 房间；serverTick 本次快照的帧号（全局单调，见 `NextServerTick`）
     // 返回：成功发出去几份
     // 步骤：
     //   1) 按每个玩家的英雄所在格子分组（找不到英雄的单独一组，发全量）
