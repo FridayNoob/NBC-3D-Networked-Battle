@@ -626,7 +626,7 @@ internal sealed class CsvSheet
     private static CsvSheet Load(string path, string tableName)
     {
         var sheet = new CsvSheet(tableName);
-        string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+        string[] lines = ReadAllLinesAuto(path, tableName);
 
         // `Docs\17` §三：五行表头（字段名 / 中文说明 / 类型 / 校验 / 数据…）
         if (lines.Length < 5)
@@ -652,6 +652,61 @@ internal sealed class CsvSheet
         }
 
         return sheet;
+    }
+
+    /// <summary>按 BOM 与内容自动判断编码后读整张表。</summary>
+    /// <param name="path">文件路径。</param>
+    /// <param name="tableName">表名（只用于报错）。</param>
+    /// <returns>按行切好的文本。</returns>
+    /// <remarks>
+    /// 为什么不能直接 File.ReadAllLines(path, Encoding.UTF8)：Excel 另存会把 csv 写成 GBK，
+    /// 按 UTF-8 硬读会得到一堆「?」，然后 attack 之类的数字列解析失败、AI 数值全变 0。
+    /// 顺序：BOM 优先 → 严格 UTF-8 → 退回 GBK(936)；都不成立就报错，别静默。
+    /// </remarks>
+    private static string[] ReadAllLinesAuto(string path, string tableName)
+    {
+        byte[] bytes = File.ReadAllBytes(path);
+        string text = DecodeAuto(bytes, tableName);
+
+        if (text.IndexOf('\uFFFD') >= 0)
+        {
+            throw new InvalidDataException(
+                tableName + ".csv 里出现了无法解码的字符（U+FFFD）：请用「UTF-8 带 BOM」或 GBK 保存后再启动服务端。");
+        }
+
+        return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+    }
+
+    /// <summary>按 BOM 与内容自动判断编码。</summary>
+    /// <param name="bytes">文件字节。</param>
+    /// <param name="tableName">表名（只用于报错）。</param>
+    /// <returns>解码后的文本。</returns>
+    private static string DecodeAuto(byte[] bytes, string tableName)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        {
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        try
+        {
+            return new UTF8Encoding(false, true).GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(936).GetString(bytes);
+        }
     }
 
     /// <summary>取一个整数字段。</summary>

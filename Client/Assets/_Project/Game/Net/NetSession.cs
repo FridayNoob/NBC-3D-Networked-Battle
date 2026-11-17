@@ -1547,7 +1547,9 @@ namespace NBC.Game.Net
                 return;
             }
 
-            Log("收到**副本结算**：" + (result.Outcome == NBC.Game.UI.DungeonOutcomeText.Win ? "胜" : "负") +
+            // 注意：这里不引用 NBC.Game.UI.DungeonOutcomeText，因为探针只编到网络层；
+            // 1 = 胜、2 = 负 是协议里写死的约定（与 DungeonResultPanel 一致）。
+            Log("收到**副本结算**：" + (result.Outcome == 1 ? "胜" : "负") +
                 "，用时 " + result.DurationMs + "ms，击杀 " + result.MonsterKills +
                 "，死亡 " + result.HeroDeaths);
 

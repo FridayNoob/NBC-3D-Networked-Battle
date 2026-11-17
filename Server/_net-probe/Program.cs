@@ -214,6 +214,10 @@ namespace NBC.NetProbe
             Quest_SubmitUnregisters_SoBothPathsAgree();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·二】配置表编码：GBK 保存的 CSV 也要读对（Excel 默认存 GBK）");
+            ServerTables_GbkCsvIsDecoded();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -8681,6 +8685,73 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             Console.WriteLine("端到端：**12 验 / 0 未验**");
 
             session.Disconnect("e2e 探测结束（通过）");
+        }
+
+        /// <summary>配置表编码：GBK 保存的 CSV 也必须读对（Excel 默认会存成 GBK）。</summary>
+        /// <remarks>
+        /// 为什么要这条：服务端原先硬按 UTF-8 读 CSV，Excel 一存 GBK 中文名就变「?」、
+        /// 数字列被 IntOr 静默回落成 0，AI 数值全错还不报错。
+        /// 做法：把真表拷到临时目录，只把 Monster.csv 转成 GBK，再走真加载路径看名字与数字。
+        /// </remarks>
+        private static void ServerTables_GbkCsvIsDecoded()
+        {
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§17b GBK 配置表：找得到配置表目录（否则假绿）", false, "找不到 Configs\\Design");
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "nbc_gbk_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string[] files = Directory.GetFiles(sourceDir, "*.csv");
+
+                for (int i = 0; i < files.Length; i++)
+                {
+                    File.Copy(files[i], Path.Combine(tempDir, Path.GetFileName(files[i])), true);
+                }
+
+                string monsterPath = Path.Combine(tempDir, "Monster.csv");
+                string utf8Text = new UTF8Encoding(false, true).GetString(File.ReadAllBytes(monsterPath));
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                File.WriteAllBytes(monsterPath, Encoding.GetEncoding(936).GetBytes(utf8Text));
+
+                ServerTables tables;
+                string error;
+
+                if (!ServerTables.TryLoad(tempDir, out tables, out error))
+                {
+                    Check("§17b GBK 配置表：能加载", false, error);
+                    return;
+                }
+
+                MonsterRow? wolf = tables.FindMonster(6001);
+
+                Check("§17b GBK 配置表：中文名读对（不是问号）",
+                    wolf.HasValue && wolf.Value.Name == "野狼",
+                    wolf.HasValue ? wolf.Value.Name : "(没读到 6001)");
+                Check("§17b GBK 配置表：数字列没被编码拖坏",
+                    wolf.HasValue && wolf.Value.Attack == 20,
+                    wolf.HasValue ? wolf.Value.Attack.ToString() : "(没读到)");
+                Check("§17b GBK 配置表：三只怪都在",
+                    tables.MonsterCount == 3,
+                    tables.MonsterCount.ToString());
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch
+                {
+                    // 临时目录删不掉不影响结论。
+                }
+            }
         }
 
         private static QuestTables LoadQuestTables()
