@@ -302,11 +302,20 @@ namespace NBC.Game.Bootstrap
             m_restartWatching = true;
             Debug.Log("[重开] 已请求服务端重开这一局（t=" + m_restartWentAt.ToString("F2") + "s）");
 
-            // 等服务端把旧世界丢掉、下一帧建好新的，再重载场景。
-            // 30Hz 一帧 33ms，0.1 秒足够跨过两三个 tick；等太久只会让人觉得「怪半天不出来」。
-            yield return new WaitForSecondsRealtime(0.1f);
+            // ⚠️ 不重载场景：副本场景里除了怪什么都没有，重开只是换一局战斗世界。
+            //    原来走 SceneFlow.LoadAsync(Battle) 要重新反序列化整个场景（实测 1~2 秒），
+            //    表现就是「点完按钮怪要等好几秒才出现」。这里改成原地清表现层：
+            //    等新快照到（30Hz，两三个 tick）→ 清槽位与表现层 → 下一帧按新快照重建。
+            yield return new WaitForSecondsRealtime(0.25f);
 
-            SceneFlow.Instance.LoadAsync(GameScene.Battle, OnDungeonSceneLoaded);
+            if (m_binder != null)
+            {
+                m_binder.ClearSlots();
+            }
+
+            m_feed.Clear();
+
+            Debug.Log("[重开] 已原地重置表现层（不重载场景），等新快照重建单位");
         }
 
         // 功能：回世界的协程（退房 → 挪回出生点 → 切 World）。
@@ -337,11 +346,11 @@ namespace NBC.Game.Bootstrap
             SceneFlow.Instance.LoadAsync(GameScene.World, OnDungeonSceneLoaded);
         }
 
-        // 功能：场景切完后的统一回调。
+        // 功能：场景切完后的统一回调（目前只有「返回世界」走这里）。
         // 入参：ok 是否成功；message 失败原因。
         // 返回：无。
-        // 步骤：失败只打日志；成功后把摄像机重新接到玩家身上（重开副本时 Battle 的 Main Camera 是新场景里的，
-        //       不接的话镜头会停在场景默认位置，看起来离玩家很远）
+        // 步骤：失败只打日志；成功后把摄像机重新接到玩家身上（新场景里的 Main Camera 是场景自带的，
+        //       不接的话镜头会停在默认位置，看起来离玩家很远）
         // 上游/下游：SceneFlow.LoadAsync 的回调。
         private void OnDungeonSceneLoaded(bool ok, string message)
         {
@@ -351,13 +360,8 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
-            // 新场景里旧的 binder / 槽位已经随场景销毁，这里把缓存的引用清掉，
-            // 让第一张新快照到达时按当前模型重新建槽（否则会短暂沿用上一局的尸体列表）。
             m_binder = null;
             m_feed.Clear();
-
-            Debug.Log("[重开] 副本场景已就绪（距点击 " +
-                      (Time.realtimeSinceStartup - m_restartWentAt).ToString("F2") + "s），等第一张新快照");
 
             PlayerMove player = FindObjectOfType<PlayerMove>();
 

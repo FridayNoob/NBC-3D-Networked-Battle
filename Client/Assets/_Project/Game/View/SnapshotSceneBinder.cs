@@ -162,6 +162,32 @@ namespace NBC.Game.View
             return binder;
         }
 
+        // 功能：清掉所有单位槽位（重开副本时用，不重载场景）。
+        // 入参：无
+        // 返回：无
+        // 步骤：
+        //   1) 逐个销毁槽位物体
+        //   2) 清空字典并记一行日志
+        // 上游：RuntimeNetDriver.RestartRoutine
+        // 下游：EnsureSlot（下一张快照到达时按当前模型重建）
+        // 注意：只清「单位」；相机、绑定器自身、我的玩家都不动 ——
+        //       重开副本只是换一局战斗世界，场景里本来就没有别的东西。
+        public void ClearSlots()
+        {
+            int cleared = 0;
+
+            foreach (KeyValuePair<int, Slot> pair in m_slots)
+            {
+                if (pair.Value != null && pair.Value.Go != null)
+                {
+                    Destroy(pair.Value.Go);
+                    cleared++;
+                }
+            }
+
+            m_slots.Clear();
+            Debug.Log("[SnapshotSceneBinder] 重开副本：已清掉 " + cleared + " 个单位槽位");
+        }
         // 功能：把敌人模型换掉，并把已经建好的槽位按新模型重建。
         // 入参：monsterPrefab 敌人模型（null = 继续用胶囊）
         // 返回：无
