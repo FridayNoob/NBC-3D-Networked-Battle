@@ -327,16 +327,25 @@ namespace NBC.Game.Bootstrap
             SceneFlow.Instance.LoadAsync(GameScene.World, OnDungeonSceneLoaded);
         }
 
-        // 功能：场景切完后的统一回调（只记日志，切失败时把原因留给 Console）。
+        // 功能：场景切完后的统一回调。
         // 入参：ok 是否成功；message 失败原因。
         // 返回：无。
-        // 步骤：失败才打日志，成功不打（避免刷屏）
+        // 步骤：失败只打日志；成功后把摄像机重新接到玩家身上（重开副本时 Battle 的 Main Camera 是新场景里的，
+        //       不接的话镜头会停在场景默认位置，看起来离玩家很远）
         // 上游/下游：SceneFlow.LoadAsync 的回调。
-        private static void OnDungeonSceneLoaded(bool ok, string message)
+        private void OnDungeonSceneLoaded(bool ok, string message)
         {
             if (!ok)
             {
                 Debug.LogWarning("[RuntimeNetDriver] 结算后切场景失败：" + message);
+                return;
+            }
+
+            PlayerMove player = FindObjectOfType<PlayerMove>();
+
+            if (player != null)
+            {
+                PlayerPersist.BindCamera(player.gameObject);
             }
         }
 

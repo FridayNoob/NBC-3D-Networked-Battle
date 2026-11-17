@@ -597,7 +597,10 @@ public sealed class RoomRegistry
 
         foreach (Room room in _rooms.Values)
         {
-            if (room.DungeonId != dungeonId || room.IsFull || room.IsEmpty)
+            // ⚠️ 打完的房间（Phase=Finished）不再放人进去：
+            //   「再来一次」是先退房再进房，若沿用那间房，服务端会拿回**同一局战斗世界**，
+            //   表现就是「怪还是死的、尸体不刷新」。跳过它，客户端会拿到一间新房、新开一局。
+            if (room.DungeonId != dungeonId || room.IsFull || room.IsEmpty || room.Phase == RoomPhase.Finished)
             {
                 continue;
             }

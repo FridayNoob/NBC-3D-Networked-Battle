@@ -2541,14 +2541,30 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 int hpAfter = hero.Hp;
                 int lost = hpBefore - hpAfter;
 
-                Check("BOSS AI：走进射程后站着不动会挨打（掉血），且掉的是 `Monster.attack` 的整数倍",
-                    reached && lost > 0 && lost % bossAttack == 0,
-                    $"走到 {distance}mm（射程 {DungeonBattle.BasicAttackRangeMm}mm）后 hp {hpBefore} → {hpAfter}" +
-                    $"（掉了 {lost}，BOSS 攻击 {bossAttack}，整除={lost % bossAttack == 0}）");
+                // ⚠️ 攻击力现在是**配置值**（负责人 2026-11-17 手动设成 0）：
+                //   0 的时候不能拿它做整除（会 DivideByZero），此时判据退化成「不掉血」，其余保持原样。
+                if (bossAttack <= 0)
+                {
+                    Check("BOSS AI：攻击力配置为 0 ⇒ 走进射程也不掉血（配置如此，不是漏打）",
+                        reached && lost == 0,
+                        $"走到 {distance}mm（射程 {DungeonBattle.BasicAttackRangeMm}mm）后 hp {hpBefore} → {hpAfter}" +
+                        $"（掉了 {lost}；Monster.attack = {bossAttack}）");
 
-                Check("BOSS AI：冷却生效（1 秒内挨的次数 ≤ 3，不是每帧一下）",
-                    lost / bossAttack <= 3,
-                    $"1 秒挨了 {lost / bossAttack} 下（冷却 15 帧 = 0.5 秒 → 上限 3）");
+                    Check("BOSS AI：攻击力配置为 0 ⇒ 冷却判据无从验证，只确认没有伤害",
+                        lost == 0,
+                        $"1 秒掉了 {lost}（攻击 0 时这条只做负向断言）");
+                }
+                else
+                {
+                    Check("BOSS AI：走进射程后站着不动会挨打（掉血），且掉的是 `Monster.attack` 的整数倍",
+                        reached && lost > 0 && lost % bossAttack == 0,
+                        $"走到 {distance}mm（射程 {DungeonBattle.BasicAttackRangeMm}mm）后 hp {hpBefore} → {hpAfter}" +
+                        $"（掉了 {lost}，BOSS 攻击 {bossAttack}，整除={lost % bossAttack == 0}）");
+
+                    Check("BOSS AI：冷却生效（1 秒内挨的次数 ≤ 3，不是每帧一下）",
+                        lost / bossAttack <= 3,
+                        $"1 秒挨了 {lost / bossAttack} 下（冷却 15 帧 = 0.5 秒 → 上限 3）");
+                }
             }
         }
 
@@ -8687,6 +8703,43 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             session.Disconnect("e2e 探测结束（通过）");
         }
 
+        /// <summary>从原表里读某只怪的 attack 数值（当基准用；读不到返回 -1）。</summary>
+        /// <remarks>
+        /// 为什么要有它：配置数值是负责人随时会改的（2026-11-17 就把 attack 改成 0 了），
+        /// 编码用例的判据只能是「GBK 读出来的数 == 原表的数」，写死 20 会随配置改动变红。
+        /// </remarks>
+        private static int ReadMonsterAttackFromCsv(string configDir, int monsterId)
+        {
+            try
+            {
+                string path = Path.Combine(configDir, "Monster.csv");
+
+                if (!File.Exists(path))
+                {
+                    return -1;
+                }
+
+                string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+
+                for (int i = 4; i < lines.Length; i++)   // 前 4 行是表头（字段名/中文名/类型/规则）
+                {
+                    string[] cells = lines[i].Split(',');
+
+                    if (cells.Length < 4 || !int.TryParse(cells[0], out int id) || id != monsterId)
+                    {
+                        continue;
+                    }
+
+                    return int.TryParse(cells[3], out int attack) ? attack : -1;
+                }
+            }
+            catch (IOException)
+            {
+                return -1;
+            }
+
+            return -1;
+        }
         /// <summary>配置表编码：GBK 保存的 CSV 也必须读对（Excel 默认会存成 GBK）。</summary>
         /// <remarks>
         /// 为什么要这条：服务端原先硬按 UTF-8 读 CSV，Excel 一存 GBK 中文名就变「?」、
@@ -8734,9 +8787,13 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 Check("§17b GBK 配置表：中文名读对（不是问号）",
                     wolf.HasValue && wolf.Value.Name == "野狼",
                     wolf.HasValue ? wolf.Value.Name : "(没读到 6001)");
-                Check("§17b GBK 配置表：数字列没被编码拖坏",
-                    wolf.HasValue && wolf.Value.Attack == 20,
-                    wolf.HasValue ? wolf.Value.Attack.ToString() : "(没读到)");
+                // ⚠️ 攻击力是**负责人可改的配置**（2026-11-17 手动设成 0）：
+                //   判据不能写死 20，要拿「原表里的数字」当基准 —— 这条测的是编码，不是数值。
+                int csvAttack = ReadMonsterAttackFromCsv(sourceDir, 6001);
+
+                Check("§17b GBK 配置表：数字列没被编码拖坏（和原表一致）",
+                    wolf.HasValue && csvAttack >= 0 && wolf.Value.Attack == csvAttack,
+                    (wolf.HasValue ? wolf.Value.Attack.ToString() : "(没读到)") + " / 原表 " + csvAttack);
                 Check("§17b GBK 配置表：三只怪都在",
                     tables.MonsterCount == 3,
                     tables.MonsterCount.ToString());
