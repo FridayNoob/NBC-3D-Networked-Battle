@@ -116,6 +116,14 @@ message LeaveRoomRequest
 {
 }
 
+/// 请求重开当前副本（R042 返修，兼容追加：只加消息与 oneof 分支）。
+///
+/// 语义：玩家**留在原房间**，只把这一局重置（怪重新刷满、计时归零），
+/// 用于结算面板的「再来一次」——它不算退出房间，所以房号不变。
+message RestartDungeonRequest
+{
+}
+
 /// 一句"你的请求被拒了，因为……"（**M3-S4 追加**）。
 ///
 /// 为什么必须有它：M3 到处的判据都是"**失败要 fail loud，还要说人话**"——
@@ -476,5 +484,6 @@ message ClientMessage
         LeaveRoomRequest leave_room = 5;   // M3-S4 追加（兼容）
         QuestActionRequest quest_action = 6;   // M4-S3 §二十六 追加（兼容）
         LockstepInput lockstep_input = 7;      // M4-S4 S4-c 追加（兼容）
+        RestartDungeonRequest restart_dungeon = 8;   // R042 返修 追加（兼容：只是多一个 oneof 分支）
     }
 }

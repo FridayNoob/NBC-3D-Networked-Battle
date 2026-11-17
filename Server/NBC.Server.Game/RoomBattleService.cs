@@ -196,6 +196,9 @@ public sealed class RoomBattleService
     /// <summary>累计因为房间没了而丢掉的世界数。</summary>
     public long BattlesDropped { get; private set; }
 
+    /// <summary>累计重开过多少次（结算面板的「再来一次」；只重置这一局，不换房）。</summary>
+    public int Restarts { get; private set; }
+
     /// <summary>累计收到多少条输入。</summary>
     public long InputsReceived { get; private set; }
 
@@ -346,6 +349,30 @@ public sealed class RoomBattleService
         return battle;
     }
 
+    /// <summary>把某个房间的当前这一局重置（怪重新刷满），房间本身保留。</summary>
+    /// <param name="room">房间。</param>
+    /// <returns>原来有战斗世界并已丢弃时返回 true。</returns>
+    /// <remarks>
+    /// 用在哪里：结算面板的「再来一次」。客户端**不退房**，只请求重启这一局 ——
+    /// 房号、席位、配置都不变，下次进来还是这间房（负责人 2026-11-17 定的口径）。
+    /// 实现就是「把世界从表里丢掉」：下一帧 `EnsureBattle` 会按 `DungeonId` 重新建一局，
+    /// 掉落记录 `_recorded` 必须一起清，否则新一局打完不会再交战绩。
+    /// </remarks>
+    public bool ResetBattle(Room room)
+    {
+        if (room == null)
+        {
+            return false;
+        }
+
+        bool dropped = _battles.Remove(room.RoomId);
+        _recorded.Remove(room.RoomId);
+        _unopenable.Remove(room.RoomId);
+        room.Phase = room.IsFull ? RoomPhase.Running : RoomPhase.Waiting;
+        Restarts++;
+        Note?.Invoke($"房间 {room.RoomId} 重开：这一局已重置" + (dropped ? "（旧世界已丢弃）" : "（之前还没有战斗世界）"));
+        return dropped;
+    }
     /// <summary>
     /// 让"房间席位"和"世界里的英雄"对上：**缺的补、走的删**。
     /// <para>

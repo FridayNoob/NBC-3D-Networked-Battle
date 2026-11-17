@@ -285,16 +285,16 @@ namespace NBC.Game.Bootstrap
         // 上游/下游：RestartDungeon 启动。
         private IEnumerator RestartRoutine()
         {
+            // 不退房：负责人 2026-11-17 定的口径是「再来一次不算退出房间」——
+            //   退房会让房间清空并被删掉，下次进来就是新号（还拿回同一局死光的怪）。
+            //   这里只请服务端把这一局重置（怪重新刷满），房号与席位都不变。
             if (m_session != null)
             {
-                m_session.LeaveRoom();
+                m_session.RestartDungeon();
             }
 
-            // 退房请求还在路上时别立刻 JoinRoom，否则服务端可能判「你已经在房里」
-            m_joinRequested = true;
-            yield return new WaitForSecondsRealtime(0.5f);
-
-            m_joinRequested = false;
+            // 等服务端把旧世界丢掉、下一帧建好新的，再重载场景
+            yield return new WaitForSecondsRealtime(0.3f);
 
             SceneFlow.Instance.LoadAsync(GameScene.Battle, OnDungeonSceneLoaded);
         }

@@ -75,6 +75,12 @@ public sealed class RoomService
     /// <summary>累计广播出去多少份席位表。</summary>
     public long StateBroadcasts { get; private set; }
 
+    /// <summary>
+    /// 玩家请求「重开当前副本」时的回调（房间规则层不知道战斗世界，由组合根注入）。
+    /// <para>参数是要重开的房间；没人订阅时请求被忽略（只有纯房间规则用例会这么建）。</para>
+    /// </summary>
+    public event Action<Room>? RestartRequested;
+
     /// <summary>把进房/离房处理器注册进路由（**显式注册**，见 `ServerMessageRouter`）。</summary>
     /// <param name="router">路由。</param>
     public void RegisterHandlers(ServerMessageRouter router)
@@ -86,6 +92,7 @@ public sealed class RoomService
 
         router.Register(ClientMessage.PayloadOneofCase.JoinRoom, HandleJoinRoom);
         router.Register(ClientMessage.PayloadOneofCase.LeaveRoom, HandleLeaveRoom);
+        router.Register(ClientMessage.PayloadOneofCase.RestartDungeon, HandleRestartDungeon);
     }
 
     /// <summary>
@@ -152,6 +159,14 @@ public sealed class RoomService
         }
 
         Room room = result.Room!;
+
+        // 进的是「上一局已经打完」的房间：先把这一局重置，再广播席位表 ——
+        // 否则新进来的玩家会看到一地尸体（`EnsureBattle` 会拿回同一局战斗世界）。
+        if (room.Phase == RoomPhase.Finished)
+        {
+            RestartRequested?.Invoke(room);
+        }
+
         int sent = BroadcastState(room);
 
         Note?.Invoke($"玩家 {session.PlayerId}（{session.PlayerName}）进入房间 {room.RoomId}" +
@@ -160,6 +175,36 @@ public sealed class RoomService
         return DispatchResult.Handled;
     }
 
+    /// <summary>处理「重开当前副本」请求（结算面板的「再来一次」）。</summary>
+    /// <param name="session">会话。</param>
+    /// <param name="message">消息。</param>
+    /// <returns>分发结果。</returns>
+    /// <remarks>
+    /// 语义：玩家**留在原房间**，只把这一局重置（怪重新刷满）。
+    /// 为什么不在客户端「先退房再进房」：退房会让房间清空并被删掉（房号跟着变），
+    /// 而负责人的要求是「下次进来还是这个房间」。
+    /// </remarks>
+    private DispatchResult HandleRestartDungeon(ClientSession session, ClientMessage message)
+    {
+        Room? room = _registry.FindBySession(session);
+
+        if (room == null)
+        {
+            Note?.Invoke($"玩家 {session.PlayerId} 请求重开副本，但它不在任何房间里");
+            return DispatchResult.ReplyWith(new ServerMessage { RoomState = NotInRoomState() });
+        }
+
+        Action<Room>? handler = RestartRequested;
+
+        if (handler == null)
+        {
+            Note?.Invoke($"玩家 {session.PlayerId} 请求重开房间 {room.RoomId}，但没接战斗世界（忽略）");
+            return DispatchResult.Handled;
+        }
+
+        handler(room);
+        return DispatchResult.Handled;
+    }
     /// <summary>处理离房请求。</summary>
     /// <param name="session">会话。</param>
     /// <param name="message">消息。</param>

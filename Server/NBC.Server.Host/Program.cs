@@ -338,6 +338,10 @@ internal static class Program
         // 状态同步（S5）：每个房间一个权威世界，每逻辑帧推进并下发全量快照（30Hz）
         var battles = new RoomBattleService(transport, rooms.Registry, tables);
 
+        // 结算面板的「再来一次」：客户端只是请求「重开这一局」，不退房 ——
+        // 房间规则层（Core）不认识战斗世界（Game），所以由这个组合根把两者接起来。
+        rooms.RestartRequested += room => battles.ResetBattle(room);
+
         // ==================================================================
         //  M4-S4 S4-c：**锁步（帧同步）服务端**（§三十三）
         //  ⚠️ 它**不依赖数据库** ⇒ 与成就/任务那两块分开构造（那两块没库就不接）。

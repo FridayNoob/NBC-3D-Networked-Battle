@@ -597,10 +597,10 @@ public sealed class RoomRegistry
 
         foreach (Room room in _rooms.Values)
         {
-            // ⚠️ 打完的房间（Phase=Finished）不再放人进去：
-            //   「再来一次」是先退房再进房，若沿用那间房，服务端会拿回**同一局战斗世界**，
-            //   表现就是「怪还是死的、尸体不刷新」。跳过它，客户端会拿到一间新房、新开一局。
-            if (room.DungeonId != dungeonId || room.IsFull || room.IsEmpty || room.Phase == RoomPhase.Finished)
+            // ⚠️ 打完的房间（Phase=Finished）**仍然可以加入**：负责人 2026-11-17 定的口径是
+            //   「副本房间一直在，随时有人能进；下次进来还是这间房」。加入时由谁来重置这一局，
+            //   见 `RoomService.HandleJoinRoom`（进 Finished 房会先请求重开）。
+            if (room.DungeonId != dungeonId || room.IsFull || room.IsEmpty)
             {
                 continue;
             }

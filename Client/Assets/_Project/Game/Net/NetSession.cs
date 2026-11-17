@@ -758,6 +758,17 @@ namespace NBC.Game.Net
             Send(new ClientMessage { LeaveRoom = new LeaveRoomRequest() });
         }
 
+        // 功能：请求重开当前副本（留在原房间，只把这一局重置：怪重新刷满）。
+        // 入参：无。
+        // 返回：无；结果由服务端广播的新快照体现（席位表不变）。
+        // 步骤：直接发 RestartDungeonRequest，客户端不主动退房 —— 退房会让房间被删、房号跟着变。
+        // 上游：RuntimeNetDriver.RestartDungeon（结算面板的「再来一次」）
+        // 下游：Send
+        public void RestartDungeon()
+        {
+            Send(new ClientMessage { RestartDungeon = new RestartDungeonRequest() });
+        }
+
         // 功能：把一条输入命令发出去，只发意图，走多远、打不打得到由服务端决定。
         // 入参：command 输入命令（轴沿用协议量化，不需要换算）；
         //   targetEntityId 当前目标（0 = 没有，服务端会校验）。
