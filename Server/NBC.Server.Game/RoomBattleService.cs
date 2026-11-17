@@ -352,8 +352,10 @@ public sealed class RoomBattleService
         DungeonBattle battle = built;
         _battles.Add(room.RoomId, battle);
 
-        Note?.Invoke($"房间 {room.RoomId} 开打：副本 {room.DungeonId}（{battle.BossCount} 个 BOSS、" +
-                     $"{battle.Entities.Count - battle.BossCount} 个普通怪）");
+        // 新的一局：对局号 +1（房号不变，客户端靠它区分「第几局」）。
+        room.MatchId++;
+        Note?.Invoke($"房间 {room.RoomId} 开打：副本 {room.DungeonId}（第 {room.MatchId} 局，" +
+                     $"{battle.BossCount} 个 BOSS、{battle.Entities.Count - battle.BossCount} 个普通怪）");
 
         return battle;
     }
@@ -995,7 +997,11 @@ public sealed class RoomBattleService
 
         foreach (KeyValuePair<string, DungeonBattle> pair in _battles)
         {
-            if (_registry.Find(pair.Key) == null)
+            Room? room = _registry.Find(pair.Key);
+
+            // 房间被删（旧语义）或房间还在但**没人了**（R053：空房常驻）都算「没人看这一局」。
+            // 房间对象保留、战斗世界回收：下次进房 `EnsureBattle` 会重新开一局（对局号 +1）。
+            if (room == null || room.IsEmpty)
             {
                 dead ??= new List<string>();
                 dead.Add(pair.Key);
@@ -1007,10 +1013,10 @@ public sealed class RoomBattleService
             for (int i = 0; i < dead.Count; i++)
             {
                 _battles.Remove(dead[i]);
-                _recorded.Remove(dead[i]);      // ⚠️ 一起清：房号是**递增复用**的（r1、r2…），
-                                                //    留着旧记录会让「以后某个也叫 r1 的房间」被误判成交过了
+                _recorded.Remove(dead[i]);      // ⚠️ 一起清：房号现在静态复用（d1001），留着旧记录
+                                                //    会让「这一间的下一局」被误判成已经结算过
                 BattlesDropped++;
-                Note?.Invoke($"房间 {dead[i]} 已经没人了，战斗世界已回收");
+                Note?.Invoke($"房间 {dead[i]} 已经没人了，战斗世界已回收（房间本身保留，等下一局）");
             }
         }
 

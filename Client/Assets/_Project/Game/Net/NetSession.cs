@@ -1267,7 +1267,7 @@ namespace NBC.Game.Net
                 // 把席位表拼成人话，例如 r1（副本 1001）2/4 人：剑士[房主]、法师
                 var text = new System.Text.StringBuilder();
                 text.Append("房间 ").Append(state.RoomId)
-                    .Append("（副本 ").Append(state.DungeonId).Append("）")
+                    .Append("（副本 ").Append(state.DungeonId).Append("，第 ").Append(state.MatchId).Append(" 局）")
                     .Append(state.Members.Count).Append('/').Append(state.Capacity).Append(" 人：");
 
                 for (int i = 0; i < state.Members.Count; i++)

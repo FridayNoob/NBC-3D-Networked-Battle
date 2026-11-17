@@ -90,6 +90,13 @@ public sealed class Room
     /// </summary>
     public RoomPhase Phase { get; set; } = RoomPhase.Waiting;
 
+    /// <summary>
+    /// 这一间房里的「第几局」（从 1 开始；每次开打/重开 +1）。
+    /// <para>房号静态绑定副本（`d1001`），「第几局」靠这个字段区分；
+    /// 由 `RoomBattleService.EnsureBattle` 在建新战斗世界时 +1。</para>
+    /// </summary>
+    public int MatchId { get; set; }
+
     /// <summary>现在几个真人。</summary>
     public int SeatCount => _seats.Count;
 
@@ -301,6 +308,7 @@ public sealed class Room
             DungeonId = DungeonId,
             Capacity = Capacity,
             Phase = Phase,
+            MatchId = MatchId,
         };
 
         for (int i = 0; i < _seats.Count; i++)
@@ -466,8 +474,14 @@ public sealed class RoomRegistry
     /// <returns>新房间。</returns>
     public Room Create(int dungeonId)
     {
-        string roomId = "r" + _nextRoomNumber;
-        _nextRoomNumber++;
+        // 房号 = "d" + 副本号：一个副本一间房，房号跟着配置走，不再每次开房 +1。
+        // 「第几局」由 Room.MatchId 表达（谁开打谁 +1），房号本身不随对局变化。
+        string roomId = "d" + dungeonId;
+
+        if (_rooms.TryGetValue(roomId, out Room? existing))
+        {
+            return existing;
+        }
 
         var room = new Room(roomId, dungeonId, _capacity);
         _rooms.Add(roomId, room);
@@ -571,8 +585,9 @@ public sealed class RoomRegistry
 
         if (room.IsEmpty)
         {
-            // 空房间必须删掉：不删的话房号会一直涨，而且"留空自动找房"会挑到一个空房
-            _rooms.Remove(room.RoomId);
+            // R053：空房**不再删除** —— 房号静态绑定副本（`d1001`），房间作为「副本的常驻实例」
+            // 一直存在，随时可以再加入。只把阶段拨回等待：否则下次有人进房会以为这一局还在打。
+            room.Phase = RoomPhase.Waiting;
         }
 
         return room;

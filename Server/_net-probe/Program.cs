@@ -108,7 +108,8 @@ namespace NBC.NetProbe
             RoomRules_AlreadyInRoomIsRejected();
             RoomRules_UnknownRoomIsRejected();
             RoomRules_AutoAssignPrefersSameDungeon();
-            RoomRules_LeavingTransfersHostAndDeletesEmptyRoom();
+            RoomRules_LeavingTransfersHostAndKeepsRoom();
+        RoomRules_MatchIdIncrementsOnNewMatch();
 
             Console.WriteLine();
             Console.WriteLine("【五】房间与席位（走网线，真 socket）");
@@ -1074,8 +1075,8 @@ namespace NBC.NetProbe
                 + "，房间数=" + registry.RoomCount);
         }
 
-        /// <summary>房间规则：房主走了要移交；房空了要删掉；离开是幂等的。</summary>
-        private static void RoomRules_LeavingTransfersHostAndDeletesEmptyRoom()
+        /// <summary>房间规则：房号静态绑定副本、空房保留（R053）。</summary>
+        private static void RoomRules_LeavingTransfersHostAndKeepsRoom()
         {
             var registry = new RoomRegistry(4);
             ClientSession a = NewSession(1, "甲");
@@ -1090,13 +1091,35 @@ namespace NBC.NetProbe
             registry.Leave(b);
             Room nullAgain = registry.Leave(b);
 
-            Check("房间规则：房主离开 → 下一个人接替房主；房空了 → 房间被删；再离开 → 幂等返回 null",
-                hostTransferred && registry.RoomCount == 0 && nullAgain == null
-                && registry.FindBySession(b) == null,
+            Check("房间规则：房主离开 → 下一个人接替房主；房空了 → 房间**保留**（R053 静态房号）；再离开 → 幂等返回 null",
+                hostTransferred && registry.RoomCount == 1 && nullAgain == null
+                && registry.FindBySession(b) == null && room.SeatCount == 0
+                && room.Phase == RoomPhase.Waiting && room.RoomId == ("d" + 1001),
                 "房主移交=" + hostTransferred + "，房间数=" + registry.RoomCount
+                + "，剩余席位=" + room.SeatCount + "，阶段=" + room.Phase
+                + "，房号=" + room.RoomId
                 + "，重复离开=" + (nullAgain == null ? "null" : "非 null"));
         }
 
+        /// <summary>房间规则：开打让对局号 +1、重开再 +1，房号始终是 d1001（R053）。</summary>
+        private static void RoomRules_MatchIdIncrementsOnNewMatch()
+        {
+            using (var h = new Harness())
+            {
+                var room = new Room("d1001", 1001, 4);
+
+                DungeonBattle? first = h.Battles.EnsureBattle(room);
+                int afterFirst = room.MatchId;
+
+                h.Battles.ResetBattle(room);
+                DungeonBattle? second = h.Battles.EnsureBattle(room);
+
+                Check("房间规则：开打让对局号 +1、重开再 +1，房号保持 d1001",
+                    first != null && second != null && afterFirst == 1 && room.MatchId == 2
+                    && room.RoomId == "d1001",
+                    "第一次=" + afterFirst + "，重开后=" + room.MatchId + "，房号=" + room.RoomId);
+            }
+        }
         // ====================================================================
         //  五、房间与席位（走网线）
         // ====================================================================
@@ -1219,11 +1242,14 @@ namespace NBC.NetProbe
                     "甲的席位数=" + a.LastRoom().Members.Count + "，房间数=" + h.Registry.RoomCount);
 
                 a.LeaveRoom();
-                h.WaitUntil(() => h.Registry.RoomCount == 0, "房空之后被删掉");
+                h.WaitUntil(() => h.Registry.Find("d1001")?.SeatCount == 0, "房空了（房间本身保留）");
 
-                Check("走网线：最后一个人离开 → 空房间被删掉（房号不会一直涨）",
-                    h.Registry.RoomCount == 0,
-                    "房间数=" + h.Registry.RoomCount);
+                Room kept = h.Registry.Find("d1001");
+                Check("走网线：最后一个人离开 → 空房间**保留**、房号仍是 d1001（R053）",
+                    h.Registry.RoomCount == 1 && kept != null && kept.SeatCount == 0
+                    && kept.Phase == RoomPhase.Waiting,
+                    "房间数=" + h.Registry.RoomCount + "，席位=" + (kept == null ? "无" : kept.SeatCount.ToString())
+                    + "，阶段=" + (kept == null ? "无" : kept.Phase.ToString()));
             }
         }
 
@@ -1363,12 +1389,14 @@ namespace NBC.NetProbe
                     h.Battles.BattleCount == 1, "世界数=" + h.Battles.BattleCount);
 
                 a.LeaveRoom();
-                h.WaitUntil(() => h.Registry.RoomCount == 0, "房空了");
+                h.WaitUntil(() => h.Registry.Find("d1001")?.SeatCount == 0, "房空了（房间本身保留）");
                 h.TickBattles(1);
 
-                Check("状态同步：房空之后战斗世界被回收（不会留下没人看的世界）",
-                    h.Battles.BattleCount == 0 && h.Battles.BattlesDropped == 1,
-                    $"世界数={h.Battles.BattleCount}，回收数={h.Battles.BattlesDropped}");
+                Check("状态同步：房空之后战斗世界被回收（房间保留，下一局重新开）",
+                    h.Battles.BattleCount == 0 && h.Battles.BattlesDropped == 1
+                    && h.Registry.Find("d1001") != null,
+                    $"世界数={h.Battles.BattleCount}，回收数={h.Battles.BattlesDropped}，"
+                    + "房间数=" + h.Registry.RoomCount);
             }
         }
 
