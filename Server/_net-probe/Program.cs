@@ -132,6 +132,7 @@ namespace NBC.NetProbe
             Input_ExpiresWhenTheClientStopsSending();
             Input_PlayerMismatchIsRejected();
             Attack_LandsInRangeAndRespectsCooldown();
+            RestartDungeon_KeepsSnapshotTickMonotonic();
             Attack_OutOfRangeIsRefusedSilently();
             BasicAttackRange_IsCircular();
             BasicAttackRange_ServerUsesCircle();
@@ -1595,9 +1596,14 @@ namespace NBC.NetProbe
 
                 int hpAfter = battle.Find(wolfId)!.Hp;
 
+                // ⚠️ 伤害与血量都来自配置表（负责人会调），断言必须按"最多打到 0"算，
+                //    不能写死 `hpBefore - damage`：配置成「一击致死」时后者恒为负。
+                int damage = h.Tables.FindSkill(h.Tables.FindHero(DungeonBattle.HeroConfigId)!.Value.SkillIds[0])!.Value.Damage;
+                int expectedHp = Math.Max(0, hpBefore - damage);
+
                 Check("输入上行：走近之后普攻打中 → 狼掉血（伤害由服务端算）",
-                    inRange && hpAfter == hpBefore - h.Tables.FindSkill(h.Tables.FindHero(DungeonBattle.HeroConfigId)!.Value.SkillIds[0])!.Value.Damage,
-                    $"射程内={inRange}，hp {hpBefore} → {hpAfter}（期望 -{h.Tables.FindSkill(h.Tables.FindHero(DungeonBattle.HeroConfigId)!.Value.SkillIds[0])!.Value.Damage}）");
+                    inRange && hpAfter == expectedHp,
+                    $"射程内={inRange}，hp {hpBefore} → {hpAfter}（伤害 {damage}，期望 {expectedHp}）");
 
                 // 冷却中再打一次：不该再掉血
                 a.SendInput(moveX: 0, moveY: 0, actionBits: 1u, targetEntityId: wolfId);
@@ -1614,9 +1620,55 @@ namespace NBC.NetProbe
                 a.SendInput(moveX: 0, moveY: 0, actionBits: 1u, targetEntityId: wolfId);
                 h.TickBattles(1);
 
+                int hpNext = battle.Find(wolfId)!.Hp;
+                int expectedNext = Math.Max(0, hpAfter - damage);
+                bool lethal = hpAfter <= 0;
+
                 Check("输入上行：冷却走完（15 帧 = 0.5 秒）再打 → 又能打中",
-                    battle.Find(wolfId)!.Hp == hpAfter - h.Tables.FindSkill(h.Tables.FindHero(DungeonBattle.HeroConfigId)!.Value.SkillIds[0])!.Value.Damage,
-                    $"hp={battle.Find(wolfId)!.Hp}（期望 {hpAfter - h.Tables.FindSkill(h.Tables.FindHero(DungeonBattle.HeroConfigId)!.Value.SkillIds[0])!.Value.Damage}）");
+                    lethal ? !battle.Find(wolfId)!.Alive : hpNext == expectedNext,
+                    lethal
+                        ? $"一击致死（伤害 {damage} ≥ 血 {hpBefore}），已确认狼死了"
+                        : $"hp={hpNext}（期望 {expectedNext}）");
+            }
+        }
+
+        /// <summary>
+        /// 重开这一局：快照帧号必须**继续增大**。
+        /// <para>⚠️ 客户端 `SnapshotView.Apply` 会拒收 `ServerTick` 不比上一张新的快照（防画面倒退），
+        /// 而新一局战斗世界的 `Tick` 从 0 重新数 ⇒ 若快照帧号也跟着归零，重开后十几秒内
+        /// 客户端会把所有新快照当成「旧的」丢掉，表现为「点了再来一次，怪迟迟不出现」。</para>
+        /// </summary>
+        private static void RestartDungeon_KeepsSnapshotTickMonotonic()
+        {
+            using (var h = new Harness())
+            {
+                Client a = h.JoinSameRoom(h.ConnectAndHandshake("剑士"));
+                h.TickBattles(6);
+
+                WorldSnapshot? before = a.LastSnapshot();
+
+                // ⚠️ 探针文件没有引 `System.Linq`：这里用手写循环取第一个房间，别为一行 using 改全局。
+                Room? room = null;
+                foreach (Room candidate in h.Registry.Rooms)
+                {
+                    room = candidate;
+                    break;
+                }
+
+                if (before == null || room == null)
+                {
+                    Check("重开这一局：先拿到重开前的快照与房间", false, "快照或房间为空");
+                    return;
+                }
+
+                h.Battles.ResetBattle(room);
+                h.TickBattles(3);
+
+                WorldSnapshot? after = a.LastSnapshot();
+
+                Check("重开这一局后快照帧号继续增大（不是从 0 重数）",
+                    after != null && after.ServerTick > before.ServerTick,
+                    $"重开前 {before.ServerTick} → 重开后 {(after == null ? -1 : after.ServerTick)}");
             }
         }
 
@@ -2939,7 +2991,9 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 }
 
                 long landed = h.Battles.AttacksLanded - landedBefore;
-                int hitsNeeded = WolfHp(h) / (battle.BasicAttackDamage <= 0 ? 1 : battle.BasicAttackDamage);
+                // ⚠️ 血量与伤害都来自配置表：必须按「向上取整、至少 1 下」算，否则配成一击致死时这里会得 0。
+  int e2eDamage = battle.BasicAttackDamage <= 0 ? 1 : battle.BasicAttackDamage;
+  int hitsNeeded = Math.Max(1, (WolfHp(h) + e2eDamage - 1) / e2eDamage);
 
                 bool wolfDead = !battle.Find(wolfId)!.Alive;
                 EntitySnapshot seenByA = FindEntity(a.LastSnapshot(), wolfId);
