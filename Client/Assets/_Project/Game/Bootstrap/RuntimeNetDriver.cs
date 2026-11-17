@@ -293,8 +293,9 @@ namespace NBC.Game.Bootstrap
                 m_session.RestartDungeon();
             }
 
-            // 等服务端把旧世界丢掉、下一帧建好新的，再重载场景
-            yield return new WaitForSecondsRealtime(0.3f);
+            // 等服务端把旧世界丢掉、下一帧建好新的，再重载场景。
+            // 30Hz 一帧 33ms，0.1 秒足够跨过两三个 tick；等太久只会让人觉得「怪半天不出来」。
+            yield return new WaitForSecondsRealtime(0.1f);
 
             SceneFlow.Instance.LoadAsync(GameScene.Battle, OnDungeonSceneLoaded);
         }
@@ -340,6 +341,11 @@ namespace NBC.Game.Bootstrap
                 Debug.LogWarning("[RuntimeNetDriver] 结算后切场景失败：" + message);
                 return;
             }
+
+            // 新场景里旧的 binder / 槽位已经随场景销毁，这里把缓存的引用清掉，
+            // 让第一张新快照到达时按当前模型重新建槽（否则会短暂沿用上一局的尸体列表）。
+            m_binder = null;
+            m_feed.Clear();
 
             PlayerMove player = FindObjectOfType<PlayerMove>();
 
@@ -1123,6 +1129,10 @@ namespace NBC.Game.Bootstrap
             {
                 // 每帧同步玩家编号：绑定只发生一次，而握手完成前它是 0 —— 不同步就永远跳不掉本地英雄
                 m_binder.SetOwnerPlayerId(m_session.PlayerId);
+
+                // 每帧同步敌人模型：驱动是跨场景常驻的，而模型由副本场景里的 HpBarDemo 稍后赋值。
+                // 不补这一步，第一局永远是胶囊（binder 建槽时模型还是 null），第二局才变狼。
+                m_binder.SetMonsterPrefab(m_monsterPrefab);
             }
         }
 

@@ -162,6 +162,47 @@ namespace NBC.Game.View
             return binder;
         }
 
+        // 功能：把敌人模型换掉，并把已经建好的槽位按新模型重建。
+        // 入参：monsterPrefab 敌人模型（null = 继续用胶囊）
+        // 返回：无
+        // 步骤：
+        //   1) 和当前模型一样就直接返回（每帧调用也不会有开销）
+        //   2) 记下新模型
+        //   3) 还没有槽位就到此为止，下一帧 EnsureSlot 自然用新模型
+        //   4) 有槽位：全部销毁并清空字典，让它们在下一帧按新模型重建
+        // 上游：RuntimeNetDriver.RefreshPresentation（每帧同步一次）
+        // 下游：EnsureSlot（下一帧重建）
+        // 注意：R049 之后驱动是跨场景常驻的，而模型是副本场景里的 HpBarDemo 稍后才赋值 ——
+        //       不重建的话，第一局永远是胶囊，要到第二局（驱动里已有模型）才变成狼。
+        public void SetMonsterPrefab(GameObject monsterPrefab)
+        {
+            if (m_monsterPrefab == monsterPrefab)
+            {
+                return;
+            }
+
+            m_monsterPrefab = monsterPrefab;
+
+            if (m_slots.Count == 0)
+            {
+                return;
+            }
+
+            int rebuilt = 0;
+
+            foreach (KeyValuePair<int, Slot> pair in m_slots)
+            {
+                if (pair.Value != null && pair.Value.Go != null)
+                {
+                    Destroy(pair.Value.Go);
+                    rebuilt++;
+                }
+            }
+
+            m_slots.Clear();
+            Debug.Log("[SnapshotSceneBinder] 敌人模型变了，重建 " + rebuilt + " 个槽位（" +
+                      (monsterPrefab == null ? "胶囊" : monsterPrefab.name) + "）");
+        }
         // 功能：只更新「我的玩家编号」，不重算相机（每帧同步用）。
         // 入参：ownerPlayerId 我的玩家编号（0 = 还不知道）
         // 返回：无

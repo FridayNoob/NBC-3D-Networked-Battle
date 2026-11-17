@@ -15,7 +15,7 @@ MonoBehaviour:
   rows:
   - id: 2001
     name: "\u706B\u7403"
-    damage: 100
+    damage: 500
     damageType: 1
     hitFrames: 0300000005000000
   - id: 2002
