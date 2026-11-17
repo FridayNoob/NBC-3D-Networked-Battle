@@ -14,6 +14,30 @@ namespace NBC.Game.GameFlow
     // 谁在用它：DungeonEntrance 在切到 Battle 之前调用 MarkPersistent、切完之后调用 BindCamera；将来做副本传送门也复用。
     public static class PlayerPersist
     {
+        // 当前被标成「跨场景保留」的玩家根物体；由 MarkPersistent 写入，ReleasePersistent 清掉。
+        private static GameObject s_persistent;
+
+        // 功能：把带进副本的那份玩家销毁掉，交还给目标场景自带的玩家。
+        // 入参：无
+        // 返回：true 表示真的销毁了一份；false 表示当前没有可释放的玩家
+        // 步骤：
+        //   1) 引用为空（或已被场景卸载）就只清引用、返回 false
+        //   2) 否则 Destroy 它并清引用 —— 用 Destroy（不是 DestroyImmediate），让本帧的其它逻辑还能安全跑完
+        // 上游：RuntimeNetDriver.ReturnToWorldRoutine（回世界前调用）
+        // 下游：Unity 的销毁流程
+        // 注意：World 场景自带一个 `[Player_Hero]`；带进来的那份如果留着，同屏就是两个玩家。
+        //       更糟的是两份都会读同一份输入 —— 看起来像「一瞬间两个」，实际是两份各走各的。
+        public static bool ReleasePersistent()
+        {
+            if (s_persistent == null)
+            {
+                return false;
+            }
+
+            Object.Destroy(s_persistent);
+            s_persistent = null;
+            return true;
+        }
         // 功能：让玩家根物体在切场景时不被销毁，并停掉 World 专属逻辑。
         // 入参：playerRoot 玩家根物体（World 里的 [Player_Hero]），不能为空
         // 返回：true 表示已标记；false 表示入参为空
@@ -33,6 +57,8 @@ namespace NBC.Game.GameFlow
             {
                 Object.DontDestroyOnLoad(playerRoot);
             }
+
+            s_persistent = playerRoot;
 
             WorldPlayerSetup setup = playerRoot.GetComponent<WorldPlayerSetup>();
             if (setup != null)

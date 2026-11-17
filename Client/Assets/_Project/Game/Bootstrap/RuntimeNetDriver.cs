@@ -318,7 +318,7 @@ namespace NBC.Game.Bootstrap
             Debug.Log("[重开] 已原地重置表现层（不重载场景），等新快照重建单位");
         }
 
-        // 功能：回世界的协程（退房 → 挪回出生点 → 切 World）。
+        // 功能：回世界的协程（退房 → 关表现层 → 销毁带进副本的玩家 → 切 World）。
         // 入参：无。
         // 返回：协程迭代器。
         // 步骤：见 ReturnToWorld 的步骤说明
@@ -345,12 +345,10 @@ namespace NBC.Game.Bootstrap
                 m_binder = null;
             }
 
-            PlayerDeathFlow deathFlow = FindObjectOfType<PlayerDeathFlow>();
-
-            if (deathFlow != null)
-            {
-                deathFlow.TeleportToWorldSpawn();
-            }
+            // ⚠️ World 场景自带一份 `[Player_Hero]`；带进来的这份如果留着，同屏就是两个玩家
+            //    （两套输入、两套动画，看起来像「闪了一下两个」）。回世界前把它销毁，
+            //    交给 World 场景自带的那份；下次进副本时由 DungeonEntrance 重新标记。
+            PlayerPersist.ReleasePersistent();
 
             yield return new WaitForSecondsRealtime(0.2f);
 
