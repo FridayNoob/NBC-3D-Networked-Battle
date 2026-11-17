@@ -224,9 +224,16 @@ public sealed class RoomService
         {
             BroadcastState(room);
         }
+        else
+        {
+            // 房间常驻（R053），但「没人看的这一局」必须作废：否则 16ms 后再进来时，
+            // 主循环还没跑过 Tick（房间一度为空那一帧根本没机会出现），`_battles` 里
+            // 还留着上一局那个「怪全死了」的世界 ⇒ 新进来的玩家看到的就是空场。
+            RestartRequested?.Invoke(room);
+        }
 
         Note?.Invoke($"玩家 {session.PlayerId}（{session.PlayerName}）离开房间 {room.RoomId}" +
-                     (room.IsEmpty ? "（房间已空，已删除）" : $"（还剩 {room.SeatCount} 人）"));
+                     (room.IsEmpty ? "（房间已空，这一局作废，房间本身保留）" : $"（还剩 {room.SeatCount} 人）"));
 
         // 给离开者本人一份"你不在任何房间"（约定见文件头第二节）
         return DispatchResult.ReplyWith(new ServerMessage { RoomState = NotInRoomState() });
@@ -248,9 +255,14 @@ public sealed class RoomService
         {
             BroadcastState(room);
         }
+        else
+        {
+            // 同上：拔线也可能是「最后一个人」，这一局同样作废（房间保留）。
+            RestartRequested?.Invoke(room);
+        }
 
         Note?.Invoke($"玩家 {session.PlayerId} 断开（{reason}）→ 自动退出房间 {room.RoomId}" +
-                     (room.IsEmpty ? "（房间已空，已删除）" : $"（还剩 {room.SeatCount} 人）"));
+                     (room.IsEmpty ? "（房间已空，这一局作废，房间本身保留）" : $"（还剩 {room.SeatCount} 人）"));
     }
 
     /// <summary>造一条 `ErrorResponse`。</summary>

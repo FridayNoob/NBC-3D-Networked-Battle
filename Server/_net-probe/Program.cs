@@ -109,6 +109,7 @@ namespace NBC.NetProbe
             RoomRules_UnknownRoomIsRejected();
             RoomRules_AutoAssignPrefersSameDungeon();
             RoomRules_LeavingTransfersHostAndKeepsRoom();
+            RoomRules_EmptyRoomDropsTheBattle();
         RoomRules_MatchIdIncrementsOnNewMatch();
 
             Console.WriteLine();
@@ -1120,6 +1121,35 @@ namespace NBC.NetProbe
                     "第一次=" + afterFirst + "，重开后=" + room.MatchId + "，房号=" + room.RoomId);
             }
         }
+        /// <summary>
+        /// 房间空了 ⇒ 这一局立刻作废（世界丢掉、房间本身保留）。
+        /// <para>⚠️ 这是「返回世界 → 立刻再进副本看不到怪」的根因回归：房间空的时长可能不到一个 tick，
+        /// 主循环根本没机会看到「空房」，所以必须**在离开的那一刻**清世界，不能只靠 Tick 兜底。</para>
+        /// </summary>
+        private static void RoomRules_EmptyRoomDropsTheBattle()
+        {
+            using (var h = new Harness())
+            {
+                Client a = h.ConnectAndHandshake("甲");
+                a.JoinRoom(string.Empty, 1001);
+                h.WaitUntil(() => a.LastRoom() != null, "进房拿到席位表");
+
+                string roomId = a.LastRoom().RoomId;
+                Room? room = h.Registry.Find(roomId);
+                DungeonBattle? battle = room != null ? h.Battles.EnsureBattle(room) : null;
+                bool hadBattle = battle != null;
+
+                a.LeaveRoom();
+                h.WaitUntil(() => h.Battles.Find(roomId) == null, "空房之后世界被丢掉");
+
+                bool roomKept = h.Registry.Find(roomId) != null;
+
+                Check("房间规则：最后一个人离开 ⇒ 这一局的世界立刻丢掉（房间本身保留，等下一局）",
+                    hadBattle && roomKept && h.Battles.Find(roomId) == null,
+                    "开打时有世界=" + hadBattle + "，房间仍在=" + roomKept
+                    + "，现在的世界=" + (h.Battles.Find(roomId) == null ? "null" : "还在"));
+            }
+        }
         // ====================================================================
         //  五、房间与席位（走网线）
         // ====================================================================
@@ -1392,10 +1422,12 @@ namespace NBC.NetProbe
                 h.WaitUntil(() => h.Registry.Find("d1001")?.SeatCount == 0, "房空了（房间本身保留）");
                 h.TickBattles(1);
 
-                Check("状态同步：房空之后战斗世界被回收（房间保留，下一局重新开）",
-                    h.Battles.BattleCount == 0 && h.Battles.BattlesDropped == 1
+                // R053 起「房空」在离开那一刻就处理（`RoomService` → `RestartRequested` → `ResetBattle`），
+                // 不再等 Tick 的 `DropBattlesOfDeadRooms`（房间空的时长可能不到一个 tick）。
+                Check("状态同步：房空之后战斗世界立刻被回收（房间保留，下一局重新开）",
+                    h.Battles.BattleCount == 0 && h.Battles.Restarts == 1
                     && h.Registry.Find("d1001") != null,
-                    $"世界数={h.Battles.BattleCount}，回收数={h.Battles.BattlesDropped}，"
+                    $"世界数={h.Battles.BattleCount}，重置次数={h.Battles.Restarts}，"
                     + "房间数=" + h.Registry.RoomCount);
             }
         }
@@ -9461,6 +9493,10 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 Battles = new RoomBattleService(Server, Registry, Tables);
                 Battles.Note += line => RoomNotes.Add(line);
                 Battles.BattleFinished += draft => Drafts.Add(draft);   // SRV-17a：验草稿里有没有游客
+
+                // ⚠️ 与 Host 的接线保持一致（R053）：房间空了 ⇒ 这一局作废（世界丢掉、房间保留）。
+                //    少了这一行，探针就验不到「空房不再留下一个怪全死了的旧世界」。
+                Rooms.RestartRequested += room => Battles.ResetBattle(room);
 
                 // ⚠️ 忘了这一行 = 所有输入用例**静默失效**（服务端根本没处理 Input 消息）。
                 //    2026-09-23 第一版就漏了，9 条用例一起红给我看，根因就在这里。
