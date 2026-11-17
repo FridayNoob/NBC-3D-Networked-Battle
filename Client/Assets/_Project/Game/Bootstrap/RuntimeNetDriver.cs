@@ -538,6 +538,12 @@ namespace NBC.Game.Bootstrap
 
             if (hero == null)
             {
+                // 切场景 / 重进副本的间隙里还没进房，本来就没有实体 —— 这不算异常，别刷警告。
+                if (!IsJoined)
+                {
+                    return;
+                }
+
                 // 诊断：真的认不出自己的英雄时，位置纠偏等于没开（会表现为"红圈外也挨打"）
                 if (Time.time - m_lastHeroMissingLogTime > 5f)
                 {

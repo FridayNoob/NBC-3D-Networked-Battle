@@ -63,24 +63,40 @@ namespace NBC.Boot
         {
             m_hp = m_maxHp;
 
-            try
+            // R042 返修：重开副本会重新加载 Battle 场景，Start 会再跑一遍；
+            //   资源层是单例，第二次 InstallAsync 会抛「已经装过加载器了」，
+            //   而 SetCanvasLocation 在 Canvas 已开始加载后也会抛异常 ⇒ 已就绪就整段跳过。
+            bool alreadyInstalled = AssetManager.Instance.IsInitialized;
+
+            if (!alreadyInstalled)
             {
-                string root = ResolveSimulatePackageRoot();
-                await AssetBootstrapper.InstallAsync(m_mode, AssetBootstrapper.DefaultPackageName, root);
-                m_assetsReady = true;
+                try
+                {
+                    string root = ResolveSimulatePackageRoot();
+                    await AssetBootstrapper.InstallAsync(m_mode, AssetBootstrapper.DefaultPackageName, root);
+                    m_assetsReady = true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError("[HpBarDemo] 资源层初始化失败：" + ex.Message);
+                    return;
+                }
             }
-            catch (Exception ex)
+            else
             {
-                Debug.LogError("[HpBarDemo] 资源层初始化失败：" + ex.Message);
-                return;
+                m_assetsReady = true;
+                Debug.Log("[HpBarDemo] 资源层已就绪（重开副本），直接复用");
             }
 
-            // ⚠️ 地址对齐（2026-10-26 实际踩过）：
-            //   UIManager 的默认地址是 "UI/Canvas" 与 "UI/<面板名>"，
-            //   而我们的收集器规则是 AddressByFileName ⇒ 地址只是 "Canvas" / "HpBarPanel"。
-            //   不对齐就会报 Location is invalid: 'UI/Canvas'。必须在第一次 ShowPanel 之前设（之后会抛异常）。
-            UIManager.Instance.SetCanvasLocation("Canvas");
-            UIManager.Instance.SetPanelLocationPrefix(string.Empty);
+            if (!alreadyInstalled)
+            {
+                // ⚠️ 地址对齐（2026-10-26 实际踩过）：
+                //   UIManager 的默认地址是 "UI/Canvas" 与 "UI/<面板名>"，
+                //   而我们的收集器规则是 AddressByFileName ⇒ 地址只是 "Canvas" / "HpBarPanel"。
+                //   不对齐就会报 Location is invalid: 'UI/Canvas'。必须在第一次 ShowPanel 之前设（之后会抛异常）。
+                UIManager.Instance.SetCanvasLocation("Canvas");
+                UIManager.Instance.SetPanelLocationPrefix(string.Empty);
+            }
 
             UIManager.Instance.ShowPanel(
                 "HpBarPanel",
