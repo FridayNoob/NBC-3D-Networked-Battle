@@ -390,6 +390,13 @@ namespace NBC.EditorTools
 
             m_status = "导出成功。\n" + message;
             Load();
+
+            // 注意：导出后 CSV 可能又被 Excel 改掉（用户忘了关表格），这时红字会重新亮起，
+            // 必须把「第一处不同」写进状态栏，否则用户只会看到「导出了但还红着」。
+            if (ConfigTableBridge.IsDirty(CurrentEntry, m_asset, out _))
+            {
+                m_status += "\n但 CSV 随后又被改动：" + ConfigTableBridge.DescribeFirstDifference(CurrentEntry, m_asset);
+            }
         }
 
         // 功能：从 CSV 覆盖 SO。

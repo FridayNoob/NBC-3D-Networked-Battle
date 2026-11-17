@@ -200,5 +200,60 @@ namespace NBC.Tests.EditMode
             List<string> errors = new List<string>();
             Assert.IsTrue(ConfigTableBridge.Validate(entry, asset.rows, errors), string.Join(" | ", errors));
         }
+
+        // 功能：Excel 的千位分隔符（20,022,003）要能还原成两个编号。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：TryParseCell("20,022,003", int[]) → 断言得到 2002/2003。
+        // 上游/下游：ConfigTableBridge.TryParseCell。
+        [Test]
+        public void TryParseCell_RepairsThousandSeparatedIds()
+        {
+            bool ok = ConfigTableBridge.TryParseCell("20,022,003", typeof(int[]), out object value, out string problem);
+
+            Assert.IsTrue(ok, problem);
+            CollectionAssert.AreEqual(new[] { 2002, 2003 }, (int[])value);
+        }
+
+        // 功能：正常编号串不能被「修复」逻辑改坏。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：TryParseCell("2002,2003") 与 "2001" → 断言原样。
+        // 上游/下游：ConfigTableBridge.TryParseCell。
+        [Test]
+        public void TryParseCell_KeepsNormalIds()
+        {
+            Assert.IsTrue(ConfigTableBridge.TryParseCell("2002,2003", typeof(int[]), out object pair, out _));
+            CollectionAssert.AreEqual(new[] { 2002, 2003 }, (int[])pair);
+
+            Assert.IsTrue(ConfigTableBridge.TryParseCell("2001", typeof(int[]), out object single, out _));
+            CollectionAssert.AreEqual(new[] { 2001 }, (int[])single);
+
+            Assert.IsTrue(ConfigTableBridge.TryParseCell("3,5", typeof(int[]), out object small, out _));
+            CollectionAssert.AreEqual(new[] { 3, 5 }, (int[])small);
+        }
+
+        // 功能：窗口显示数组时不能带 CSV 引号。
+        // 入参：无。
+        // 返回含义：无。
+        // 步骤：取真实 Monster 第 1 行 → GetCellText(skillIds) → 断言不含引号。
+        // 上游/下游：ConfigTableBridge.GetCellText。
+        [Test]
+        public void GetCellText_DoesNotQuoteArrays()
+        {
+            ConfigTableEntry entry = ConfigTableRegistry.Find("Monster");
+            MonsterConfig asset = UnityEditor.AssetDatabase.LoadAssetAtPath<MonsterConfig>(entry.AssetPath);
+
+            Assert.IsNotNull(asset, "找不到 " + entry.AssetPath);
+
+            List<ConfigColumn> columns = ConfigTableBridge.ReadColumns(entry, out string error);
+            Assert.IsEmpty(error);
+
+            ConfigColumn skillColumn = columns.Find(c => c.Name == "skillIds");
+            string text = ConfigTableBridge.GetCellText(entry, asset.rows[0], skillColumn);
+
+            Assert.IsFalse(text.Contains("\""), "显示文本不该带引号：" + text);
+            Assert.IsTrue(text.Length > 0);
+        }
     }
 }

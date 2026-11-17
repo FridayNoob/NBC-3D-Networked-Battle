@@ -369,7 +369,9 @@ namespace NBC.EditorTools
                 return false;
             }
 
-            string text = BuildCsvText(entry, rows, TakeHeaderBlock(disk));
+            // 注意：两边都要 Normalize。磁盘侧去过尾部换行、重拼侧还带结尾 \n；
+            // 只归一化一边会让「刚导出完也报不一致」——这正是 R052 验收时的现象。
+            string text = Normalize(BuildCsvText(entry, rows, TakeHeaderBlock(disk)));
 
             if (string.Equals(disk, text, StringComparison.Ordinal))
             {
@@ -378,6 +380,50 @@ namespace NBC.EditorTools
 
             detail = entry.Name + " 的 SO 与 CSV 不一致（" + rows.Count + " 行）";
             return true;
+        }
+
+        // 功能：找出 SO 与 CSV 的第一处不同，给窗口显示「为什么还红着」。
+        // 入参：entry 表登记；asset SO。
+        // 返回含义：人话差异（第几行、两边各是什么）；一致或读不到时返回空串。
+        // 步骤：读磁盘 → 取表头 → 重拼 → 逐行比较 → 第一处不同就返回。
+        // 上游/下游：窗口导出后复查调用。
+        public static string DescribeFirstDifference(ConfigTableEntry entry, ScriptableObject asset)
+        {
+            IList rows = GetRows(asset);
+
+            if (rows == null)
+            {
+                return string.Empty;
+            }
+
+            string disk;
+
+            try
+            {
+                disk = Normalize(ReadCsvText(ResolveAbsolute(entry.CsvPath), out _));
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                return "读不到 CSV：" + exception.Message;
+            }
+
+            string[] diskLines = disk.Split('\n');
+            string built = BuildCsvText(entry, rows, TakeHeaderBlock(disk));
+            string[] builtLines = built.Split('\n');
+            int count = Math.Max(diskLines.Length, builtLines.Length);
+
+            for (int i = 0; i < count; i++)
+            {
+                string left = i < diskLines.Length ? diskLines[i] : "<没有这一行>";
+                string right = i < builtLines.Length ? builtLines[i] : "<没有这一行>";
+
+                if (!string.Equals(left, right, StringComparison.Ordinal))
+                {
+                    return "第 " + (i + 1) + " 行 CSV=[" + left + "] SO=[" + right + "]";
+                }
+            }
+
+            return string.Empty;
         }
 
         // 功能：校验整张表，返回人类可读的问题列表。
@@ -891,6 +937,13 @@ namespace NBC.EditorTools
                     }
                 }
 
+                // 注意：Excel 会把 2002,2003 这种编号串当成数字加千位分隔符，写成 20,022,003；
+                // 正常解析会得到 20/22/3，校验时再报「表里没有编号 20」。这里先尝试按 4 位一组还原。
+                if (NeedsIdRepair(numbers) && TryChunkIds(parts, out int[] repaired))
+                {
+                    numbers = repaired;
+                }
+
                 value = numbers;
                 return true;
             }
@@ -998,6 +1051,75 @@ namespace NBC.EditorTools
             return Activator.CreateInstance(entry.RowType);
         }
 
+        // 功能：判断数组里是否有「不像编号」的小数字（Excel 千位分隔符会把 2002 拆成 2,002）。
+        // 入参：numbers 解析出来的数字。
+        // 返回含义：true 表示可能被千位分隔符拆坏了。
+        // 步骤：任何一个数字小于 1000 就认为可疑（本项目编号都是 4 位）。
+        // 上游/下游：TryParseCell 调用。
+        private static bool NeedsIdRepair(int[] numbers)
+        {
+            for (int i = 0; i < numbers.Length; i++)
+            {
+                if (numbers[i] < 1000)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // 功能：把被千位分隔符拆坏的编号串按 4 位一组还原。
+        // 入参：parts 逗号切开的原始片段。
+        // 返回含义：true 表示还原成功，ids 是结果。
+        // 步骤：所有片段必须全是数字 → 拼起来 → 长度必须是 4 的倍数 → 每 4 位切一个编号。
+        // 上游/下游：TryParseCell 调用。
+        private static bool TryChunkIds(string[] parts, out int[] ids)
+        {
+            ids = null;
+            StringBuilder digits = new StringBuilder();
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i].Trim();
+
+                if (part.Length == 0)
+                {
+                    return false;
+                }
+
+                for (int c = 0; c < part.Length; c++)
+                {
+                    if (part[c] < '0' || part[c] > '9')
+                    {
+                        return false;
+                    }
+                }
+
+                digits.Append(part);
+            }
+
+            string all = digits.ToString();
+
+            if (all.Length < 4 || all.Length % 4 != 0)
+            {
+                return false;
+            }
+
+            int count = all.Length / 4;
+            ids = new int[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!int.TryParse(all.Substring(i * 4, 4), NumberStyles.Integer, CultureInfo.InvariantCulture, out ids[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // 功能：把某个单元格读成「与 CSV 一致」的文本（窗口显示用）。
         // 入参：entry 表登记；row 行；column 列。
         // 返回含义：单元格文本。
@@ -1005,7 +1127,32 @@ namespace NBC.EditorTools
         // 上游/下游：通用窗口调用。
         public static string GetCellText(ConfigTableEntry entry, object row, ConfigColumn column)
         {
-            return FormatCell(GetFieldValue(entry, row, column.Name), column.Type);
+            object value = GetFieldValue(entry, row, column.Name);
+
+            if (value == null)
+            {
+                return string.Empty;
+            }
+
+            // 注意：显示用文本不能带 CSV 的引号；否则用户会看到 "2002,2003"，复制出去再导入就多了一层引号。
+            if (value is Array array)
+            {
+                StringBuilder joined = new StringBuilder();
+
+                for (int i = 0; i < array.Length; i++)
+                {
+                    if (i > 0)
+                    {
+                        joined.Append(',');
+                    }
+
+                    joined.Append(Convert.ToString(array.GetValue(i), CultureInfo.InvariantCulture));
+                }
+
+                return joined.ToString();
+            }
+
+            return FormatCell(value, column.Type);
         }
 
         // 功能：把窗口里输入的文本写回某个单元格。
