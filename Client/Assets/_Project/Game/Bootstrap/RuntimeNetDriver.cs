@@ -70,6 +70,12 @@ namespace NBC.Game.Bootstrap
         // 3D 绑定器（缓存，不每帧找）
         private SnapshotSceneBinder m_binder;
 
+        // R046 HUD 驱动（挂在本物体上，跨场景常驻；进副本时 Bind、回世界时 CloseAll）
+        private RuntimeHudDriver m_hudDriver;
+
+        // HUD 是否已经接上这一局的快照源（避免每帧重复 Bind、重复 ShowPanel）
+        private bool m_hudBound;
+
     // 「再来一次」的计时探针：记录点了按钮的时刻，等第一张含活怪的快照到了就打一条总耗时。
     // 只用于诊断「重开后怪多久才出现」，不影响任何逻辑。
     private float m_restartWentAt;
@@ -338,6 +344,7 @@ namespace NBC.Game.Bootstrap
             //    **World 场景里重新建一个绑定器**，把副本里的狼当成 World 的单位画出来。
             m_bindPresentation = false;
             m_feed.Clear();
+            CloseHud();
 
             if (m_binder != null)
             {
@@ -373,6 +380,7 @@ namespace NBC.Game.Bootstrap
 
             m_binder = null;
             m_feed.Clear();
+            CloseHud();
 
             // World 场景不需要表现层（没人观战）；下次进副本时 DungeonEntrance 会重新打开它。
             m_bindPresentation = false;
@@ -1164,6 +1172,56 @@ namespace NBC.Game.Bootstrap
                 // 不补这一步，第一局永远是胶囊（binder 建槽时模型还是 null），第二局才变狼。
                 m_binder.SetMonsterPrefab(m_monsterPrefab);
             }
+
+            EnsureHud();
+        }
+
+        // 功能：第一次拿到快照时把 HUD 驱动接上（只接一次）。
+        // 入参：无（读 m_feed / m_session）。
+        // 返回：无。
+        // 步骤：1) 已经接过就直接返回 2) 没有就挂组件 3) Bind 并记下已接。
+        // 上游：RefreshPresentation。
+        // 下游：RuntimeHudDriver.Bind。
+        private void EnsureHud()
+        {
+            if (m_hudBound || m_feed == null || m_feed.View == null || m_session == null)
+            {
+                return;
+            }
+
+            if (m_hudDriver == null)
+            {
+                m_hudDriver = GetComponent<RuntimeHudDriver>();
+
+                if (m_hudDriver == null)
+                {
+                    m_hudDriver = gameObject.AddComponent<RuntimeHudDriver>();
+                }
+            }
+
+            m_hudDriver.Bind(m_feed, m_session);
+            m_hudBound = true;
+        }
+
+        // 功能：收起 HUD（回世界、切场景前调；重复调无害）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 没接过就直接返回 2) CloseAll 并清标记（下次进副本再 Bind）。
+        // 上游：ReturnToWorldRoutine、OnDungeonSceneLoaded。
+        // 下游：RuntimeHudDriver.CloseAll。
+        private void CloseHud()
+        {
+            if (!m_hudBound)
+            {
+                return;
+            }
+
+            if (m_hudDriver != null)
+            {
+                m_hudDriver.CloseAll();
+            }
+
+            m_hudBound = false;
         }
 
         // 功能：诊断用 —— 「再来一次」之后，第一张带活怪的快照到达时打一条总耗时。

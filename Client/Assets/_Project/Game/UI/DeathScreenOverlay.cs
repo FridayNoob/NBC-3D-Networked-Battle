@@ -1,266 +1,215 @@
 // 这个文件里有：
-//   DeathScreenOverlay：死亡时盖在屏幕上的黑幕、标题、倒计时与提示（运行时建 UGUI，不依赖预制体）。
+//   DeathScreenOverlay（类）：死亡时的黑幕面板（标题 + 倒计时 + 状态行），视觉来自预制体。
 
+using NBC.Framework.UI;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace NBC.Game.UI
 {
-    // 主要功能：角色倒下后显示全屏黑幕、标题、倒计时秒数与一行提示，复活或退出时隐藏。
-    // 主要数据成员：m_canvas / m_background / m_title / m_countdown / m_hint（都是运行时创建的 UGUI 对象）。
-    // 主要外部方法：Ensure（拿单例）、Show（显示并给标题与提示）、SetCountdown（更新秒数）、Hide（隐藏）。
-    // 谁在用它：PlayerDeathFlow（死亡倒计时与旁观提示都走这里）。
-    public sealed class DeathScreenOverlay : MonoBehaviour
+    // 主要功能：玩家死亡时盖一层黑幕、显示标题与倒计时；复活后关掉。
+    // 主要数据成员：m_backdrop（背景图，同时是显隐开关）、m_title/m_countdown/m_status（三段文字）、m_isStub（占位实例）。
+    // 主要外部方法：Ensure（静态入口）、Show、SetCountdown、SetStatusText、Hide。
+    // 谁在用它：PlayerDeathFlow 在死亡/复活流程里调；DungeonResultPanel 结算前调 Hide。
+    // 注意：面板是异步加载的，第一帧还拿不到预制体实例 —— 这时 Ensure 返回一个占位实例，
+    //       先把 Show/SetCountdown 的参数记下来，等真面板到了再补一遍（见 OnPanelShown）。
+    public sealed class DeathScreenOverlay : BasePanel
     {
-        // 内置字体名（Unity 2022 起 Arial.ttf 改叫 LegacyRuntime.ttf）
-        private const string BuiltinFontName = "LegacyRuntime.ttf";
+        // 面板名必须等于 prefab 文件名
+        public new const string PanelName = "DeathScreenOverlay";
 
-        // 旧版 Unity 的内置字体名，第一项取不到时兜底
-        private const string LegacyBuiltinFontName = "Arial.ttf";
+        public const string BackdropControl = "Img_Backdrop";
+        public const string TitleControl = "Text_Title";
+        public const string CountdownControl = "Text_Countdown";
+        public const string StatusControl = "Text_Status";
 
-        // 黑幕不透明度（0~1）：留一点画面能看见角色倒下的姿势
-        private const float BackgroundAlpha = 0.82f;
+        // 全屏黑幕的透明度：0.85 让玩家还能隐约看到世界，但不刺眼
+        public const float BackdropAlpha = 0.85f;
 
-        // 单例（全场景只允许一个）
         private static DeathScreenOverlay s_instance;
+        private static bool s_panelRequested;
 
-        private Canvas m_canvas;  // 全屏画布（ScreenSpaceOverlay，排序值 900）
-        private Image m_background;  // 全屏黑幕
-        private Text m_title;  // 标题（例如「你已倒下」）
-        private Text m_countdown;  // 倒计时秒数（秒）
-        private Text m_hint;  // 底部提示
+        // 占位期记下的「待应用状态」：真面板一到就照着补上
+        private static bool s_wantShow;
+        private static string s_wantTitle;
+        private static string s_wantStatus;
+        private static float s_wantCountdown = -1f;
 
-        // 功能：拿到单例；场景里没有就现建一个挂在新建的 GameObject 上。
+        private Image m_backdrop;
+        private TMP_Text m_title;
+        private TMP_Text m_countdown;
+        private TMP_Text m_status;
+        private bool m_showing;
+        private bool m_isStub;
+
+        // 功能：现在黑幕是不是显示着。
         // 入参：无。
-        // 返回：单例（永不为 null）。
-        // 步骤：1) 已有就返回 2) 没有就新建空物体并挂本组件 3) 返回组件。
-        // 上游/下游：PlayerDeathFlow 调用；下游 Awake（建 UI）。
+        // 返回：true 表示玩家能看到黑幕（占位实例返回「想显示」的状态）。
+        public bool IsShowing
+        {
+            get { return m_isStub ? s_wantShow : m_showing; }
+        }
+
+        // 功能：取黑幕面板（没有就请求加载预制体）。
+        // 入参：无。
+        // 返回：面板实例或占位实例，保证非空。
+        // 步骤：1) 已拿到真面板直接返回 2) 没有就建占位 3) 请求一次加载。
+        // 上游：PlayerDeathFlow；下游：UIManager.ShowPanel。
         public static DeathScreenOverlay Ensure()
         {
-            if (s_instance != null)
+            if (s_instance != null && !s_instance.m_isStub)
             {
                 return s_instance;
             }
 
-            GameObject host = new GameObject("[DeathScreenOverlay]");
-            return host.AddComponent<DeathScreenOverlay>();
-        }
-
-        // 功能：当前是否正在显示黑幕。
-        // 入参：无。
-        // 返回：true 表示黑幕可见。
-        // 步骤：读背景对象的 activeSelf。
-        // 上游/下游：PlayerDeathFlow 判断要不要重复 Show。
-        public bool IsShowing
-        {
-            get { return m_background != null && m_background.gameObject.activeSelf; }
-        }
-
-        // 功能：登记单例并建好整套 UI。
-        // 入参：无。
-        // 返回：无。
-        // 步骤：1) 已有别的实例就自毁 2) 登记自己 3) 建 UI 并先隐藏。
-        // 上游/下游：Unity 生命周期；下游 Build / Hide。
-        private void Awake()
-        {
-            if (s_instance != null && s_instance != this)
+            if (s_instance == null)
             {
-                Destroy(gameObject);
+                GameObject stub = new GameObject("[DeathScreenOverlay]");
+                s_instance = stub.AddComponent<DeathScreenOverlay>();
+                s_instance.m_isStub = true;
+            }
+
+            if (!s_panelRequested)
+            {
+                s_panelRequested = true;
+                UIManager ui = UIManager.Instance;
+
+                if (ui != null)
+                {
+                    ui.ShowPanel(PanelName, UILayer.Top, OnPanelShown);
+                }
+            }
+
+            return s_instance;
+        }
+
+        // 功能：真面板加载好之后的回调：接管状态、把占位期记下的内容补上。
+        // 入参：panel 加载好的面板。
+        // 返回：无。
+        // 步骤：1) 类型不对就返回 2) 换成真实例、藏掉占位 3) 应用待定状态。
+        // 上游：UIManager.ShowPanel 的 onShown。
+        private static void OnPanelShown(BasePanel panel)
+        {
+            DeathScreenOverlay real = panel as DeathScreenOverlay;
+
+            if (real == null)
+            {
                 return;
             }
 
-            s_instance = this;
-            Build();
-            Hide();
-        }
+            DeathScreenOverlay stub = s_instance;
+            real.m_isStub = false;
+            s_instance = real;
 
-        // 功能：销毁时把单例清掉，避免下次拿到已销毁对象。
-        // 入参：无。
-        // 返回：无。
-        // 步骤：是自己就置空。
-        // 上游/下游：Unity 生命周期。
-        private void OnDestroy()
-        {
-            if (s_instance == this)
+            if (stub != null && stub != real)
             {
-                s_instance = null;
+                stub.Hide();
+                Object.Destroy(stub.gameObject);
+            }
+
+            if (s_wantShow)
+            {
+                real.Show(s_wantTitle, s_wantStatus);
+
+                if (s_wantCountdown >= 0f)
+                {
+                    real.SetCountdown(s_wantCountdown);
+                }
             }
         }
 
-        // 功能：显示黑幕并写标题与提示。
-        // 入参：title 标题文字；hint 底部提示文字（空串表示不显示）。
+        // 功能：取 prefab 里的控件。
+        // 入参：无。
         // 返回：无。
-        // 步骤：1) 没有 UI 就先建 2) 写标题与提示 3) 倒计时先隐藏（由 SetCountdown 决定要不要出现）4) 打开黑幕。
-        // 上游/下游：PlayerDeathFlow 开始倒计时 / 进入旁观时调用。
+        // 上游：BasePanel.Initialize。
+        protected override void OnInit()
+        {
+            m_backdrop = RequireControl<Image>(BackdropControl);
+            m_title = GetControl<TMP_Text>(TitleControl);
+            m_countdown = GetControl<TMP_Text>(CountdownControl);
+            m_status = GetControl<TMP_Text>(StatusControl);
+
+            Color color = m_backdrop.color;
+            color.a = BackdropAlpha;
+            m_backdrop.color = color;
+            m_backdrop.raycastTarget = false;
+        }
+
+        // 功能：打开黑幕并写入标题与提示。
+        // 入参：title 大标题；hint 状态行（可为空）。
+        // 返回：无。
+        // 步骤：1) 占位实例只记状态 2) 真面板显示背景、写标题、清倒计时。
         public void Show(string title, string hint)
         {
-            if (m_background == null)
+            s_wantShow = true;
+            s_wantTitle = title;
+            s_wantStatus = hint;
+
+            if (m_isStub)
             {
-                Build();
+                return;
             }
 
-            m_title.text = title;
-            m_hint.text = hint;
-            m_countdown.text = string.Empty;
-            if (m_canvas != null)
+            m_showing = true;
+
+            if (m_backdrop != null)
             {
-                m_canvas.gameObject.SetActive(true);
+                m_backdrop.gameObject.SetActive(true);
             }
 
-            m_background.gameObject.SetActive(true);
+            if (m_title != null)
+            {
+                m_title.text = title ?? string.Empty;
+            }
+
+            if (m_countdown != null)
+            {
+                m_countdown.text = string.Empty;
+            }
+
+            SetStatusText(hint);
         }
 
-        // 功能：更新倒计时秒数（向上取整，小于等于 0 时显示「0」）。
-        // 入参：remaining 剩余秒数。
+        // 功能：更新倒计时数字。
+        // 入参：remaining 剩余秒（向上取整显示）。
         // 返回：无。
-        // 步骤：取整后拼成「N 秒后复活」；负数按 0 处理。
-        // 上游/下游：PlayerDeathFlow.Update 每帧调用。
         public void SetCountdown(float remaining)
         {
-            if (m_countdown == null)
-            {
-                return;
-            }
+            s_wantCountdown = remaining;
 
-            int seconds = Mathf.Max(0, Mathf.CeilToInt(remaining));
-            m_countdown.text = seconds + " 秒";
+            if (!m_isStub && m_countdown != null)
+            {
+                m_countdown.text = Mathf.CeilToInt(Mathf.Max(0f, remaining)).ToString();
+            }
         }
 
-        // 功能：把倒计时文字换成一句状态提示（旁观的「等待其他玩家」用）。
-        // 入参：text 要显示的文字。
+        // 功能：更新状态行文字。
+        // 入参：text 要显示的字（null 当空串）。
         // 返回：无。
-        // 步骤：直接写文字，不判空以外的逻辑。
-        // 上游/下游：PlayerDeathFlow 进入旁观后调用。
         public void SetStatusText(string text)
         {
-            if (m_countdown == null)
-            {
-                return;
-            }
+            s_wantStatus = text;
 
-            m_countdown.text = text;
+            if (!m_isStub && m_status != null)
+            {
+                m_status.text = text ?? string.Empty;
+            }
         }
 
-        // 功能：隐藏整块黑幕。
+        // 功能：关掉黑幕（面板实例保留，下次直接复用）。
         // 入参：无。
         // 返回：无。
-        // 步骤：黑幕存在就关掉它的 GameObject。
-        // 上游/下游：PlayerDeathFlow 复活 / 退出副本时调用。
         public void Hide()
         {
-            // 必须关整块 Canvas：只关背景会留下「你已倒下 / 0 秒」两行字浮在画面上
-            if (m_canvas != null)
+            s_wantShow = false;
+            s_wantCountdown = -1f;
+            m_showing = false;
+
+            if (!m_isStub && m_backdrop != null)
             {
-                m_canvas.gameObject.SetActive(false);
+                m_backdrop.gameObject.SetActive(false);
             }
-
-            if (m_background != null)
-            {
-                m_background.gameObject.SetActive(false);
-            }
-        }
-
-        // 功能：一次性搭好 Canvas、黑幕、标题、倒计时和提示。
-        // 入参：无。
-        // 返回：无。
-        // 步骤：1) 建 Canvas 与缩放器 2) 建黑幕铺满 3) 建三段文字并摆好位置 4) 缓存引用。
-        // 上游/下游：Awake / Show 调用。
-        private void Build()
-        {
-            if (m_canvas != null)
-            {
-                return;
-            }
-
-            GameObject canvasObject = new GameObject("Canvas");
-            canvasObject.transform.SetParent(transform, false);
-
-            m_canvas = canvasObject.AddComponent<Canvas>();
-            m_canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            m_canvas.sortingOrder = 900;
-
-            CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
-
-            canvasObject.AddComponent<GraphicRaycaster>();
-
-            m_background = CreateImage(canvasObject.transform, "Background", new Color(0f, 0f, 0f, BackgroundAlpha));
-            m_title = CreateText(canvasObject.transform, "Title", 96, new Vector2(0f, 120f), new Vector2(1600f, 160f));
-            m_countdown = CreateText(canvasObject.transform, "Countdown", 72, new Vector2(0f, -40f), new Vector2(1200f, 120f));
-            m_hint = CreateText(canvasObject.transform, "Hint", 40, new Vector2(0f, -220f), new Vector2(1600f, 120f));
-
-            m_title.text = string.Empty;
-            m_countdown.text = string.Empty;
-            m_hint.text = string.Empty;
-        }
-
-        // 功能：建一张铺满父节点的单色图片。
-        // 入参：parent 父节点；name 物体名；color 颜色。
-        // 返回：建好的 Image。
-        // 步骤：1) 建空物体并拉伸铺满 2) 挂 Image 并上色 3) 关掉射线检测（不挡点击）。
-        // 上游/下游：Build 调用。
-        private static Image CreateImage(Transform parent, string name, Color color)
-        {
-            GameObject go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-
-            RectTransform rect = go.AddComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
-
-            Image image = go.AddComponent<Image>();
-            image.color = color;
-            image.raycastTarget = false;
-            return image;
-        }
-
-        // 功能：建一段居中文字。
-        // 入参：parent 父节点；name 物体名；fontSize 字号；anchoredPosition 相对屏幕中心的位置；size 文本框尺寸。
-        // 返回：建好的 Text。
-        // 步骤：1) 建空物体并设居中锚点 2) 挂 Text 设置字体、字号、对齐 3) 关掉射线检测。
-        // 上游/下游：Build 调用；下游 LoadBuiltinFont。
-        private static Text CreateText(Transform parent, string name, int fontSize, Vector2 anchoredPosition, Vector2 size)
-        {
-            GameObject go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-
-            RectTransform rect = go.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = anchoredPosition;
-            rect.sizeDelta = size;
-
-            Text text = go.AddComponent<Text>();
-            text.font = LoadBuiltinFont();
-            text.fontSize = fontSize;
-            text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white;
-            text.raycastTarget = false;
-            text.horizontalOverflow = HorizontalWrapMode.Overflow;
-            text.verticalOverflow = VerticalWrapMode.Overflow;
-            return text;
-        }
-
-        // 功能：取一个内置字体给 UGUI 用。
-        // 入参：无。
-        // 返回：内置字体；两个名字都取不到时返回 null（文字不显示，但不会崩）。
-        // 步骤：先试 LegacyRuntime.ttf，再试 Arial.ttf。
-        // 上游/下游：CreateText 调用。
-        private static Font LoadBuiltinFont()
-        {
-            Font font = Resources.GetBuiltinResource<Font>(BuiltinFontName);
-
-            if (font == null)
-            {
-                font = Resources.GetBuiltinResource<Font>(LegacyBuiltinFontName);
-            }
-
-            return font;
         }
     }
 }
