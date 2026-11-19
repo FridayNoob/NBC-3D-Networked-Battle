@@ -2,8 +2,8 @@
   "table": "Skill",
   "fields": ["id", "name", "damage", "damageType", "hitFrames", "cooldownMs", "rangeMm"],
   "rows": [
-    { "id": 2001, "name": "火球", "damage": 500, "damageType": "Fire", "hitFrames": [ 3, 5 ], "cooldownMs": 5000, "rangeMm": 6000 },
-    { "id": 2002, "name": "冰箭", "damage": 80, "damageType": "Ice", "hitFrames": [ 4, 8 ], "cooldownMs": 8000, "rangeMm": 8000 },
-    { "id": 2003, "name": "穿心箭", "damage": 120, "damageType": "Physical", "hitFrames": [ 6, 12 ], "cooldownMs": 12000, "rangeMm": 10000 }
+    { "id": 2001, "name": "旋风斩", "damage": 500, "damageType": "Physical", "hitFrames": [ 60 ], "cooldownMs": 6000, "rangeMm": 2500 },
+    { "id": 2002, "name": "上挑斩", "damage": 80, "damageType": "Physical", "hitFrames": [ 32 ], "cooldownMs": 8000, "rangeMm": 2500 },
+    { "id": 2003, "name": "突进斩", "damage": 120, "damageType": "Physical", "hitFrames": [ 73 ], "cooldownMs": 12000, "rangeMm": 3000 }
   ]
 }

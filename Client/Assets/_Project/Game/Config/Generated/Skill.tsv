@@ -1,4 +1,4 @@
 id	name	damage	damageType	hitFrames	cooldownMs	rangeMm
-2001	火球	500	Fire	3,5	5000	6000
-2002	冰箭	80	Ice	4,8	8000	8000
-2003	穿心箭	120	Physical	6,12	12000	10000
+2001	旋风斩	500	Physical	60	6000	2500
+2002	上挑斩	80	Physical	32	8000	2500
+2003	突进斩	120	Physical	73	12000	3000

@@ -2656,8 +2656,27 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 int distance = DungeonBattle.DistanceMm(hero, boss);
                 int hpBefore = hero.Hp;
 
-                // 站住别动，推 32 帧 ≈ 1 秒 → 应当挨 2~3 下
-                h.SendIdleInputFor(a, 32);
+                // 站住别动，推 120 帧 ≈ 4 秒。
+                //   R043b（2026-11-19）：技能要等**命中帧**（旋风斩 60 帧、上挑斩 32 帧）才掉血，
+                //   32 帧的窗口连第一段都没落地，所以这里必须按表里最长的命中帧放宽。
+                //   记下每次掉血的时刻与数值，失败时能直接看出是"哪一段技能"打出来的。
+                //   ⚠️ 这一片场地还有野狼（6001 配了 2003 突进斩），所以总掉血**不是**只有 BOSS 的。
+                List<string> hits = new();
+                List<int> damages = new();
+
+                for (int frame = 1; frame <= 120; frame++)
+                {
+                    int before = hero.Hp;
+                    a.SendInput(0, 0);
+                    h.TickBattles(1);
+
+                    if (hero.Hp != before)
+                    {
+                        int dealt = before - hero.Hp;
+                        hits.Add($"第 {frame} 帧 -{dealt}");
+                        damages.Add(dealt);
+                    }
+                }
 
                 int hpAfter = hero.Hp;
                 int lost = hpBefore - hpAfter;
@@ -2671,6 +2690,9 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                     int skillDamage = 0;
                     MonsterRow? bossRow = h.Tables.FindMonster(boss.ConfigId);
 
+                    // BOSS 的两段技能各自打出来一次（伤害值来自 Skill 表，不写死）。
+                    List<int> bossSkillDamages = new();
+
                     if (bossRow != null)
                     {
                         foreach (int skillId in bossRow.Value.SkillIds)
@@ -2680,18 +2702,42 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                             if (skill != null)
                             {
                                 skillDamage += skill.Value.Damage;
+                                bossSkillDamages.Add(skill.Value.Damage);
                             }
                         }
                     }
 
-                    Check("BOSS AI：攻击力 0、只放技能 ⇒ 掉的血正好是技能伤害之和（R043b）",
-                        reached && lost == skillDamage && skillDamage > 0,
-                        $"走到 {distance}mm 后 hp {hpBefore} → {hpAfter}（掉了 {lost}；" +
-                        $"技能伤害之和 {skillDamage}，Monster.attack = {bossAttack}）");
+                    bool everyBossSkillLanded = bossSkillDamages.Count > 0;
 
-                    Check("BOSS AI：技能进冷却后这一秒内不再掉第二次",
-                        lost == skillDamage,
-                        $"1 秒掉了 {lost}（技能一圈应当是 {skillDamage}）");
+                    foreach (int expected in bossSkillDamages)
+                    {
+                        if (!damages.Contains(expected))
+                        {
+                            everyBossSkillLanded = false;
+                        }
+                    }
+
+                    Check("BOSS AI：攻击力 0 时靠技能打人，且 BOSS 的每段技能都打中了一次（R043b）",
+                        reached && everyBossSkillLanded,
+                        $"走到 {distance}mm 后 hp {hpBefore} → {hpAfter}（掉了 {lost}；" +
+                        $"BOSS 技能伤害 {string.Join("+", bossSkillDamages)} = {skillDamage}，" +
+                        $"Monster.attack = {bossAttack}；掉血明细 {DescribeLines(hits)}）");
+
+                    // 冷却生效的判据：单段技能伤害在一次观察窗口里只出现一次。
+                    bool eachBossSkillOnce = true;
+
+                    foreach (int expected in bossSkillDamages)
+                    {
+                        if (damages.FindAll(d => d == expected).Count != 1)
+                        {
+                            eachBossSkillOnce = false;
+                        }
+                    }
+
+                    Check("BOSS AI：技能冷却生效（4 秒内每段技能只打一次）",
+                        eachBossSkillOnce && bossSkillDamages.Count > 0,
+                        $"每段出现次数 {string.Join("，", bossSkillDamages.ConvertAll(d => $"{d}×{damages.FindAll(x => x == d).Count}"))}；" +
+                        $"明细 {DescribeLines(hits)}");
                 }
                 else
                 {
@@ -9097,13 +9143,17 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 return;
             }
 
-            SkillRow? fireball = tables.FindSkill(2001);
+            SkillRow? slash = tables.FindSkill(2001);
+            int rangeMm = slash == null ? 0 : slash.Value.RangeMm;
+            int hitFrame = slash == null ? 0 : slash.Value.HitFrame;
+            int cooldownTicks = slash == null ? 0 : slash.Value.CooldownTicks;
 
-            Check("§17d 技能：火球解析出冷却帧与射程",
-                fireball != null && fireball.Value.CooldownTicks == 152 && fireball.Value.RangeMm == 6000 &&
-                fireball.Value.HitFrame == 3,
-                fireball == null ? "找不到 2001" :
-                    $"cooldownTicks={fireball.Value.CooldownTicks}，range={fireball.Value.RangeMm}，hitFrame={fireball.Value.HitFrame}");
+            // 注意：这里刻意不写死任何数值。冷却、射程、命中帧都能被负责人在 CSV 里改，
+            // 探针只验"读出来的数被用上了"，改表不用改测试。
+            Check("§17d 技能：旋风斩解析出冷却帧、射程与命中帧",
+                slash != null && cooldownTicks > 0 && rangeMm >= 100 && hitFrame >= 1,
+                slash == null ? "找不到 2001" :
+                    $"cooldownTicks={cooldownTicks}，range={rangeMm}，hitFrame={hitFrame}");
 
             MonsterRow? boss = tables.FindMonster(6003);
 
@@ -9113,34 +9163,49 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             var battle = new DungeonBattle("r-skill", 1001, 40, 1200, 20);
             battle.AttachTables(tables);
 
+            int nearX = rangeMm / 2;
+            int farX = rangeMm + 1000;
+
             BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1, moveSpeedMmPerTick: 40);
-            BattleEntity far = battle.AddEntity(6002, 1, 200, 7000, 0);
-            BattleEntity wolf = battle.AddEntity(6001, 1, 300, 1000, 0);
-            BattleEntity wolf2 = battle.AddEntity(6001, 1, 300, 1000, 0);
+            BattleEntity far = battle.AddEntity(6002, 1, 7000, farX, 0);
+            BattleEntity wolf = battle.AddEntity(6001, 1, 300, nearX, 0);
+            BattleEntity wolf2 = battle.AddEntity(6001, 1, 300, nearX, 0);
 
             string reason;
 
-            Check("§17d 技能：超射程被拒（7000 > 6000）",
+            Check($"§17d 技能：超射程被拒（{farX} > {rangeMm}）",
                 !battle.TryCastSkill(hero, 2001, far.Id, out reason) && reason.Contains("射程"),
                 reason);
 
-            Check("§17d 技能：范围内的目标能放出去",
+            Check("§17d 技能：射程内的目标能放出去",
                 battle.TryCastSkill(hero, 2001, wolf.Id, out reason), reason);
 
             Check("§17d 技能：放出去的瞬间还没掉血（命中帧还没到）", wolf.Hp == 300, "hp=" + wolf.Hp);
 
+            bool cleanBeforeHit = true;
+
+            for (int i = 0; i < hitFrame - 1; i++)
+            {
+                battle.Step();
+
+                if (wolf.Hp != 300)
+                {
+                    cleanBeforeHit = false;
+                    break;
+                }
+            }
+
+            Check($"§17d 技能：命中帧之前不掉血（前 {hitFrame - 1} 帧）", cleanBeforeHit, "hp=" + wolf.Hp);
+
             battle.Step();
 
-            Check("§17d 技能：第 1 帧还没掉血", wolf.Hp == 300, "hp=" + wolf.Hp);
-
-            battle.Step();
-            battle.Step();
-
-            Check("§17d 技能：第 3 帧扣 500 血（300 血直接见底）", wolf.Hp == 0 && !wolf.Alive, "hp=" + wolf.Hp);
+            Check($"§17d 技能：第 {hitFrame} 帧扣血（300 血被 500 伤害打空）",
+                wolf.Hp == 0 && !wolf.Alive, "hp=" + wolf.Hp);
 
             int left = battle.SkillCooldownTicksLeft(hero.Id, 2001);
 
-            Check("§17d 技能：冷却按 152 帧走（已经过 3 帧）", left == 149, "left=" + left);
+            Check($"§17d 技能：冷却按表走（{cooldownTicks} 帧，已过 {hitFrame} 帧）",
+                left == cooldownTicks - hitFrame, "left=" + left);
 
             Check("§17d 技能：冷却内再放被拒",
                 !battle.TryCastSkill(hero, 2001, wolf2.Id, out reason) && reason.Contains("冷却"), reason);
@@ -9151,11 +9216,14 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             Check("§17d 技能：不能对友军放",
                 !battle.TryCastSkill(hero, 2002, ally.Id, out reason) && reason.Contains("友军"), reason);
 
-            Check("§17d 技能：没配的技能被拒（英雄没配 2003）",
-                !battle.TryCastSkill(hero, 2003, wolf.Id, out reason) && reason.Contains("没有配置"), reason);
+            // 「没配」这条要挑一个**表里有、但这个单位没配**的技能：
+            // 剑士现在配齐 2001~2003，所以换法师（1002 只配了 2003）来放 2001。
+            BattleEntity mage = battle.AddEntity(1002, 0, 800, 0, 0, playerId: 3);
 
-            // 推到冷却结束：152 帧后应该能再放
-            for (int i = 0; i < 155; i++)
+            Check("§17d 技能：没配的技能被拒（法师没配 2001）",
+                !battle.TryCastSkill(mage, 2001, wolf.Id, out reason) && reason.Contains("没有配置"), reason);
+
+            for (int i = 0; i < left + 2; i++)
             {
                 battle.Step();
             }
