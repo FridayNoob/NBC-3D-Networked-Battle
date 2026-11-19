@@ -130,6 +130,9 @@ namespace NBC.Game.Bootstrap
         private const int PlayAreaHalfExtentMm = 50000;
         private PlayerAnimation m_playerAnimation;
 
+        // 本地英雄的移动脚本（懒加载）：上行输入要靠它把相机相对方向换成世界方向
+        private PlayerMove m_localMove;
+
         // 本地英雄的大脑（血量为 0 时切到死亡状态；懒加载，只有 Battle 场景才存在）
         private PlayerBrain m_playerBrain;
 
@@ -860,7 +863,9 @@ namespace NBC.Game.Bootstrap
 
                 if (targetId != 0)
                 {
-                    m_session.SendInput(command.MoveX, command.MoveY, AttackBitMask, 0u, targetId);
+                    // 上行前先把「相机相对轴」换成世界方向，否则服务端按世界轴走、本地按相机轴转身
+                    ToWorldInput(command.MoveX, command.MoveY, out int attackWorldX, out int attackWorldY);
+                    m_session.SendInput(attackWorldX, attackWorldY, AttackBitMask, 0u, targetId);
                     m_attackSent = true;
                 }
             }
@@ -1122,18 +1127,59 @@ namespace NBC.Game.Bootstrap
 
             InputCommand command = input.Current;
 
+            // 上行前统一换算成世界方向：服务端 `ApplyMove` 把 move_x / move_y 当世界 +X / +Z 用，
+            // 而本地 PlayerMove 是按相机轴转身；相机转过之后不换算，就会出现「位置往左、人朝右」。
+            ToWorldInput(command.MoveX, command.MoveY, out int worldX, out int worldY);
+
             if (m_mode == ERuntimeSyncMode.Lockstep)
             {
                 // 锁步：被挡下（没开局/重复帧）会返回 false，这里不当作错误
-                m_session.SendLockstepInput(command.MoveX, command.MoveY, command.ActionBits);
+                m_session.SendLockstepInput(worldX, worldY, command.ActionBits);
             }
             else
             {
                 // 注意：这里必须把「攻击位」抹掉。HandleAttack 返回 false 有两种情况：窗口没开，或
                 // 「按了但还在冷却里」；后者会让本帧 command.ActionBits 仍然带着攻击位，如果原样发出去，
                 // 服务端就会收到一条「目标 = 0」的普攻，日志刷「目标 0 不存在」。
-                m_session.SendInput(command.MoveX, command.MoveY, command.ActionBits & ~AttackBitMask, 0u, 0);
+                m_session.SendInput(worldX, worldY, command.ActionBits & ~AttackBitMask, 0u, 0);
             }
+        }
+
+        // 功能：把「相机相对」的输入轴换成世界方向，再上行给服务端。
+        // 入参：moveX 左右轴（-1000~1000，右为正）；moveY 前后轴（-1000~1000，前为正）。
+        // 返回：worldX / worldY 世界方向（-1000~1000，+X / +Z 为正；都为 0 表示没输入）。
+        // 步骤：1) 没输入直接给 0 2) 懒加载本地 PlayerMove，找不到就原样发（退化成世界轴）
+        //       3) 用 PlayerMove.GetMoveDirection 换算出世界方向，再按量化精度取整。
+        // 上游：SendInputNow、HandleAttack
+        // 下游：PlayerMove.GetMoveDirection
+        // 注意：服务端不认相机，只有客户端知道镜头朝向，所以这一步必须在客户端做。
+        private void ToWorldInput(int moveX, int moveY, out int worldX, out int worldY)
+        {
+            if (moveX == 0 && moveY == 0)
+            {
+                worldX = 0;
+                worldY = 0;
+                return;
+            }
+
+            if (m_localMove == null)
+            {
+                m_localMove = FindObjectOfType<PlayerMove>();
+            }
+
+            if (m_localMove == null)
+            {
+                worldX = moveX;
+                worldY = moveY;
+                return;
+            }
+
+            float axisX = (float)moveX / InputCommand.MoveScale;
+            float axisZ = (float)moveY / InputCommand.MoveScale;
+            Vector3 worldDirection = m_localMove.GetMoveDirection(axisX, axisZ);
+
+            worldX = Mathf.RoundToInt(worldDirection.x * InputCommand.MoveScale);
+            worldY = Mathf.RoundToInt(worldDirection.z * InputCommand.MoveScale);
         }
 
         // 功能：选好数据源并刷新表现层，必要时创建 3D 绑定器。
