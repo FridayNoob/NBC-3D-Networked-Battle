@@ -1,0 +1,6 @@
+{
+  "table": "BattleObstacle",
+  "fields": ["id", "dungeonId", "kind", "xMm", "zMm", "radiusMm", "halfXMm", "halfZMm", "name"],
+  "rows": [
+  ]
+}

@@ -199,7 +199,9 @@ public sealed class BattleEntity
     /// <param name="moveY">前后轴（-1000..1000）。</param>
     /// <param name="speedMmPerTick">满速时的毫米/帧。</param>
     /// <param name="halfExtentMm">场地半径（毫米），出界钳位。</param>
-    public void ApplyMove(int moveX, int moveY, int speedMmPerTick, int halfExtentMm)
+    /// <param name="field">障碍表；null 或空表时行为与没有障碍时完全一致。</param>
+    public void ApplyMove(int moveX, int moveY, int speedMmPerTick, int halfExtentMm,
+                          BattleField? field = null)
     {
         if (!Alive)
         {
@@ -227,12 +229,55 @@ public sealed class BattleEntity
             dz = dz * 1000 / 1414;
         }
 
+        // ⚠️ 「起点就在障碍里」必须在**挪动之前**判断：
+        //    挪完再判的话，新的位置永远落在障碍里 ⇒ 每帧都当成「已经在里面」放行 ⇒ 直接穿墙。
+        bool startBlocked = field != null && !field.IsEmpty && field.IsBlocked(PosXmm, PosZmm);
+
         PosXmm = Clamp(PosXmm + dx, -halfExtentMm, halfExtentMm);
         PosZmm = Clamp(PosZmm + dz, -halfExtentMm, halfExtentMm);
+
+        if (field != null && !field.IsEmpty && !startBlocked)
+        {
+            ApplyObstacles(dx, dz, halfExtentMm, field);
+        }
 
         if (dx != 0 || dz != 0)
         {
             FacingDeg = FacingOf(dx, dz);
+        }
+    }
+
+    /// <summary>
+    /// 分轴推进：先试 X 再试 Z，哪一轴进了障碍就不采纳那一轴（表现是贴着障碍滑开）。
+    /// <para>
+    /// 为什么不直接"整步被挡就原地不动"：那样贴着墙走会完全卡死，玩家会以为掉线；
+    /// 分轴之后"撞墙只停一个方向"，手感与常见动作游戏一致。
+    /// </para>
+    /// </summary>
+    /// <param name="dx">本帧想走的 X（毫米，可正可负）。</param>
+    /// <param name="dz">本帧想走的 Z（毫米）。</param>
+    /// <param name="halfExtentMm">场地半径（毫米）。</param>
+    /// <param name="field">障碍表。</param>
+    private void ApplyObstacles(int dx, int dz, int halfExtentMm, BattleField field)
+    {
+        // 先把这一帧的位移退回去，再按轴分别尝试（退回是有代价的，但每帧位移 ≤ 90mm，
+        // 对精度的影响远小于"允许穿墙"）
+        PosXmm = Clamp(PosXmm - dx, -halfExtentMm, halfExtentMm);
+        PosZmm = Clamp(PosZmm - dz, -halfExtentMm, halfExtentMm);
+
+        int nextX = Clamp(PosXmm + dx, -halfExtentMm, halfExtentMm);
+
+        if (!field.IsBlocked(nextX, PosZmm))
+        {
+            PosXmm = nextX;
+        }
+
+        int nextZ = Clamp(PosZmm + dz, -halfExtentMm, halfExtentMm);
+
+        // Z 用**已经采纳后的 X** 去判：斜着贴圆边时能顺着边滑出去
+        if (!field.IsBlocked(PosXmm, nextZ))
+        {
+            PosZmm = nextZ;
         }
     }
 
@@ -422,6 +467,9 @@ public sealed class DungeonBattle
     /// <summary>配置表（掷掉落要用；手工造的世界可以是 null = 不掉落）。</summary>
     private ServerTables? _tables;
 
+    /// <summary>本副本的障碍判定表（没挂表 / 没配障碍时是 BattleField.Empty，行为与改动前一致）。</summary>
+    private BattleField m_field = BattleField.Empty;
+
     private int _nextEntityId = 1;
 
     /// <summary>英雄满速移动（毫米/帧）—— **来自 `Hero` 表**（毫米/秒 ÷ 30Hz）。</summary>
@@ -597,7 +645,16 @@ public sealed class DungeonBattle
 
     /// <summary>把配置表挂上来（`FromDungeon` 会调；挂上之后"怪死"才会掷掉落）。</summary>
     /// <param name="tables">配置表。</param>
-    public void AttachTables(ServerTables tables) => _tables = tables;
+    public void AttachTables(ServerTables tables)
+    {
+        _tables = tables;
+
+        // 障碍只跟副本有关：表挂上来时一次性编译，之后每帧只问 IsBlocked（不重复解析 CSV）
+        m_field = BattleField.From(tables.Obstacles, DungeonId);
+    }
+
+    /// <summary>本副本的障碍判定表（探针与调试用；没挂表时是 BattleField.Empty）。</summary>
+    public BattleField Field => m_field;
 
     /// <summary>加一个单位。</summary>
     /// <param name="configId">配置编号。</param>
@@ -673,7 +730,7 @@ public sealed class DungeonBattle
             return false;
         }
 
-        hero.ApplyMove(moveX, moveY, hero.MoveSpeedMmPerTick, PlayAreaHalfExtentMm);
+        hero.ApplyMove(moveX, moveY, hero.MoveSpeedMmPerTick, PlayAreaHalfExtentMm, m_field);
         return true;
     }
 
@@ -816,7 +873,7 @@ public sealed class DungeonBattle
         int moveX = dx == 0 ? 0 : (dx > 0 ? 1000 : -1000);
         int moveY = dz == 0 ? 0 : (dz > 0 ? 1000 : -1000);
 
-        mover.ApplyMove(moveX, moveY, mover.MoveSpeedMmPerTick, PlayAreaHalfExtentMm);
+        mover.ApplyMove(moveX, moveY, mover.MoveSpeedMmPerTick, PlayAreaHalfExtentMm, m_field);
         return true;
     }
 

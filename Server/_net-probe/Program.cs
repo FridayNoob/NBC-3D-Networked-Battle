@@ -221,6 +221,11 @@ namespace NBC.NetProbe
             ServerTables_GbkCsvIsDecoded();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·三】战场障碍（R056）：客户端写回的表，服务端按副本过滤后挡人");
+            BattleField_BlocksCircleAndBox();
+            BattleField_RealCsvBlocksMovement();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -8911,6 +8916,128 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 Check("§17b GBK 配置表：三只怪都在",
                     tables.MonsterCount == 3,
                     tables.MonsterCount.ToString());
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch
+                {
+                    // 临时目录删不掉不影响结论。
+                }
+            }
+        }
+
+        /// <summary>
+        /// 【十七·三】战场障碍（R056）：圆与矩形的判定、按副本过滤、非法行跳过、空表不生效。
+        /// <para>纯逻辑：直接喂 `ObstacleRow`，不读文件，验证的是 `BattleField` 的几何口径。</para>
+        /// </summary>
+        private static void BattleField_BlocksCircleAndBox()
+        {
+            var rows = new List<ObstacleRow>
+            {
+                new ObstacleRow(1, 1001, 0, 2000, 0, 800, 0, 0, "柱子"),
+                new ObstacleRow(2, 1001, 1, 0, 3000, 0, 1000, 500, "石墙"),
+                new ObstacleRow(3, 1001, 0, -2000, -2000, 0, 0, 0, "非法圆"),
+                new ObstacleRow(4, 2002, 0, 0, 0, 5000, 0, 0, "别的副本")
+            };
+
+            BattleField field = BattleField.From(rows, 1001);
+
+            Check("§17c 障碍：两条有效行生效（非法圆被跳过、别的副本被过滤）",
+                field.Count == 2, "生效 " + field.Count + "，跳过 " + field.Skipped);
+            Check("§17c 障碍：空地不挡", !field.IsBlocked(0, 0), "(0,0)");
+            Check("§17c 障碍：圆心处被挡", field.IsBlocked(2000, 0), "(2000,0)");
+            Check("§17c 障碍：圆边界算挡（含边界）", field.IsBlocked(1200, 0), "(1200,0) 半径 800");
+            Check("§17c 障碍：圆外 1mm 不挡", !field.IsBlocked(1199, 0), "(1199,0)");
+            Check("§17c 障碍：矩形角落算挡", field.IsBlocked(1000, 3500), "(1000,3500)");
+            Check("§17c 障碍：矩形外 1mm 不挡", !field.IsBlocked(1001, 3500), "(1001,3500)");
+            Check("§17c 障碍：别的副本是空表", BattleField.From(rows, 9999).IsEmpty, "dungeon 9999");
+            Check("§17c 障碍：空表什么都不挡",
+                BattleField.Empty.IsEmpty && !BattleField.Empty.IsBlocked(0, 0), "Empty");
+        }
+
+        /// <summary>
+        /// 【十七·三】战场障碍（R056）走真表：写一份临时 CSV → `ServerTables.TryLoad` → 建世界 → 走两步。
+        /// <para>这条验的是"客户端写回的表，服务端真能拿来挡人"，含分轴滑动的行为。</para>
+        /// </summary>
+        private static void BattleField_RealCsvBlocksMovement()
+        {
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§17c 障碍真表：找得到配置表目录（否则假绿）", false, "找不到 Configs\\Design");
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "nbc_field_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                foreach (string file in Directory.GetFiles(sourceDir, "*.csv"))
+                {
+                    File.Copy(file, Path.Combine(tempDir, Path.GetFileName(file)), true);
+                }
+
+                string obstaclePath = Path.Combine(tempDir, "BattleObstacle.csv");
+
+                File.WriteAllText(obstaclePath,
+                    "id,dungeonId,kind,xMm,zMm,radiusMm,halfXMm,halfZMm,name\n" +
+                    "编号,副本编号,形状(0圆1方),中心X（毫米）,中心Z（毫米）,半径（毫米）,半宽（毫米）,半高（毫米）,备注\n" +
+                    "int,int,int,int,int,int,int,int,string\n" +
+                    "key,\"range(1,999999)\",\"range(0,1)\",,,\"range(0,20000)\",\"range(0,20000)\",\"range(0,20000)\",\"len(0,32)\"\n" +
+                    "1,1001,0,400,0,200,0,0,正前方的柱子\n",
+                    new UTF8Encoding(false));
+
+                ServerTables tables;
+                string error;
+
+                if (!ServerTables.TryLoad(tempDir, out tables, out error))
+                {
+                    Check("§17c 障碍真表：能加载", false, error);
+                    return;
+                }
+
+                Check("§17c 障碍真表：读出一条", tables.ObstacleCount == 1, tables.ObstacleCount.ToString());
+
+                var battle = new DungeonBattle("r-field", 1001, 40, 1200, 20);
+                battle.AttachTables(tables);
+
+                Check("§17c 障碍真表：世界编译进了 1 条障碍",
+                    battle.Field.Count == 1, "生效 " + battle.Field.Count + "，跳过 " + battle.Field.Skipped);
+                Check("§17c 障碍真表：(200,0) 在圆边上被挡", battle.Field.IsBlocked(200, 0), "(200,0)");
+
+                BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1,
+                                                     moveSpeedMmPerTick: 40);
+
+                // 往 +X 走 20 帧：圆心 (400,0) 半径 200 ⇒ x ∈ [200,600] 不能进，最远停在 160
+                for (int i = 0; i < 20; i++)
+                {
+                    battle.ApplyMoveToHero(1, 1000, 0);
+                }
+
+                Check("§17c 障碍真表：走完之后障碍还在（不是中途被清空）",
+                    battle.Field.Count == 1 && battle.Field.IsBlocked(200, 0),
+                    "count=" + battle.Field.Count + "，blocked200=" + battle.Field.IsBlocked(200, 0) +
+                    "，heroSpeed=" + hero.MoveSpeedMmPerTick);
+
+                Check("§17c 障碍真表：撞圆停下（160mm，不进 200..600）",
+                    hero.PosXmm == 160, hero.PosXmm + "mm");
+
+                // 斜着往 +X/+Z 走：X 被挡在 160，Z 不受阻 ⇒ 顺着圆边滑出去（z 越过半径后 X 才能继续）
+                for (int i = 0; i < 10; i++)
+                {
+                    battle.ApplyMoveToHero(1, 1000, 1000);
+                }
+
+                Check("§17c 障碍真表：被挡的轴停下、另一轴继续（贴边滑）",
+                    !battle.Field.IsBlocked(hero.PosXmm, hero.PosZmm) &&
+                    hero.PosZmm > 200 && hero.PosXmm >= 160,
+                    "x=" + hero.PosXmm + "，z=" + hero.PosZmm);
             }
             finally
             {

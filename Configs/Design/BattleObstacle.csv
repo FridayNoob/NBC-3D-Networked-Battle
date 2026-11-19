@@ -1,0 +1,4 @@
+id,dungeonId,kind,xMm,zMm,radiusMm,halfXMm,halfZMm,name
+编号,副本编号,形状(0圆1方),中心X（毫米）,中心Z（毫米）,半径（毫米）,半宽（毫米）,半高（毫米）,备注
+int,int,int,int,int,int,int,int,string
+key,"range(1,999999)","range(0,1)",,,"range(0,20000)","range(0,20000)","range(0,20000)","len(0,32)"

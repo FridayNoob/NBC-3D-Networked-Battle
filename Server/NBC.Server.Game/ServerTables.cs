@@ -46,6 +46,61 @@ using System.Text;
 
 namespace NBC.Server.Game;
 
+/// <summary>`BattleObstacle` 表里服务端要用的那几列：一个障碍的形状与位置。</summary>
+public readonly struct ObstacleRow
+{
+    /// <summary>编号（主键，写回时按顺序给）。</summary>
+    public readonly int Id;
+
+    /// <summary>所属副本编号（与 `Dungeon` 表的主键对应）。</summary>
+    public readonly int DungeonId;
+
+    /// <summary>形状：0 = 圆，1 = 轴对齐矩形。</summary>
+    public readonly int Kind;
+
+    /// <summary>中心 X（毫米）。</summary>
+    public readonly int Xmm;
+
+    /// <summary>中心 Z（毫米）。</summary>
+    public readonly int Zmm;
+
+    /// <summary>圆的半径（毫米），矩形行不用。</summary>
+    public readonly int RadiusMm;
+
+    /// <summary>矩形的半宽（毫米），圆行不用。</summary>
+    public readonly int HalfXMm;
+
+    /// <summary>矩形的半高（毫米），圆行不用。</summary>
+    public readonly int HalfZMm;
+
+    /// <summary>备注名（写回时取场景里障碍物体的名字，日志用）。</summary>
+    public readonly string Name;
+
+    /// <summary>记一行。</summary>
+    /// <param name="id">编号。</param>
+    /// <param name="dungeonId">所属副本编号。</param>
+    /// <param name="kind">形状：0 圆 / 1 矩形。</param>
+    /// <param name="xMm">中心 X（毫米）。</param>
+    /// <param name="zMm">中心 Z（毫米）。</param>
+    /// <param name="radiusMm">圆的半径（毫米）。</param>
+    /// <param name="halfXMm">矩形的半宽（毫米）。</param>
+    /// <param name="halfZMm">矩形的半高（毫米）。</param>
+    /// <param name="name">备注名。</param>
+    public ObstacleRow(int id, int dungeonId, int kind, int xMm, int zMm,
+        int radiusMm, int halfXMm, int halfZMm, string name)
+    {
+        Id = id;
+        DungeonId = dungeonId;
+        Kind = kind;
+        Xmm = xMm;
+        Zmm = zMm;
+        RadiusMm = radiusMm;
+        HalfXMm = halfXMm;
+        HalfZMm = halfZMm;
+        Name = name;
+    }
+}
+
 /// <summary>`Monster` 表里服务端要用的那几列。</summary>
 public readonly struct MonsterRow
 {
@@ -243,6 +298,9 @@ public sealed class ServerTables
     /// <summary>按怪分组的掉落行（**按主键排序**，保证掷骰顺序确定）。</summary>
     private readonly Dictionary<int, List<DropRow>> _drops = new();
 
+    /// <summary>战场障碍行（按编号排序，判定顺序固定 ⇒ 结果确定）。</summary>
+    private readonly List<ObstacleRow> _obstacles = new();
+
     /// <summary>表是从哪个目录读的（排查用）。</summary>
     public string SourceDirectory { get; }
 
@@ -257,6 +315,12 @@ public sealed class ServerTables
 
     /// <summary>技能表行数。</summary>
     public int SkillCount => _skills.Count;
+
+    /// <summary>战场障碍表行数（按副本过滤前的总行数）。</summary>
+    public int ObstacleCount => _obstacles.Count;
+
+    /// <summary>战场障碍的全部行（顺序与表里的编号顺序一致，`BattleField` 按副本过滤）。</summary>
+    public IReadOnlyList<ObstacleRow> Obstacles => _obstacles;
 
     /// <summary>掉落表行数。</summary>
     public int DropCount
@@ -441,7 +505,7 @@ public sealed class ServerTables
 
         try
         {
-            foreach (CsvSheet sheet in CsvSheet.LoadMany(directory, "Dungeon", "Monster", "Hero", "Skill", "DropTable"))
+            foreach (CsvSheet sheet in CsvSheet.LoadMany(directory, "Dungeon", "Monster", "Hero", "Skill", "DropTable", "BattleObstacle"))
             {
                 switch (sheet.TableName)
                 {
@@ -475,6 +539,26 @@ public sealed class ServerTables
                             result._monsters[row.Id] = row;
                         }
 
+                        break;
+
+                    case "BattleObstacle":
+                        for (int r = 0; r < sheet.RowCount; r++)
+                        {
+                            var row = new ObstacleRow(
+                                sheet.Int(r, "id"),
+                                sheet.IntOr(r, "dungeonId", 0),
+                                sheet.IntOr(r, "kind", 0),
+                                sheet.IntOr(r, "xMm", 0),
+                                sheet.IntOr(r, "zMm", 0),
+                                sheet.IntOr(r, "radiusMm", 0),
+                                sheet.IntOr(r, "halfXMm", 0),
+                                sheet.IntOr(r, "halfZMm", 0),
+                                sheet.StrOr(r, "name", string.Empty));
+                            result._obstacles.Add(row);
+                        }
+
+                        // 按编号排序：判定顺序固定，回放与探针才可复现
+                        result._obstacles.Sort((left, right) => left.Id.CompareTo(right.Id));
                         break;
 
                     case "Hero":
@@ -766,6 +850,29 @@ internal sealed class CsvSheet
     /// <param name="column">列名。</param>
     /// <returns>值。</returns>
     public string Str(int row, string column) => Raw(row, column);
+
+    /// <summary>取一个字符串字段**或兜底值**（列缺失 / 空单元格都回落，不抛异常）。</summary>
+    /// <param name="row">行下标。</param>
+    /// <param name="column">列名。</param>
+    /// <param name="fallback">兜底值（列缺失或单元格为空时用它）。</param>
+    /// <returns>值。</returns>
+    public string StrOr(int row, string column, string fallback)
+    {
+        if (!_columns.TryGetValue(column, out int index))
+        {
+            WarnMissingColumn(column);
+            return fallback;
+        }
+
+        string[] fields = _rows[row];
+
+        if (index >= fields.Length || string.IsNullOrEmpty(fields[index]))
+        {
+            return fallback;
+        }
+
+        return fields[index];
+    }
 
     /// <summary>取一个逗号分隔的整数数组（空 = 空数组）。</summary>
     /// <param name="row">行下标。</param>
