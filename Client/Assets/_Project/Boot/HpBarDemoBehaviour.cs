@@ -2,7 +2,6 @@
 //   HpBarDemoBehaviour（类）：演示脚手架，装资源层 → 开血条面板 → 按空格扣血
 
 using System;
-using System.IO;
 using System.Threading.Tasks;
 using NBC.Framework.Asset;
 using NBC.Framework.Input;
@@ -215,47 +214,12 @@ namespace NBC.Boot
         // 功能：找出最新的模拟清单目录，交给资源层安装。
         // 入参：无
         // 返回：模拟清单目录（找不到返回空串，让底层自己报错）
-        // 步骤：
-        //   1) 在 <工程根>/Bundles/<平台>/<包名>/ 下遍历子目录
-        //   2) 只认里面有 DefaultPackage*.bytes 的目录（把 OutputCache 之类排除）
-        //   3) 取清单文件最新的那一个
+        // 步骤：转交 AssetPackageRoot.Resolve —— 这段逻辑 AppBootstrap 也要用，抽出去只有一份。
         // 上游：Start
-        // 下游：AssetBootstrapper.InstallAsync
+        // 下游：AssetPackageRoot.Resolve
         private static string ResolveSimulatePackageRoot()
         {
-            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
-            string packageFolder = Path.Combine(projectRoot,
-                "Bundles", "StandaloneWindows64", AssetBootstrapper.DefaultPackageName);
-
-            if (!Directory.Exists(packageFolder))
-            {
-                return string.Empty;
-            }
-
-            string newest = string.Empty;
-            DateTime newestTime = DateTime.MinValue;
-            string[] subDirectories = Directory.GetDirectories(packageFolder);
-
-            for (int i = 0; i < subDirectories.Length; i++)
-            {
-                string[] manifests = Directory.GetFiles(
-                    subDirectories[i], AssetBootstrapper.DefaultPackageName + "*.bytes");
-
-                if (manifests.Length == 0)
-                {
-                    continue;
-                }
-
-                DateTime time = File.GetLastWriteTime(manifests[0]);
-
-                if (time > newestTime)
-                {
-                    newestTime = time;
-                    newest = subDirectories[i];
-                }
-            }
-
-            return newest;
+            return AssetPackageRoot.Resolve();
         }
 
         // 功能：离开副本场景时把 HUD 面板关掉。

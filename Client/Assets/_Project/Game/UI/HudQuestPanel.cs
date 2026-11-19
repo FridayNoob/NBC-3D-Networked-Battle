@@ -40,6 +40,26 @@ namespace NBC.Game.UI
             m_tracker = RequireControl<TMP_Text>(TrackerControl);
         }
 
+        // 功能：显示一句占位提示（World 里没有任务数据时用）。
+        // 入参：text 提示文字（null 当空串）。
+        // 返回：无。
+        // 步骤：1) 清空缓存行 2) 显示整块 3) 直接把提示写进追踪区。
+        // 上游：WorldHudDriver.BindRoutine。
+        public void SetHint(string text)
+        {
+            m_rows.Clear();
+
+            if (m_root != null && !m_root.activeSelf)
+            {
+                m_root.SetActive(true);
+            }
+
+            if (m_tracker != null)
+            {
+                m_tracker.text = text ?? string.Empty;
+            }
+        }
+
         // 功能：按任务本刷新追踪行。
         // 入参：model 任务本（可为 null）。
         // 返回：无。
