@@ -62,11 +62,13 @@ namespace NBC.Game.Player
         // 倒计时结束后的分流是否已经执行过
         private bool m_resolved;
 
-        // 功能：缓存引用、读配置、确保死亡黑幕存在。
+        // 功能：缓存引用、读配置。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 找大脑/移动/跳跃电机 2) 收渲染器列表 3) 读 Level 表倒计时 4) 建黑幕单例。
-        // 上游/下游：Unity 生命周期；下游 LevelConfig.Get、DeathScreenOverlay.Ensure。
+        // 步骤：1) 找大脑/移动/跳跃电机 2) 收渲染器列表 3) 读 Level 表倒计时。
+        // 上游/下游：Unity 生命周期；下游 LevelConfig.Get。
+        // 注意：黑幕不在这里预热 —— Awake 时机在 Login 场景也可能触发，那时资源层还没装好，
+        //       让 UIManager 去加载面板会报「还没有装上底层加载器」。改到 Start 预热（见下）。
         private void Awake()
         {
             m_brain = GetComponent<PlayerBrain>();
@@ -74,6 +76,15 @@ namespace NBC.Game.Player
             m_jumpMotor = GetComponent<PlayerJumpMotor>();
             m_renderers = GetComponentsInChildren<Renderer>(true);
             m_countdownSeconds = ResolveCountdownSeconds();
+        }
+
+        // 功能：资源层就位后预热黑幕面板（真死的时候不闪）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：调一次 Ensure；资源层没就位时 Ensure 自己会跳过，等死亡流程再请求。
+        // 上游/下游：Unity 生命周期；下游 DeathScreenOverlay.Ensure。
+        private void Start()
+        {
             DeathScreenOverlay.Ensure();
         }
 

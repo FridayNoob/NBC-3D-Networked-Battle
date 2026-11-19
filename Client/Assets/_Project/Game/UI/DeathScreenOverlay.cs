@@ -1,6 +1,7 @@
 // 这个文件里有：
 //   DeathScreenOverlay（类）：死亡时的黑幕面板（标题 + 倒计时 + 状态行），视觉来自预制体。
 
+using NBC.Framework.Asset;
 using NBC.Framework.UI;
 using TMPro;
 using UnityEngine;
@@ -70,7 +71,7 @@ namespace NBC.Game.UI
                 s_instance.m_isStub = true;
             }
 
-            if (!s_panelRequested)
+            if (!s_panelRequested && CanLoadPanels())
             {
                 s_panelRequested = true;
                 UIManager ui = UIManager.Instance;
@@ -82,6 +83,17 @@ namespace NBC.Game.UI
             }
 
             return s_instance;
+        }
+
+        // 功能：现在能不能让 UIManager 去加载面板（要底层资源加载器已就位）。
+        // 入参：无。
+        // 返回：true = 可以请求加载；false = 资源层还没装好，等下一次 Ensure 再试。
+        // 步骤：1) 取 AssetManager 单例 2) 没装上加载器就返回 false。
+        // 上游：Ensure。
+        private static bool CanLoadPanels()
+        {
+            AssetManager assets = AssetManager.Instance;
+            return assets != null && assets.IsInitialized;
         }
 
         // 功能：真面板加载好之后的回调：接管状态、把占位期记下的内容补上。
