@@ -30,6 +30,9 @@ namespace NBC.Game.UI
         // 追踪区最多显示几条任务
         private const int MaxQuestRows = HudQuestPanel.MaxRows;
 
+        // 是否已经为这三张表发起过预加载（只发起一次，别每帧重试）
+        private bool m_configsRequested;
+
         private PresentationFeed m_feed;
         private NetSession m_session;
         private HudTargetPanel m_targetPanel;
@@ -49,9 +52,7 @@ namespace NBC.Game.UI
         {
             m_feed = feed;
             m_session = session;
-            m_questConfig = ConfigMgr.Instance.Get<QuestConfig>();
-            m_conditionConfig = ConfigMgr.Instance.Get<QuestConditionConfig>();
-            m_monsterConfig = ConfigMgr.Instance.Get<MonsterConfig>();
+            ResolveConfigs(true);
 
             UIManager ui = UIManager.Instance;
 
@@ -80,6 +81,40 @@ namespace NBC.Game.UI
 
             UpdateTargets();
             UpdateQuest();
+        }
+
+        // 功能：取 HUD 要用的三张配置表；缺表时顺手发起预加载，没好就先不显示。
+        // 入参：requestIfMissing = true 表示缺表时允许发起 Preload。
+        // 返回：三张表都拿到返回 true；否则 false（调用方要能容忍空表）。
+        // 步骤：1) TryGet 三张表 2) 齐了就返回 3) 缺表且没请求过就各发一次 Preload，失败只告警。
+        // 上游：Bind、UpdateQuest；下游：ConfigMgr.TryGet、ConfigMgr.Preload。
+        // 注意：这里不能用 ConfigMgr.Get —— 它没加载就抛异常，而 HUD 只负责显示，缺表应该安静跳过。
+        private bool ResolveConfigs(bool requestIfMissing)
+        {
+            ConfigMgr mgr = ConfigMgr.Instance;
+
+            if (mgr == null)
+            {
+                return false;
+            }
+
+            mgr.TryGet(out m_questConfig);
+            mgr.TryGet(out m_conditionConfig);
+            mgr.TryGet(out m_monsterConfig);
+
+            bool ready = m_questConfig != null && m_conditionConfig != null && m_monsterConfig != null;
+
+            if (ready || !requestIfMissing || m_configsRequested)
+            {
+                return ready;
+            }
+
+            m_configsRequested = true;
+            mgr.Preload<QuestConfig>(null, reason => Debug.LogWarning("[HUD] 任务表加载失败：" + reason));
+            mgr.Preload<QuestConditionConfig>(null, reason => Debug.LogWarning("[HUD] 任务条件表加载失败：" + reason));
+            mgr.Preload<MonsterConfig>(null, reason => Debug.LogWarning("[HUD] 怪物表加载失败：" + reason));
+
+            return false;
         }
 
         // 功能：收起 HUD（回 World 时调）。
@@ -212,7 +247,7 @@ namespace NBC.Game.UI
         // 功能：把「已接取 / 可交付」的任务拼成最多三行。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 取任务状态全量 2) 逐条过滤阶段并查表拼标题与进度 3) 交给面板。
+        // 步骤：1) 先确保配置表就位（缺就发起预加载，没好这帧先空着）2) 取任务状态全量 3) 逐条过滤阶段并查表拼标题与进度 4) 交给面板。
         // 上游：Update / Bind。
         private void UpdateQuest()
         {
@@ -221,6 +256,7 @@ namespace NBC.Game.UI
                 return;
             }
 
+            ResolveConfigs(true);
             m_rows.Clear();
             QuestStateSync states = m_session.LastQuestStates;
 

@@ -8,6 +8,7 @@ using NBC.Framework.Asset;
 using NBC.Framework.Input;
 using NBC.Framework.UI;
 using NBC.Game.Bootstrap;
+using NBC.Game.Config;
 using NBC.Game.UI;
 using UnityEngine;
 
@@ -98,6 +99,8 @@ namespace NBC.Boot
                 UIManager.Instance.SetPanelLocationPrefix(string.Empty);
             }
 
+            EnsureConfigSource();
+
             UIManager.Instance.ShowPanel(
                 "HpBarPanel",
                 UILayer.Bot,
@@ -138,6 +141,38 @@ namespace NBC.Boot
             driver.MonsterPrefab = m_monsterPrefab;
             m_driver = driver;
             Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
+        }
+
+        // 功能：接上配置表来源，并把全部配置表预加载进内存（HUD、任务、掉落都要查表）。
+        // 入参：无。
+        // 返回：无（加载是异步的，失败只打一条错误日志）。
+        // 步骤：1) 没设来源就设成走资源层的 AssetConfigSource 2) 一张都没加载时调 GameTables.PreloadAll。
+        // 上游：Start（资源层就绪之后）。
+        // 下游：ConfigMgr.SetSource、GameTables.PreloadAll。
+        // 注意：新流程（Login → World → Battle）里没人调过 SetSource / PreloadAll，
+        //       而 RuntimeHudDriver 查任务表会用 TryGet 兜底、真缺表时它自己会再发一次 Preload。
+        private void EnsureConfigSource()
+        {
+            ConfigMgr mgr = ConfigMgr.Instance;
+
+            if (mgr == null)
+            {
+                return;
+            }
+
+            if (mgr.Source == null)
+            {
+                mgr.SetSource(new AssetConfigSource());
+            }
+
+            if (mgr.LoadedTableCount > 0)
+            {
+                return;
+            }
+
+            GameTables.PreloadAll(
+                null,
+                reason => Debug.LogError("[HpBarDemo] 预加载配置表失败：" + reason));
         }
 
         // 功能：按空格扣血并刷新血条（演示用）。
