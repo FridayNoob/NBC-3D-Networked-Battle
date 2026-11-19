@@ -489,5 +489,15 @@ message ClientMessage
         QuestActionRequest quest_action = 6;   // M4-S3 §二十六 追加（兼容）
         LockstepInput lockstep_input = 7;      // M4-S4 S4-c 追加（兼容）
         RestartDungeonRequest restart_dungeon = 8;   // R042 返修 追加（兼容：只是多一个 oneof 分支）
+        SkillCast skill_cast = 9;   // R043b 追加（兼容：只是多一个 oneof 分支）
     }
+}
+
+/// 玩家要放一个技能（服务端权威判定：射程/冷却/目标都重新算）。
+message SkillCast
+{
+    int64 player_id = 1;         // 施法者会话绑定的玩家编号
+    int32 skill_id = 2;          // 技能编号（Skill 表主键）
+    int32 target_entity_id = 3;  // 目标实例编号（0 = 没指定，服务端会拒）
+    int32 client_tick = 4;       // 客户端认为的逻辑帧（只记日志，不参与判定）
 }

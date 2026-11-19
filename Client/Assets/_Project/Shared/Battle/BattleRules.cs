@@ -22,20 +22,30 @@ namespace NBC.Shared.Battle
         /// <summary>圆形射程判定：比较距离平方与射程平方，含边界、全程整数、不开方，两端必得同一结果。</summary>
         public static bool WithinBasicAttackRange(int axMm, int azMm, int bxMm, int bzMm)
         {
-            // 功能：判断甲乙两点在毫米坐标下是否落在普攻射程圆内。
+            // 功能：判断甲乙两点是否落在**普攻射程**圆内（等价于 WithinRange 传 BasicAttackRangeMm）。
             // 入参：axMm / azMm 甲的 X / Z（毫米）；bxMm / bzMm 乙的 X / Z（毫米）。
-            // 返回：距离平方小于等于射程平方时为 true，边界算在射程内。
+            // 返回：距离平方小于等于射程平方时为 true。
+            // 步骤：直接把普攻射程交给通用的 WithinRange，避免出现第二份平方比较。
+            // 上游：服务端 DungeonBattle 的普攻判定、客户端调试窗的自动追击
+            // 下游：WithinRange
+            return WithinRange(axMm, azMm, bxMm, bzMm, BasicAttackRangeMm);
+        }
+
+        /// <summary>任意半径的圆形判定（技能射程用；与普攻同一套平方比较）。</summary>
+        public static bool WithinRange(int axMm, int azMm, int bxMm, int bzMm, int rangeMm)
+        {
+            // 功能：判断两点距离是否小于等于给定半径，含边界。
+            // 入参：axMm / azMm 甲的 X / Z（毫米）；bxMm / bzMm 乙的 X / Z（毫米）；rangeMm 半径（毫米，负数按 0 处理）。
+            // 返回：圆内（含边界）为 true。
             // 步骤：
-            //   1) 坐标差先各转 long，毫米坐标放大后相减或平方很容易越过 int 上限
-            //   2) 不比开方后的距离，直接比平方和，省掉取舍，两端结果必然一致
-            //   3) 射程也取 long 再平方，与平方和使用同一类型比较
-            // 注意：判的是圆不是正方形，别退回切比雪夫「max(|dx|,|dz|)」，对角方向会多出最多约 1.41 倍，表现为明明还远却打得到。
-            // 注意：要与帧同步链保持同一个圆，WorldStep 用的是 SqrMagnitude <= range * range。
-            // 上游：服务端 DungeonBattle 的攻击判定、客户端调试窗的自动追击
+            //   1) 坐标差转 long，避免平方溢出
+            //   2) 半径也转 long，比较平方和
+            // 注意：判圆不判方形；别用切比雪夫距离代替。
+            // 上游：WithinBasicAttackRange、服务端 SkillSystem
             // 下游：无
             long dx = (long)axMm - bxMm;
             long dz = (long)azMm - bzMm;
-            long range = BasicAttackRangeMm;
+            long range = rangeMm < 0 ? 0 : rangeMm;
 
             return (dx * dx) + (dz * dz) <= range * range;
         }

@@ -93,6 +93,8 @@ namespace NBC.Game.Config
                 row.damage = ParseInt(Cell(cells, header, "damage"));
                 row.damageType = (EDamageType)System.Enum.Parse(typeof(EDamageType), Cell(cells, header, "damageType"), true);
                 row.hitFrames = ParseIntArray(Cell(cells, header, "hitFrames"));
+                row.cooldownMs = ParseInt(Cell(cells, header, "cooldownMs"));
+                row.rangeMm = ParseInt(Cell(cells, header, "rangeMm"));
 
                 rows.Add(row);
             }

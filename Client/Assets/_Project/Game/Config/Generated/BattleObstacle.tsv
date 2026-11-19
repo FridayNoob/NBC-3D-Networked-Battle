@@ -1,1 +1,3 @@
 id	dungeonId	kind	xMm	zMm	radiusMm	halfXMm	halfZMm	name
+1	1001	0	17958	-8925	800	0	0	1
+2	1001	1	17958	-15155	0	1000	500	2

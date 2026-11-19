@@ -93,10 +93,10 @@ namespace NBC.Server.Game.Ai.Bt
             return aiKind == BossAiKind ? BuildBoss() : BuildWolf();
         }
 
-        // 功能：普通怪：死了停 → 能打就打（1 段）→ 有目标就追 → 巡逻。
+        // 功能：普通怪：死了停 → 能打就先放技能、放不了就普攻（1 段）→ 有目标就追 → 巡逻。
         // 入参：无
         // 返回：根节点
-        // 步骤：逐层 AddChild
+        // 步骤：逐层 AddChild；技能与普攻放在同一个 Selector 里，技能成了就不再普攻
         // 上游：Build
         // 下游：条件/动作节点
         private static BtNode BuildWolf()
@@ -107,8 +107,16 @@ namespace NBC.Server.Game.Ai.Bt
             BtSequence attack = new BtSequence();
             attack.AddChild(new HasTargetCondition());
             attack.AddChild(Configured(new InAttackRangeCondition(), new BtParams()));
-            attack.AddChild(Configured(new AttackReadyCondition(), new BtParams().Set("skillId", "0")));
-            attack.AddChild(Configured(new BasicAttackAction(), new BtParams().Set("hits", "1").Set("intervalTicks", "5")));
+
+            BtSelector strike = new BtSelector();
+            strike.AddChild(Configured(new CastSkillAction(), new BtParams()));
+
+            BtSequence basic = new BtSequence();
+            basic.AddChild(Configured(new AttackReadyCondition(), new BtParams().Set("skillId", "0")));
+            basic.AddChild(Configured(new BasicAttackAction(), new BtParams().Set("hits", "1").Set("intervalTicks", "5")));
+            strike.AddChild(basic);
+
+            attack.AddChild(strike);
             root.AddChild(attack);
 
             BtSequence chase = new BtSequence();
@@ -120,10 +128,10 @@ namespace NBC.Server.Game.Ai.Bt
             return root;
         }
 
-        // 功能：BOSS：死了停 → 能打就打（3 段）→ 有目标就追 → 离家远就回位 → 站桩。
+        // 功能：BOSS：死了停 → 能打就先放技能、放不了就普攻（3 段）→ 有目标就追 → 离家远就回位 → 站桩。
         // 入参：无
         // 返回：根节点
-        // 步骤：逐层 AddChild
+        // 步骤：逐层 AddChild；技能优先于普攻
         // 上游：Build
         // 下游：条件/动作节点
         private static BtNode BuildBoss()
@@ -134,8 +142,16 @@ namespace NBC.Server.Game.Ai.Bt
             BtSequence attack = new BtSequence();
             attack.AddChild(new HasTargetCondition());
             attack.AddChild(Configured(new InAttackRangeCondition(), new BtParams()));
-            attack.AddChild(Configured(new AttackReadyCondition(), new BtParams().Set("skillId", "0")));
-            attack.AddChild(Configured(new BasicAttackAction(), new BtParams().Set("hits", "3").Set("intervalTicks", "5")));
+
+            BtSelector strike = new BtSelector();
+            strike.AddChild(Configured(new CastSkillAction(), new BtParams()));
+
+            BtSequence basic = new BtSequence();
+            basic.AddChild(Configured(new AttackReadyCondition(), new BtParams().Set("skillId", "0")));
+            basic.AddChild(Configured(new BasicAttackAction(), new BtParams().Set("hits", "3").Set("intervalTicks", "5")));
+            strike.AddChild(basic);
+
+            attack.AddChild(strike);
             root.AddChild(attack);
 
             BtSequence chase = new BtSequence();

@@ -769,6 +769,27 @@ namespace NBC.Game.Net
             Send(new ClientMessage { RestartDungeon = new RestartDungeonRequest() });
         }
 
+        // 功能：请求放一个技能（服务端会重新判射程/冷却/目标，客户端说了不算）。
+        // 入参：skillId 技能编号（`Skill` 表主键）；targetEntityId 目标实例编号（0 = 没选目标）。
+        // 返回：无；结果由服务端的伤害事件与日志体现。
+        // 步骤：
+        //   1) 组装 SkillCast（player_id 用本会话的玩家编号，client_tick 只作日志对账）
+        // 上游：RuntimeSkillDriver（R043a）、本次 R043b 的临时按键转发
+        // 下游：Send
+        public void SendSkillCast(int skillId, int targetEntityId)
+        {
+            Send(new ClientMessage
+            {
+                SkillCast = new SkillCast
+                {
+                    PlayerId = PlayerId,
+                    SkillId = skillId,
+                    TargetEntityId = targetEntityId,
+                    ClientTick = NextInputSeq(),
+                },
+            });
+        }
+
         // 功能：把一条输入命令发出去，只发意图，走多远、打不打得到由服务端决定。
         // 入参：command 输入命令（轴沿用协议量化，不需要换算）；
         //   targetEntityId 当前目标（0 = 没有，服务端会校验）。

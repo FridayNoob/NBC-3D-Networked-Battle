@@ -156,11 +156,14 @@ namespace NBC.Tests.EditMode
                 new Config_Skill { id = 9002, name = "测试冰", damage = 20, damageType = EDamageType.Ice, hitFrames = new[] { 6 } },
             };
 
-            string header = "id,name,damage,damageType,hitFrames\n编号,名称,伤害（点）,伤害类型,命中帧\nint,string,int,enum:EDamageType,int[]\nkey,\"len(1,16)\",\"range(1,99999)\",,\n";
+            string header = "id,name,damage,damageType,hitFrames,cooldownMs,rangeMm\n" +
+                            "编号,名称,伤害（点）,伤害类型,命中帧,冷却（毫秒）,射程（毫米）\n" +
+                            "int,string,int,enum:EDamageType,int[],int,int\n" +
+                            "key,\"len(1,16)\",\"range(1,99999)\",,,\"range(0,60000)\",\"range(100,20000)\"\n";
             string text = ConfigTableBridge.BuildCsvText(entry, rows, header);
 
-            Assert.AreEqual("9001,测试火,10,Fire,\"3,5\"", text.Split('\n')[4]);
-            Assert.AreEqual("9002,测试冰,20,Ice,6", text.Split('\n')[5]);
+            Assert.AreEqual("9001,测试火,10,Fire,\"3,5\",0,0", text.Split('\n')[4]);
+            Assert.AreEqual("9002,测试冰,20,Ice,6,0,0", text.Split('\n')[5]);
         }
 
         // 功能：主键重复与非法范围要被校验拦下。

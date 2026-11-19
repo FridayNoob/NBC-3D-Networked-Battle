@@ -476,6 +476,9 @@ public sealed class DungeonBattle
     /// <summary>本副本的障碍判定表（没挂表 / 没配障碍时是 BattleField.Empty，行为与改动前一致）。</summary>
     private BattleField m_field = BattleField.Empty;
 
+    /// <summary>技能系统（挂表时创建；没挂表时为 null，TryCastSkill 会直接拒）。</summary>
+    private SkillSystem? m_skills;
+
     private int _nextEntityId = 1;
 
     /// <summary>英雄满速移动（毫米/帧）—— **来自 `Hero` 表**（毫米/秒 ÷ 30Hz）。</summary>
@@ -657,7 +660,39 @@ public sealed class DungeonBattle
 
         // 障碍只跟副本有关：表挂上来时一次性编译，之后每帧只问 IsBlocked（不重复解析 CSV）
         m_field = BattleField.From(tables.Obstacles, DungeonId);
+
+        // 技能系统也在这里建：它的所有规则都依赖表（技能行、单位的技能列表）
+        m_skills = new SkillSystem(tables);
     }
+
+    // 技能系统（没挂表时为 null；探针与调试用）
+    public SkillSystem? Skills => m_skills;
+
+    // 功能：让某个单位对目标放一个技能（服务端权威入口）。
+    // 入参：caster 施法者；skillId 技能编号；targetId 目标实例编号；reason 被拒原因
+    // 返回：入队成功返回 true
+    // 步骤：转交 SkillSystem.TryCast；没挂表就直接拒
+    // 上游：RoomBattleService.HandleSkillCast、CastSkillAction
+    // 下游：SkillSystem.TryCast
+    public bool TryCastSkill(BattleEntity caster, int skillId, int targetId, out string reason)
+    {
+        if (m_skills == null)
+        {
+            reason = "配置表还没挂上（AttachTables 没调）";
+            return false;
+        }
+
+        return m_skills.TryCast(this, caster, skillId, targetId, out reason);
+    }
+
+    // 功能：查某个单位的某个技能还剩多少冷却帧。
+    // 入参：casterId 施法者实例编号；skillId 技能编号
+    // 返回：剩余逻辑帧（0 = 可用；没挂表也返回 0）
+    // 步骤：转交 SkillSystem.CooldownTicksLeft
+    // 上游：探针、R043a 技能栏
+    // 下游：SkillSystem.CooldownTicksLeft
+    public int SkillCooldownTicksLeft(int casterId, int skillId)
+        => m_skills == null ? 0 : m_skills.CooldownTicksLeft(casterId, skillId);
 
     /// <summary>本副本的障碍判定表（探针与调试用；没挂表时是 BattleField.Empty）。</summary>
     public BattleField Field => m_field;
@@ -807,7 +842,13 @@ public sealed class DungeonBattle
             return false;
         }
 
-        // 诊断：怪物打中英雄时打印真实距离（排查"红圈外也挨打"：距离 > 射程就说明两边位置不同步）         if (attacker.Kind == 1 && target.Kind == 0)         {             int hitDistanceMm = BattleRules.DistanceMmRounded(attacker.PosXmm, attacker.PosZmm, target.PosXmm, target.PosZmm);             Console.WriteLine("[伤害诊断] 怪#" + attacker.Id + " → 英雄#" + target.Id                 + " 距离=" + hitDistanceMm + "mm（射程 " + BasicAttackRangeMm + "mm）");         } 
+        // 诊断：怪物打中英雄时打印真实距离（排查"红圈外也挨打"：距离 > 射程就说明两边位置不同步）
+        if (attacker.Kind == 1 && target.Kind == 0)
+        {
+            int hitDistanceMm = BattleRules.DistanceMmRounded(attacker.PosXmm, attacker.PosZmm, target.PosXmm, target.PosZmm);
+            Console.WriteLine("[伤害诊断] 怪#" + attacker.Id + " → 英雄#" + target.Id
+                + " 距离=" + hitDistanceMm + "mm（射程 " + BasicAttackRangeMm + "mm）");
+        }
         ApplyDamage(targetId, attacker.AttackDamage, attacker.Id);
         attacker.StartAttackCooldown(BasicAttackCooldownTicks);
         return true;
@@ -957,6 +998,10 @@ public sealed class DungeonBattle
         {
             _entities[i].Step();
         }
+
+        // 技能命中按帧结算：放在实体移动之后、AI 决策之前，
+        // 这样"这一帧被技能打死"的怪在本帧就不会再出手（AI 会看到最新血量）
+        m_skills?.Tick(this);
 
         // AI 在"世界推进一步之后"想：它看到的是**本帧的位置**，决策也在本帧生效
         for (int i = 0; i < _brains.Count; i++)
@@ -1393,10 +1438,10 @@ public sealed class DungeonBattle
                              attackDamage: monster.Value.Attack,
                              moveSpeedMmPerTick: MonsterMoveMmPerTick);
 
-        // 普通怪也走行为树（wolf 树 + Melee 参数）
+        // 普通怪也走行为树（wolf 树 + Melee 参数 + 表里的技能列表）
         battle._brains.Add(new BtBrain(normal, BtTreeBuilder.WolfAiKind,
             new BtProfile(monster.Value.AggroRangeMm, monster.Value.MoveSpeedMmPerTick,
-                monster.Value.LeashRadiusMm, monster.Value.AttackRangeMm, true)));
+                monster.Value.LeashRadiusMm, monster.Value.AttackRangeMm, true, monster.Value.SkillIds)));
         }
 
         // BOSS：摆在对面（x = -radius），把"血量厚、攻击高"从表里带出来
@@ -1413,10 +1458,10 @@ public sealed class DungeonBattle
                                                   attackDamage: boss.Value.Attack,
                                                   moveSpeedMmPerTick: BossMoveMmPerTick);
 
-        // BOSS 由状态机驱动（见 `BossBrain`：Idle / Chase / Attack）
+        // BOSS 由行为树驱动（boss 树 + 表里的技能列表，技能优先于普攻）
         battle._brains.Add(new BtBrain(bossEntity, BtTreeBuilder.BossAiKind,
             new BtProfile(boss.Value.AggroRangeMm, boss.Value.MoveSpeedMmPerTick,
-                boss.Value.LeashRadiusMm, boss.Value.AttackRangeMm, false)));
+                boss.Value.LeashRadiusMm, boss.Value.AttackRangeMm, false, boss.Value.SkillIds)));
 
         return battle;
     }

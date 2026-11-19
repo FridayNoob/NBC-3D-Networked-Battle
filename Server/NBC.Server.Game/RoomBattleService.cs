@@ -220,6 +220,12 @@ public sealed class RoomBattleService
     /// <summary>累计有几次普攻没打出去（射程外/冷却中/目标没了 —— 只记日志）。</summary>
     public long AttacksRefused { get; private set; }
 
+    /// <summary>累计成功放出去多少个技能（R043b；判定通过 = 入队等待命中帧）。</summary>
+    public long SkillCastsLanded { get; private set; }
+
+    /// <summary>累计有几次技能没放出去（冷却/射程/目标/没配技能 —— 只记日志）。</summary>
+    public long SkillCastsRefused { get; private set; }
+
     /// <summary>累计广播出去多少条掉落事件（S7）。</summary>
     public long DropsSent { get; private set; }
 
@@ -263,6 +269,7 @@ public sealed class RoomBattleService
         }
 
         router.Register(ClientMessage.PayloadOneofCase.Input, HandleInput);
+        router.Register(ClientMessage.PayloadOneofCase.SkillCast, HandleSkillCast);
     }
 
     /// <summary>取某个房间的战斗世界（没有就返回 null）。</summary>
@@ -567,6 +574,61 @@ public sealed class RoomBattleService
             AttacksRefused++;
             Note?.Invoke($"玩家 {session.PlayerId} 的普攻没打出去：{reason}");
         }
+    }
+
+    private DispatchResult HandleSkillCast(ClientSession session, ClientMessage message)
+    {
+        SkillCast cast = message.SkillCast;
+
+        if (cast == null)
+        {
+            return DispatchResult.KickOut("SkillCast 消息里没有 SkillCast 字段（协议违规）");
+        }
+
+        // 权威检查：只能让自己名下的英雄放技能（同普攻那条规矩）
+        if (cast.PlayerId != session.PlayerId)
+        {
+            SkillCastsRefused++;
+            Note?.Invoke($"会话 {session.SessionId} 发来的技能写着 player_id={cast.PlayerId}，" +
+                         $"但它是玩家 {session.PlayerId} —— 已忽略");
+            return DispatchResult.Handled;
+        }
+
+        Room? room = _registry.FindBySession(session);
+
+        if (room == null)
+        {
+            return DispatchResult.Handled;
+        }
+
+        DungeonBattle? battle = EnsureBattle(room);
+
+        if (battle == null)
+        {
+            return DispatchResult.Handled;
+        }
+
+        BattleEntity? caster = battle.FindHeroOfPlayer(session.PlayerId);
+
+        if (caster == null)
+        {
+            SkillCastsRefused++;
+            return DispatchResult.Handled;
+        }
+
+        if (battle.TryCastSkill(caster, cast.SkillId, cast.TargetEntityId, out string reason))
+        {
+            SkillCastsLanded++;
+            Note?.Invoke($"玩家 {session.PlayerId} 释放技能 {cast.SkillId} → 单位 {cast.TargetEntityId}" +
+                         $"（客户端第 {cast.ClientTick} 帧发起）");
+        }
+        else
+        {
+            SkillCastsRefused++;
+            Note?.Invoke($"玩家 {session.PlayerId} 的技能 {cast.SkillId} 没放出去：{reason}");
+        }
+
+        return DispatchResult.Handled;
     }
 
     /// <summary>把客户端给的轴钳到 -1000..1000（**不信任客户端**）。</summary>

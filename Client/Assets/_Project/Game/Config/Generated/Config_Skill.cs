@@ -15,5 +15,7 @@ namespace NBC.Game.Config
         public int damage;  // 伤害（点）（int）
         public EDamageType damageType;  // 伤害类型（enum:EDamageType）
         public int[] hitFrames;  // 命中帧（int[]）
+        public int cooldownMs;  // 冷却（毫秒）（int）
+        public int rangeMm;  // 射程（毫米）（int）
     }
 }

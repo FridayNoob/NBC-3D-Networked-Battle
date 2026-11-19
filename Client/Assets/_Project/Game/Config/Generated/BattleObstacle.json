@@ -2,5 +2,7 @@
   "table": "BattleObstacle",
   "fields": ["id", "dungeonId", "kind", "xMm", "zMm", "radiusMm", "halfXMm", "halfZMm", "name"],
   "rows": [
+    { "id": 1, "dungeonId": 1001, "kind": 0, "xMm": 17958, "zMm": -8925, "radiusMm": 800, "halfXMm": 0, "halfZMm": 0, "name": "1" },
+    { "id": 2, "dungeonId": 1001, "kind": 1, "xMm": 17958, "zMm": -15155, "radiusMm": 0, "halfXMm": 1000, "halfZMm": 500, "name": "2" }
   ]
 }

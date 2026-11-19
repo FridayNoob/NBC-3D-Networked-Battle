@@ -226,6 +226,10 @@ namespace NBC.NetProbe
             BattleField_RealCsvBlocksMovement();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·四】技能结算（R043b）：冷却列 / 射程列 / 命中帧 / 五道关");
+            Skills_CastAndCooldown();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -2660,16 +2664,34 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
                 // ⚠️ 攻击力现在是**配置值**（负责人 2026-11-17 手动设成 0）：
                 //   0 的时候不能拿它做整除（会 DivideByZero），此时判据退化成「不掉血」，其余保持原样。
+                // ⚠️ R043b（2026-11-19）起，怪还会放技能 —— attack=0 只代表**普攻**不打伤害，
+                //   技能伤害（500+80）照旧会掉，所以这一节改成按技能表算出期望值。
                 if (bossAttack <= 0)
                 {
-                    Check("BOSS AI：攻击力配置为 0 ⇒ 走进射程也不掉血（配置如此，不是漏打）",
-                        reached && lost == 0,
-                        $"走到 {distance}mm（射程 {DungeonBattle.BasicAttackRangeMm}mm）后 hp {hpBefore} → {hpAfter}" +
-                        $"（掉了 {lost}；Monster.attack = {bossAttack}）");
+                    int skillDamage = 0;
+                    MonsterRow? bossRow = h.Tables.FindMonster(boss.ConfigId);
 
-                    Check("BOSS AI：攻击力配置为 0 ⇒ 冷却判据无从验证，只确认没有伤害",
-                        lost == 0,
-                        $"1 秒掉了 {lost}（攻击 0 时这条只做负向断言）");
+                    if (bossRow != null)
+                    {
+                        foreach (int skillId in bossRow.Value.SkillIds)
+                        {
+                            SkillRow? skill = h.Tables.FindSkill(skillId);
+
+                            if (skill != null)
+                            {
+                                skillDamage += skill.Value.Damage;
+                            }
+                        }
+                    }
+
+                    Check("BOSS AI：攻击力 0、只放技能 ⇒ 掉的血正好是技能伤害之和（R043b）",
+                        reached && lost == skillDamage && skillDamage > 0,
+                        $"走到 {distance}mm 后 hp {hpBefore} → {hpAfter}（掉了 {lost}；" +
+                        $"技能伤害之和 {skillDamage}，Monster.attack = {bossAttack}）");
+
+                    Check("BOSS AI：技能进冷却后这一秒内不再掉第二次",
+                        lost == skillDamage,
+                        $"1 秒掉了 {lost}（技能一圈应当是 {skillDamage}）");
                 }
                 else
                 {
@@ -9050,6 +9072,96 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                     // 临时目录删不掉不影响结论。
                 }
             }
+        }
+
+        /// <summary>
+        /// 【十七·四】技能结算（R043b）：走真表 —— 冷却列、射程列、命中帧、五道关、命中才扣血。
+        /// <para>这条验的是"按 Q 打出去、服务端按帧扣血、同帧连点被冷却挡住"。</para>
+        /// </summary>
+        private static void Skills_CastAndCooldown()
+        {
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§17d 技能：找得到配置表目录（否则假绿）", false, "找不到 Configs\\Design");
+                return;
+            }
+
+            ServerTables tables;
+            string error;
+
+            if (!ServerTables.TryLoad(sourceDir, out tables, out error))
+            {
+                Check("§17d 技能：能加载真表", false, error);
+                return;
+            }
+
+            SkillRow? fireball = tables.FindSkill(2001);
+
+            Check("§17d 技能：火球解析出冷却帧与射程",
+                fireball != null && fireball.Value.CooldownTicks == 152 && fireball.Value.RangeMm == 6000 &&
+                fireball.Value.HitFrame == 3,
+                fireball == null ? "找不到 2001" :
+                    $"cooldownTicks={fireball.Value.CooldownTicks}，range={fireball.Value.RangeMm}，hitFrame={fireball.Value.HitFrame}");
+
+            MonsterRow? boss = tables.FindMonster(6003);
+
+            Check("§17d 技能：狼王读到两个技能", boss != null && boss.Value.SkillIds.Length == 2,
+                boss == null ? "找不到 6003" : string.Join(",", boss.Value.SkillIds));
+
+            var battle = new DungeonBattle("r-skill", 1001, 40, 1200, 20);
+            battle.AttachTables(tables);
+
+            BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1, moveSpeedMmPerTick: 40);
+            BattleEntity far = battle.AddEntity(6002, 1, 200, 7000, 0);
+            BattleEntity wolf = battle.AddEntity(6001, 1, 300, 1000, 0);
+            BattleEntity wolf2 = battle.AddEntity(6001, 1, 300, 1000, 0);
+
+            string reason;
+
+            Check("§17d 技能：超射程被拒（7000 > 6000）",
+                !battle.TryCastSkill(hero, 2001, far.Id, out reason) && reason.Contains("射程"),
+                reason);
+
+            Check("§17d 技能：范围内的目标能放出去",
+                battle.TryCastSkill(hero, 2001, wolf.Id, out reason), reason);
+
+            Check("§17d 技能：放出去的瞬间还没掉血（命中帧还没到）", wolf.Hp == 300, "hp=" + wolf.Hp);
+
+            battle.Step();
+
+            Check("§17d 技能：第 1 帧还没掉血", wolf.Hp == 300, "hp=" + wolf.Hp);
+
+            battle.Step();
+            battle.Step();
+
+            Check("§17d 技能：第 3 帧扣 500 血（300 血直接见底）", wolf.Hp == 0 && !wolf.Alive, "hp=" + wolf.Hp);
+
+            int left = battle.SkillCooldownTicksLeft(hero.Id, 2001);
+
+            Check("§17d 技能：冷却按 152 帧走（已经过 3 帧）", left == 149, "left=" + left);
+
+            Check("§17d 技能：冷却内再放被拒",
+                !battle.TryCastSkill(hero, 2001, wolf2.Id, out reason) && reason.Contains("冷却"), reason);
+
+            // 目标已经死了：同阵营与死目标都要被拒（英雄之间不能互相打）
+            BattleEntity ally = battle.AddEntity(1001, 0, 1200, 500, 0, playerId: 2);
+
+            Check("§17d 技能：不能对友军放",
+                !battle.TryCastSkill(hero, 2002, ally.Id, out reason) && reason.Contains("友军"), reason);
+
+            Check("§17d 技能：没配的技能被拒（英雄没配 2003）",
+                !battle.TryCastSkill(hero, 2003, wolf.Id, out reason) && reason.Contains("没有配置"), reason);
+
+            // 推到冷却结束：152 帧后应该能再放
+            for (int i = 0; i < 155; i++)
+            {
+                battle.Step();
+            }
+
+            Check("§17d 技能：冷却结束后可以再放",
+                battle.TryCastSkill(hero, 2001, wolf2.Id, out reason), reason);
         }
 
         private static QuestTables LoadQuestTables()

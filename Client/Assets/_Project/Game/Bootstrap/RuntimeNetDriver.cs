@@ -212,6 +212,72 @@ namespace NBC.Game.Bootstrap
             get { return m_session != null && m_session.InRoom; }
         }
 
+        // 功能：请求释放一个技能（目标不传就自动挑最近的活怪）。
+        // 入参：skillId 技能编号；targetEntityId 目标实例编号（0 = 自动挑）
+        // 返回：true 表示请求已经发出去（服务端还会再判射程/冷却，可能拒绝）
+        // 步骤：
+        //   1) 没连服就直接返回 false（避免离线时误发）
+        //   2) 没有指定目标就找最近的活怪
+        //   3) 交给 NetSession.SendSkillCast，并打一条日志方便对账
+        // 上游：PlayerBrain 的 Q/E/R（R043b 临时入口；R043a 会换成 RuntimeSkillDriver）
+        // 下游：NetSession.SendSkillCast
+        public bool SendSkillCast(int skillId, int targetEntityId = 0)
+        {
+            if (m_session == null || !m_session.IsOnline)
+            {
+                return false;
+            }
+
+            int target = targetEntityId > 0 ? targetEntityId : FindNearestEnemyId();
+            m_session.SendSkillCast(skillId, target);
+            Debug.Log("[技能] 请求释放 " + skillId + " → 单位 " + target);
+            return true;
+        }
+
+        // 功能：找离英雄最近的活着的怪物。
+        // 入参：无
+        // 返回：实例编号；没有英雄或没有活怪时返回 0
+        // 步骤：
+        //   1) 先拿自己的英雄当原点（拿不到就返回 0）
+        //   2) 遍历快照里的实体，只认"活着且 Kind != 0"的，比较平方距离
+        // 上游：SendSkillCast
+        // 下游：SnapshotView.Entities / FindHero
+        private int FindNearestEnemyId()
+        {
+            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
+
+            if (hero == null)
+            {
+                return 0;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+            long best = long.MaxValue;
+            int bestId = 0;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                EntitySnapshot entity = entities[i];
+
+                if (!entity.Alive || entity.Kind == 0)
+                {
+                    continue;
+                }
+
+                long dx = entity.PosXMm - hero.PosXMm;
+                long dz = entity.PosZMm - hero.PosZMm;
+                long squared = dx * dx + dz * dz;
+
+                if (squared < best)
+                {
+                    best = squared;
+                    bestId = entity.EntityId;
+                }
+            }
+
+            return bestId;
+        }
+
         // 功能：告诉调用方本地英雄是否还活着。
         // 入参：无。
         // 返回：true 表示活着；false 表示已倒下（或还没收到快照时按 true）。

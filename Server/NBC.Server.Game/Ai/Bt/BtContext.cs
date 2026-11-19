@@ -25,6 +25,9 @@ namespace NBC.Server.Game.Ai.Bt
         // 空闲时是否允许巡逻（BOSS 为 false，守着出生点）
         public readonly bool PatrolWhenIdle;
 
+        // 会放的技能编号（空数组表示只会普攻；顺序就是轮转顺序）
+        public readonly int[] SkillIds;
+
         // 近战普通怪兜底参数：4 米仇恨、2 米射程、40mm/帧、基本不回位、允许巡逻（真实值来自 Monster 表）
         public static MonsterAiProfile Melee => new MonsterAiProfile(4000, 40, 100000, 2000, true);
 
@@ -34,17 +37,31 @@ namespace NBC.Server.Game.Ai.Bt
         // 功能：构造参数。
         // 入参：aggroRangeMm 仇恨范围；moveSpeedMmPerTick 移速；leashRadiusMm 回位半径；attackRangeMm 普攻射程；patrolWhenIdle 是否巡逻
         // 返回：无
-        // 步骤：逐个赋值
+        // 步骤：逐个赋值；技能列表默认空数组
         // 上游：DungeonBattle（从 Monster 表读）、Melee / Boss 兜底
         // 下游：BtContext.Profile
         public MonsterAiProfile(int aggroRangeMm, int moveSpeedMmPerTick, int leashRadiusMm,
             int attackRangeMm, bool patrolWhenIdle)
+            : this(aggroRangeMm, moveSpeedMmPerTick, leashRadiusMm, attackRangeMm, patrolWhenIdle,
+                   System.Array.Empty<int>())
+        {
+        }
+
+        // 功能：构造参数（带技能列表）。
+        // 入参：aggroRangeMm 仇恨范围；moveSpeedMmPerTick 移速；leashRadiusMm 回位半径；attackRangeMm 普攻射程；patrolWhenIdle 是否巡逻；skillIds 技能列表
+        // 返回：无
+        // 步骤：逐个赋值；null 换成空数组
+        // 上游：DungeonBattle.FromDungeon
+        // 下游：CastSkillAction
+        public MonsterAiProfile(int aggroRangeMm, int moveSpeedMmPerTick, int leashRadiusMm,
+            int attackRangeMm, bool patrolWhenIdle, int[] skillIds)
         {
             AggroRangeMm = aggroRangeMm;
             MoveSpeedMmPerTick = moveSpeedMmPerTick;
             LeashRadiusMm = leashRadiusMm;
             AttackRangeMm = attackRangeMm;
             PatrolWhenIdle = patrolWhenIdle;
+            SkillIds = skillIds ?? System.Array.Empty<int>();
         }
     }
 
@@ -81,6 +98,9 @@ namespace NBC.Server.Game.Ai.Bt
 
         // 上一次动作名（日志用）
         public string LastAction;
+
+        // 技能轮转下标（`CastSkill` 每成功/尝试一次就 +1，跨帧保留；0 起）
+        public int SkillCursor;
     }
 
     // 主要功能：节点能用的世界操作 —— 找目标、算距离、移动、攻击、回位。

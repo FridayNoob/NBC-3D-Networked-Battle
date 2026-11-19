@@ -263,28 +263,25 @@ namespace NBC.Server.Game.Ai.Bt
         }
     }
 
-    // 主要功能：放技能 —— 服务端技能系统未实现前的占位，恒失败。
-    // 主要数据成员：m_skillId、s_warned（只告警一次）。
+    // 主要功能：放技能 —— 按 `Monster.skillIds` 轮转，交给服务端技能系统判定。
+    // 主要数据成员：m_skillId（树里显式指定的编号；0 表示按技能列表轮转）。
     // 主要外部方法：Configure、Tick。
-    // 谁在用它：暂时没有树用它（BOSS 树里不放），留给技能系统落地后接。
-    // 注意：恒 Failure 是刻意的；一旦技能系统可用，只改这里。
+    // 谁在用它：BOSS 与普通怪的攻击序列（R043b 起）。
+    // 注意：失败一律返回 Failure，调用方（Selector）会落到普攻分支 —— 冷却中不站桩。
     [BtNode("CastSkill")]
     public sealed class CastSkillAction : BtNode
     {
-        // 技能编号
+        // 技能编号（0 = 按 Profile.SkillIds 轮转）
         private int m_skillId;
-
-        // 是否已告警
-        private static bool s_warned;
 
         // 类型名
         public override string TypeName => "CastSkill";
 
-        // 功能：读 skillId。
+        // 功能：读 skillId（可选）。
         // 入参：source 参数来源
         // 返回：无
-        // 步骤：读不到就用 0
-        // 上游：R022-3 建树
+        // 步骤：读不到就用 0（轮转模式）
+        // 上游：建树
         // 下游：Tick
         public override void Configure(IBtParamSource source)
         {
@@ -294,21 +291,58 @@ namespace NBC.Server.Game.Ai.Bt
             }
         }
 
-        // 功能：恒失败（技能系统未做）。
+        // 功能：对一个目标放技能。
         // 入参：ctx 上下文
-        // 返回：Failure
-        // 步骤：首次调用打一条告警
-        // 上游：父节点
-        // 下游：无
+        // 返回：放出去 Success；没目标 / 没技能 / 被拒 Failure
+        // 步骤：
+        //   1) 没有目标或世界 → 失败
+        //   2) 树里没指定技能就从 Profile.SkillIds 轮转取一个（取不到就失败）
+        //   3) 交给 DungeonBattle.TryCastSkill（射程/冷却都在那里判）
+        //   4) 成功就记 LastAction 并停下脚步（放技能时不要继续贴脸）
+        // 上游：父节点（攻击序列）
+        // 下游：DungeonBattle.TryCastSkill
         public override BtStatus Tick(BtContext ctx)
         {
-            if (!s_warned)
+            if (ctx?.World == null || ctx.Self == null || ctx.Target == null)
             {
-                s_warned = true;
-                Console.WriteLine("[BT] 服务端还没有技能系统：CastSkill(skillId=" + m_skillId + ") 恒为失败。");
+                return BtStatus.Failure;
             }
 
-            return BtStatus.Failure;
+            int skillId = m_skillId > 0 ? m_skillId : NextSkill(ctx);
+
+            if (skillId <= 0)
+            {
+                return BtStatus.Failure;
+            }
+
+            if (!ctx.World.TryCastSkill(ctx.Self, skillId, ctx.Target.Id, out string _))
+            {
+                return BtStatus.Failure;
+            }
+
+            ctx.Chasing = false;
+            ctx.LastAction = "技能" + skillId;
+            return BtStatus.Success;
+        }
+
+        // 功能：按技能列表轮转取下一个技能编号。
+        // 入参：ctx 上下文
+        // 返回：技能编号；列表为空返回 0
+        // 步骤：用 SkillCursor 取模，取完 +1（下一帧换下一个，避免一直撞同一个冷却）
+        // 上游：Tick
+        // 下游：无
+        private static int NextSkill(BtContext ctx)
+        {
+            int[] ids = ctx.Profile.SkillIds;
+
+            if (ids == null || ids.Length == 0)
+            {
+                return 0;
+            }
+
+            int index = ctx.SkillCursor % ids.Length;
+            ctx.SkillCursor = (index + 1) % ids.Length;
+            return ids[index];
         }
     }
 

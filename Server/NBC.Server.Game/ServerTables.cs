@@ -43,6 +43,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using NBC.Shared.Net;
 
 namespace NBC.Server.Game;
 
@@ -128,6 +129,9 @@ public readonly struct MonsterRow
     /// <summary>回位半径（毫米）。</summary>
     public readonly int LeashRadiusMm;
 
+    /// <summary>会放的技能编号（空数组表示只会普攻；顺序就是轮转顺序）。</summary>
+    public readonly int[] SkillIds;
+
     /// <summary>记一行。</summary>
     /// <param name="id">编号。</param>
     /// <param name="name">名称。</param>
@@ -137,8 +141,10 @@ public readonly struct MonsterRow
     /// <param name="attackRangeMm">普攻射程（毫米）。</param>
     /// <param name="moveSpeedMmPerTick">追击移速（毫米/逻辑帧）。</param>
     /// <param name="leashRadiusMm">回位半径（毫米）。</param>
+    /// <param name="skillIds">会放的技能编号。</param>
     public MonsterRow(int id, string name, int hp, int attack,
-        int aggroRangeMm, int attackRangeMm, int moveSpeedMmPerTick, int leashRadiusMm)
+        int aggroRangeMm, int attackRangeMm, int moveSpeedMmPerTick, int leashRadiusMm,
+        int[] skillIds)
     {
         Id = id;
         Name = name;
@@ -148,6 +154,7 @@ public readonly struct MonsterRow
         AttackRangeMm = attackRangeMm;
         MoveSpeedMmPerTick = moveSpeedMmPerTick;
         LeashRadiusMm = leashRadiusMm;
+        SkillIds = skillIds;
     }
 }
 
@@ -263,7 +270,7 @@ public readonly struct DropRow
     }
 }
 
-/// <summary>`Skill` 表里服务端要用的那一列（M3 只取伤害）。</summary>
+/// <summary>`Skill` 表里服务端要用的那几列（伤害、冷却、射程、命中帧）。</summary>
 public readonly struct SkillRow
 {
     /// <summary>编号（主键）。</summary>
@@ -275,15 +282,30 @@ public readonly struct SkillRow
     /// <summary>伤害（点）。</summary>
     public readonly int Damage;
 
+    /// <summary>冷却（逻辑帧，30Hz；0 表示无冷却）。</summary>
+    public readonly int CooldownTicks;
+
+    /// <summary>射程（毫米，圆形半径）。</summary>
+    public readonly int RangeMm;
+
+    /// <summary>命中帧（逻辑帧，取自表里 hitFrames 的第一个值；至少 1）。</summary>
+    public readonly int HitFrame;
+
     /// <summary>记一行。</summary>
     /// <param name="id">编号。</param>
     /// <param name="name">名称。</param>
     /// <param name="damage">伤害。</param>
-    public SkillRow(int id, string name, int damage)
+    /// <param name="cooldownTicks">冷却（逻辑帧）。</param>
+    /// <param name="rangeMm">射程（毫米）。</param>
+    /// <param name="hitFrame">命中帧（逻辑帧）。</param>
+    public SkillRow(int id, string name, int damage, int cooldownTicks, int rangeMm, int hitFrame)
     {
         Id = id;
         Name = name;
         Damage = damage;
+        CooldownTicks = cooldownTicks;
+        RangeMm = rangeMm;
+        HitFrame = hitFrame;
     }
 }
 
@@ -535,7 +557,8 @@ public sealed class ServerTables
                                 sheet.IntOr(r, "aggroRangeMm", 4000),
                                 sheet.IntOr(r, "attackRangeMm", 2000),
                                 sheet.IntOr(r, "moveSpeedMmPerTick", 40),
-                                sheet.IntOr(r, "leashRadiusMm", 100000));
+                                sheet.IntOr(r, "leashRadiusMm", 100000),
+                                sheet.IntList(r, "skillIds"));
                             result._monsters[row.Id] = row;
                         }
 
@@ -578,10 +601,22 @@ public sealed class ServerTables
                     case "Skill":
                         for (int r = 0; r < sheet.RowCount; r++)
                         {
+                            // 命中帧取表里第一个值；表里没写就按 1 帧兜底（否则技能进队列后永不出队）
+                            int[] hitFrames = sheet.IntList(r, "hitFrames");
+                            int hitFrame = hitFrames.Length > 0 && hitFrames[0] > 0 ? hitFrames[0] : 1;
+
+                            // 毫秒换算成逻辑帧并向上取整（30Hz 一帧 33ms）：5000ms ⇒ 152 帧
+                            int cooldownMs = sheet.IntOr(r, "cooldownMs", 0);
+                            int tickMs = 1000 / NetContract.TickRate;
+                            int cooldownTicks = cooldownMs <= 0 ? 0 : ((cooldownMs + tickMs - 1) / tickMs);
+
                             var row = new SkillRow(
                                 sheet.Int(r, "id"),
                                 sheet.Str(r, "name"),
-                                sheet.Int(r, "damage"));
+                                sheet.Int(r, "damage"),
+                                cooldownTicks,
+                                sheet.IntOr(r, "rangeMm", 2000),
+                                hitFrame);
                             result._skills[row.Id] = row;
                         }
 

@@ -4,8 +4,11 @@
 // 它只做三件事：读输入、按固定步长推进 PlayerStateMachine、发布动画参数。
 // 具体「什么状态、什么时候切」全在 PlayerStateMachine 里，本类不做判断。
 
+using System;
 using NBC.Framework.Fsm;
 using NBC.Framework.Input;
+using NBC.Game.Bootstrap;
+using NBC.Game.Config;
 using UnityEngine;
 
 namespace NBC.Game.Player
@@ -25,6 +28,15 @@ namespace NBC.Game.Player
 
         // 表情动作（CBG）的 clip 名前缀，用来只清这几段动画的收剑事件
         private const string PoseClipPrefix = "CBG_";
+
+        // 读技能列表用的英雄编号（当前只有一个可选角色）
+        private const int DefaultHeroId = 1001;
+
+        // 懒找到的联网驱动（离线调试时可能是 null）
+        private RuntimeNetDriver m_netDriver;
+
+        // 懒读到的技能编号（来自 Hero 表的 skillIds；null = 还没读过）
+        private int[] m_skillIds;
 
         // 玩家身上的移动组件（Awake 自动找）
         [SerializeField]
@@ -513,19 +525,19 @@ namespace NBC.Game.Player
                 NotifyAttack();
             }
 
-            if (Input.GetKeyDown(m_skill1Key))
+            if (Input.GetKeyDown(m_skill1Key) && NotifySkill(1))
             {
-                NotifySkill(1);
+                SendSkillCast(1);
             }
 
-            if (Input.GetKeyDown(m_skill2Key))
+            if (Input.GetKeyDown(m_skill2Key) && NotifySkill(2))
             {
-                NotifySkill(2);
+                SendSkillCast(2);
             }
 
-            if (Input.GetKeyDown(m_skill3Key))
+            if (Input.GetKeyDown(m_skill3Key) && NotifySkill(3))
             {
-                NotifySkill(3);
+                SendSkillCast(3);
             }
 
             if (Input.GetKeyDown(m_dashKey))
@@ -539,16 +551,58 @@ namespace NBC.Game.Player
             }
         }
 
-        // 功能：请求播第 index 个技能（只播动画）。
+        // 功能：请求播第 index 个技能（动画），并把这次释放请求发给服务端。
         // 入参：index 取 1~3。
-        // 返回：无。
-        // 步骤：转给状态机；被拒绝（动作中/格挡/已死）时什么都不做。
+        // 返回：true 表示动画接下了这次技能（被拒时不发协议，避免服务端日志刷屏）。
+        // 步骤：转给状态机；接了就由调用方再调 SendSkillCast。
         // 上游/下游：Update 的 Q/E/R、外部网络消息；下游 PlayerStateMachine.NotifySkill。
-        public void NotifySkill(int index)
+        public bool NotifySkill(int index)
         {
-            if (m_machine != null)
+            return m_machine != null && m_machine.NotifySkill(index);
+        }
+
+        // 功能：把一个技能编号发给服务端（服务端重新判射程与冷却）。
+        // 入参：index 技能槽位（1~3）
+        // 返回：无
+        // 步骤：
+        //   1) 第一次用时读 `Hero` 表的 skillIds（读不到就当作没有技能，只播动画）
+        //   2) 懒找场景里的 RuntimeNetDriver（离线 / 单机调试时可能没有）
+        //   3) 交给 RuntimeNetDriver.SendSkillCast，目标由它挑最近的活怪
+        // 上游：Update 的 Q/E/R
+        // 下游：RuntimeNetDriver.SendSkillCast
+        private void SendSkillCast(int index)
+        {
+            if (m_skillIds == null)
             {
-                m_machine.NotifySkill(index);
+                m_skillIds = Array.Empty<int>();
+
+                ConfigMgr configs = ConfigMgr.Instance;
+                HeroConfig heroes;
+
+                if (configs != null && configs.Source != null && configs.TryGet(out heroes))
+                {
+                    Config_Hero row;
+
+                    if (heroes.TryGet(DefaultHeroId, out row) && row.skillIds != null && row.skillIds.Length > 0)
+                    {
+                        m_skillIds = row.skillIds;
+                    }
+                }
+            }
+
+            if (index < 1 || index > m_skillIds.Length)
+            {
+                return;
+            }
+
+            if (m_netDriver == null)
+            {
+                m_netDriver = FindObjectOfType<RuntimeNetDriver>();
+            }
+
+            if (m_netDriver != null)
+            {
+                m_netDriver.SendSkillCast(m_skillIds[index - 1]);
             }
         }
 

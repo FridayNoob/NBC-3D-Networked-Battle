@@ -98,7 +98,7 @@ namespace NBC.Protocol {
             "SAASLwoOZHVuZ2Vvbl9yZXN1bHQYDCABKAsyFS5uYmMubTMuRHVuZ2VvblJl",
             "c3VsdEgAQgkKB3BheWxvYWQiTwoLTWF0Y2hSZXN1bHQSDQoFZnJhbWUYASAB",
             "KAUSDwoHb3V0Y29tZRgCIAEoBRIPCgdraWxsc19hGAMgASgFEg8KB2tpbGxz",
-            "X2IYBCABKAUigwMKDUNsaWVudE1lc3NhZ2USJgoJaGFuZHNoYWtlGAEgASgL",
+            "X2IYBCABKAUirAMKDUNsaWVudE1lc3NhZ2USJgoJaGFuZHNoYWtlGAEgASgL",
             "MhEubmJjLm0zLkhhbmRzaGFrZUgAEhwKBHBpbmcYAiABKAsyDC5uYmMubTMu",
             "UGluZ0gAEiwKCWpvaW5fcm9vbRgDIAEoCzIXLm5iYy5tMy5Kb2luUm9vbVJl",
             "cXVlc3RIABIkCgVpbnB1dBgEIAEoCzITLm5iYy5tMy5QbGF5ZXJJbnB1dEgA",
@@ -106,10 +106,13 @@ namespace NBC.Protocol {
             "dEgAEjIKDHF1ZXN0X2FjdGlvbhgGIAEoCzIaLm5iYy5tMy5RdWVzdEFjdGlv",
             "blJlcXVlc3RIABIvCg5sb2Nrc3RlcF9pbnB1dBgHIAEoCzIVLm5iYy5tMy5M",
             "b2Nrc3RlcElucHV0SAASOAoPcmVzdGFydF9kdW5nZW9uGAggASgLMh0ubmJj",
-            "Lm0zLlJlc3RhcnREdW5nZW9uUmVxdWVzdEgAQgkKB3BheWxvYWQqVAoJUm9v",
-            "bVBoYXNlEhYKElJPT01fUEhBU0VfV0FJVElORxAAEhYKElJPT01fUEhBU0Vf",
-            "UlVOTklORxABEhcKE1JPT01fUEhBU0VfRklOSVNIRUQQAkIPqgIMTkJDLlBy",
-            "b3RvY29sYgZwcm90bzM="));
+            "Lm0zLlJlc3RhcnREdW5nZW9uUmVxdWVzdEgAEicKCnNraWxsX2Nhc3QYCSAB",
+            "KAsyES5uYmMubTMuU2tpbGxDYXN0SABCCQoHcGF5bG9hZCJfCglTa2lsbENh",
+            "c3QSEQoJcGxheWVyX2lkGAEgASgDEhAKCHNraWxsX2lkGAIgASgFEhgKEHRh",
+            "cmdldF9lbnRpdHlfaWQYAyABKAUSEwoLY2xpZW50X3RpY2sYBCABKAUqVAoJ",
+            "Um9vbVBoYXNlEhYKElJPT01fUEhBU0VfV0FJVElORxAAEhYKElJPT01fUEhB",
+            "U0VfUlVOTklORxABEhcKE1JPT01fUEhBU0VfRklOSVNIRUQQAkIPqgIMTkJD",
+            "LlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::NBC.Protocol.RoomPhase), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -143,7 +146,8 @@ namespace NBC.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.LockstepStart), global::NBC.Protocol.LockstepStart.Parser, new[]{ "Frame", "Entities", "InitialHash" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ServerMessage), global::NBC.Protocol.ServerMessage.Parser, new[]{ "HandshakeAck", "Pong", "RoomState", "Snapshot", "Event", "Error", "ProgressSync", "QuestState", "LockstepFrame", "LockstepStart", "MatchResult", "DungeonResult" }, new[]{ "Payload" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.MatchResult), global::NBC.Protocol.MatchResult.Parser, new[]{ "Frame", "Outcome", "KillsA", "KillsB" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction", "LockstepInput", "RestartDungeon" }, new[]{ "Payload" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.ClientMessage), global::NBC.Protocol.ClientMessage.Parser, new[]{ "Handshake", "Ping", "JoinRoom", "Input", "LeaveRoom", "QuestAction", "LockstepInput", "RestartDungeon", "SkillCast" }, new[]{ "Payload" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::NBC.Protocol.SkillCast), global::NBC.Protocol.SkillCast.Parser, new[]{ "PlayerId", "SkillId", "TargetEntityId", "ClientTick" }, null, null, null, null)
           }));
     }
     #endregion
@@ -9826,6 +9830,9 @@ namespace NBC.Protocol {
         case PayloadOneofCase.RestartDungeon:
           RestartDungeon = other.RestartDungeon.Clone();
           break;
+        case PayloadOneofCase.SkillCast:
+          SkillCast = other.SkillCast.Clone();
+          break;
       }
 
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -9945,6 +9952,21 @@ namespace NBC.Protocol {
       }
     }
 
+    /// <summary>Field number for the "skill_cast" field.</summary>
+    public const int SkillCastFieldNumber = 9;
+    /// <summary>
+    /// R043b 追加（兼容：只是多一个 oneof 分支）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::NBC.Protocol.SkillCast SkillCast {
+      get { return payloadCase_ == PayloadOneofCase.SkillCast ? (global::NBC.Protocol.SkillCast) payload_ : null; }
+      set {
+        payload_ = value;
+        payloadCase_ = value == null ? PayloadOneofCase.None : PayloadOneofCase.SkillCast;
+      }
+    }
+
     private object payload_;
     /// <summary>Enum of possible cases for the "payload" oneof.</summary>
     public enum PayloadOneofCase {
@@ -9957,6 +9979,7 @@ namespace NBC.Protocol {
       QuestAction = 6,
       LockstepInput = 7,
       RestartDungeon = 8,
+      SkillCast = 9,
     }
     private PayloadOneofCase payloadCase_ = PayloadOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -9995,6 +10018,7 @@ namespace NBC.Protocol {
       if (!object.Equals(QuestAction, other.QuestAction)) return false;
       if (!object.Equals(LockstepInput, other.LockstepInput)) return false;
       if (!object.Equals(RestartDungeon, other.RestartDungeon)) return false;
+      if (!object.Equals(SkillCast, other.SkillCast)) return false;
       if (PayloadCase != other.PayloadCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -10011,6 +10035,7 @@ namespace NBC.Protocol {
       if (payloadCase_ == PayloadOneofCase.QuestAction) hash ^= QuestAction.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.LockstepInput) hash ^= LockstepInput.GetHashCode();
       if (payloadCase_ == PayloadOneofCase.RestartDungeon) hash ^= RestartDungeon.GetHashCode();
+      if (payloadCase_ == PayloadOneofCase.SkillCast) hash ^= SkillCast.GetHashCode();
       hash ^= (int) payloadCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -10062,6 +10087,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(66);
         output.WriteMessage(RestartDungeon);
       }
+      if (payloadCase_ == PayloadOneofCase.SkillCast) {
+        output.WriteRawTag(74);
+        output.WriteMessage(SkillCast);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -10104,6 +10133,10 @@ namespace NBC.Protocol {
         output.WriteRawTag(66);
         output.WriteMessage(RestartDungeon);
       }
+      if (payloadCase_ == PayloadOneofCase.SkillCast) {
+        output.WriteRawTag(74);
+        output.WriteMessage(SkillCast);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -10137,6 +10170,9 @@ namespace NBC.Protocol {
       }
       if (payloadCase_ == PayloadOneofCase.RestartDungeon) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(RestartDungeon);
+      }
+      if (payloadCase_ == PayloadOneofCase.SkillCast) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(SkillCast);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -10198,6 +10234,12 @@ namespace NBC.Protocol {
             RestartDungeon = new global::NBC.Protocol.RestartDungeonRequest();
           }
           RestartDungeon.MergeFrom(other.RestartDungeon);
+          break;
+        case PayloadOneofCase.SkillCast:
+          if (SkillCast == null) {
+            SkillCast = new global::NBC.Protocol.SkillCast();
+          }
+          SkillCast.MergeFrom(other.SkillCast);
           break;
       }
 
@@ -10288,6 +10330,15 @@ namespace NBC.Protocol {
             RestartDungeon = subBuilder;
             break;
           }
+          case 74: {
+            global::NBC.Protocol.SkillCast subBuilder = new global::NBC.Protocol.SkillCast();
+            if (payloadCase_ == PayloadOneofCase.SkillCast) {
+              subBuilder.MergeFrom(SkillCast);
+            }
+            input.ReadMessage(subBuilder);
+            SkillCast = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -10373,6 +10424,330 @@ namespace NBC.Protocol {
             }
             input.ReadMessage(subBuilder);
             RestartDungeon = subBuilder;
+            break;
+          }
+          case 74: {
+            global::NBC.Protocol.SkillCast subBuilder = new global::NBC.Protocol.SkillCast();
+            if (payloadCase_ == PayloadOneofCase.SkillCast) {
+              subBuilder.MergeFrom(SkillCast);
+            }
+            input.ReadMessage(subBuilder);
+            SkillCast = subBuilder;
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  //// 玩家要放一个技能（服务端权威判定：射程/冷却/目标都重新算）。
+  /// </summary>
+  public sealed partial class SkillCast : pb::IMessage<SkillCast>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<SkillCast> _parser = new pb::MessageParser<SkillCast>(() => new SkillCast());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<SkillCast> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::NBC.Protocol.NbcM3Reflection.Descriptor.MessageTypes[31]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SkillCast() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SkillCast(SkillCast other) : this() {
+      playerId_ = other.playerId_;
+      skillId_ = other.skillId_;
+      targetEntityId_ = other.targetEntityId_;
+      clientTick_ = other.clientTick_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SkillCast Clone() {
+      return new SkillCast(this);
+    }
+
+    /// <summary>Field number for the "player_id" field.</summary>
+    public const int PlayerIdFieldNumber = 1;
+    private long playerId_;
+    /// <summary>
+    /// 施法者会话绑定的玩家编号
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long PlayerId {
+      get { return playerId_; }
+      set {
+        playerId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "skill_id" field.</summary>
+    public const int SkillIdFieldNumber = 2;
+    private int skillId_;
+    /// <summary>
+    /// 技能编号（Skill 表主键）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int SkillId {
+      get { return skillId_; }
+      set {
+        skillId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "target_entity_id" field.</summary>
+    public const int TargetEntityIdFieldNumber = 3;
+    private int targetEntityId_;
+    /// <summary>
+    /// 目标实例编号（0 = 没指定，服务端会拒）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int TargetEntityId {
+      get { return targetEntityId_; }
+      set {
+        targetEntityId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "client_tick" field.</summary>
+    public const int ClientTickFieldNumber = 4;
+    private int clientTick_;
+    /// <summary>
+    /// 客户端认为的逻辑帧（只记日志，不参与判定）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int ClientTick {
+      get { return clientTick_; }
+      set {
+        clientTick_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as SkillCast);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(SkillCast other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (PlayerId != other.PlayerId) return false;
+      if (SkillId != other.SkillId) return false;
+      if (TargetEntityId != other.TargetEntityId) return false;
+      if (ClientTick != other.ClientTick) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (PlayerId != 0L) hash ^= PlayerId.GetHashCode();
+      if (SkillId != 0) hash ^= SkillId.GetHashCode();
+      if (TargetEntityId != 0) hash ^= TargetEntityId.GetHashCode();
+      if (ClientTick != 0) hash ^= ClientTick.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (PlayerId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(PlayerId);
+      }
+      if (SkillId != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(SkillId);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (ClientTick != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(ClientTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (PlayerId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(PlayerId);
+      }
+      if (SkillId != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(SkillId);
+      }
+      if (TargetEntityId != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(TargetEntityId);
+      }
+      if (ClientTick != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(ClientTick);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (PlayerId != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(PlayerId);
+      }
+      if (SkillId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(SkillId);
+      }
+      if (TargetEntityId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(TargetEntityId);
+      }
+      if (ClientTick != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ClientTick);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(SkillCast other) {
+      if (other == null) {
+        return;
+      }
+      if (other.PlayerId != 0L) {
+        PlayerId = other.PlayerId;
+      }
+      if (other.SkillId != 0) {
+        SkillId = other.SkillId;
+      }
+      if (other.TargetEntityId != 0) {
+        TargetEntityId = other.TargetEntityId;
+      }
+      if (other.ClientTick != 0) {
+        ClientTick = other.ClientTick;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            PlayerId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            SkillId = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            ClientTick = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            PlayerId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            SkillId = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            TargetEntityId = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            ClientTick = input.ReadInt32();
             break;
           }
         }
