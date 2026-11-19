@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using NBC.Framework.Asset;
 using NBC.Framework.UI;
+using NBC.Game.Bootstrap;
 using NBC.Game.Config;
 using NBC.Game.Net;
 using NBC.Protocol;
@@ -52,7 +53,7 @@ namespace NBC.Game.UI
         public void Bind(PresentationFeed feed, NetSession session)
         {
             // 资源层没装好就别去请求面板：UIManager 加载 Canvas 会报「资源层尚未初始化」。
-            if (AssetManager.Instance == null || !AssetManager.Instance.IsInitialized)
+            if (!BattleReadiness.AssetsReady)
             {
                 return;
             }
@@ -111,7 +112,7 @@ namespace NBC.Game.UI
 
             bool ready = m_questConfig != null && m_conditionConfig != null && m_monsterConfig != null;
 
-            if (ready || !requestIfMissing || m_configsRequested || mgr.Source == null)
+            if (ready || !requestIfMissing || m_configsRequested || !BattleReadiness.ConfigSourceReady)
             {
                 // 注意：没设来源时不打 m_configsRequested —— 等启动流程 SetSource 之后还要再试。
                 return ready;

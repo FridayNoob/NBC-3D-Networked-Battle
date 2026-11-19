@@ -76,6 +76,9 @@ namespace NBC.Game.Bootstrap
         // HUD 是否已经接上这一局的快照源（避免每帧重复 Bind、重复 ShowPanel）
         private bool m_hudBound;
 
+        // 进副本时的启动编排（装资源 → 设配置来源 → 等配置表 → 挂 HUD）；回世界时作废
+        private BattleBootSequence m_boot;
+
     // 「再来一次」的计时探针：记录点了按钮的时刻，等第一张含活怪的快照到了就打一条总耗时。
     // 只用于诊断「重开后怪多久才出现」，不影响任何逻辑。
     private float m_restartWentAt;
@@ -1189,13 +1192,32 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
-            // 进副本那几帧资源层还在装（HpBarDemo 里 await InstallAsync），
-            // 这时让 UIManager 去加载 Canvas 只会报「资源层尚未初始化」——等它好了再挂。
-            if (!NBC.Framework.Asset.AssetManager.Instance.IsInitialized)
+            if (m_boot == null)
             {
-                return;
+                // 把「装资源 → 设配置来源 → 等表 → 挂 HUD」写成一条链：
+                // 顺序集中在一处，某一步没好就原地等，超时会打一条能直接定位的日志。
+                m_boot = new BattleBootSequence(
+                    () => BattleReadiness.AssetsReady,
+                    () => BattleReadiness.ConfigSourceReady,
+                    () => BattleReadiness.HudTablesReady,
+                    () => BattleConfigBootstrap.Ensure(reason => Debug.LogWarning("[Boot] 预加载配置表失败：" + reason)),
+                    BindHud,
+                    message => Debug.Log(message));
+
+                m_boot.Failed += reason => Debug.LogWarning("[Boot] " + reason);
+                m_boot.Begin();
             }
 
+            m_boot.Tick(Time.deltaTime);
+        }
+
+        // 功能：把 HUD 驱动接上快照源（既有的挂组件 + Bind）。
+        // 入参：无（读 m_feed / m_session）。
+        // 返回：无。
+        // 步骤：1) 没有驱动就挂组件 2) Bind 3) 记下已接。
+        // 上游：BattleBootSequence 最后一步；下游：RuntimeHudDriver.Bind。
+        private void BindHud()
+        {
             if (m_hudDriver == null)
             {
                 m_hudDriver = GetComponent<RuntimeHudDriver>();
@@ -1226,6 +1248,13 @@ namespace NBC.Game.Bootstrap
             if (m_hudDriver != null)
             {
                 m_hudDriver.CloseAll();
+            }
+
+            // 编排链跟着这一局一起作废：下次进副本要重新等资源、重新等表
+            if (m_boot != null)
+            {
+                m_boot.Cancel();
+                m_boot = null;
             }
 
             m_hudBound = false;

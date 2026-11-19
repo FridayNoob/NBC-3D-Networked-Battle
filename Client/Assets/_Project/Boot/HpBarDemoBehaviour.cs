@@ -146,32 +146,13 @@ namespace NBC.Boot
         // 功能：接上配置表来源，并把全部配置表预加载进内存（HUD、任务、掉落都要查表）。
         // 入参：无。
         // 返回：无（加载是异步的，失败只打一条错误日志）。
-        // 步骤：1) 没设来源就设成走资源层的 AssetConfigSource 2) 一张都没加载时调 GameTables.PreloadAll。
+        // 步骤：1) 转交 BattleConfigBootstrap.Ensure（设来源 + 空表时预加载，重复调用无害）。
         // 上游：Start（资源层就绪之后）。
-        // 下游：ConfigMgr.SetSource、GameTables.PreloadAll。
-        // 注意：新流程（Login → World → Battle）里没人调过 SetSource / PreloadAll，
-        //       而 RuntimeHudDriver 查任务表会用 TryGet 兜底、真缺表时它自己会再发一次 Preload。
+        // 下游：BattleConfigBootstrap.Ensure。
+        // 注意：顺序与幂等由 BattleConfigBootstrap 统一负责，这里只提供进副本这个时机。
         private void EnsureConfigSource()
         {
-            ConfigMgr mgr = ConfigMgr.Instance;
-
-            if (mgr == null)
-            {
-                return;
-            }
-
-            if (mgr.Source == null)
-            {
-                mgr.SetSource(new AssetConfigSource());
-            }
-
-            if (mgr.LoadedTableCount > 0)
-            {
-                return;
-            }
-
-            GameTables.PreloadAll(
-                null,
+            BattleConfigBootstrap.Ensure(
                 reason => Debug.LogError("[HpBarDemo] 预加载配置表失败：" + reason));
         }
 
