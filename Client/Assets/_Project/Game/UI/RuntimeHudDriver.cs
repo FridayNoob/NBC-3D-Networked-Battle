@@ -32,6 +32,11 @@ namespace NBC.Game.UI
         // 追踪区最多显示几条任务
         private const int MaxQuestRows = HudQuestPanel.MaxRows;
 
+        // 没有已接任务时追踪区显示的占位文字。
+        // 注意：面板收到 0 行会把整块收起来，看起来就像「任务面板不见了」；
+        //       给一句占位，玩家才知道「这个区域在、只是当前没任务」。
+        private const string EmptyQuestHint = "副本区域：暂无进行中的任务";
+
         // 是否已经为这三张表发起过预加载（只发起一次，别每帧重试）
         private bool m_configsRequested;
 
@@ -300,6 +305,13 @@ namespace NBC.Game.UI
                         Detail = BuildDetail(quest)
                     });
                 }
+            }
+
+            if (m_rows.Count == 0)
+            {
+                // 没有可追踪的任务时别把整块关掉：换成一句占位，否则玩家会以为 HUD 丢了。
+                m_questPanel.SetHint(EmptyQuestHint);
+                return;
             }
 
             m_questPanel.SetRows(m_rows);
