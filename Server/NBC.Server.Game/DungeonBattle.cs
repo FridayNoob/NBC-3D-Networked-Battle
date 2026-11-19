@@ -375,8 +375,14 @@ public readonly struct DamageResult
 /// <summary>一局副本战斗的**权威世界**（M3 状态同步）。</summary>
 public sealed class DungeonBattle
 {
-    /// <summary>场地半径（毫米）：出界钳位。5 米见方，够 M3 演示走位。</summary>
-    public const int PlayAreaHalfExtentMm = 5000;
+    /// <summary>
+    /// 场地半径（毫米）：出界钳位。
+    /// <para>
+    /// 注意：R056 验收期间临时放大到 50 米（原 5000 = 5 米），方便负责人到处走、试障碍；
+    /// 验收完改回 5000 即可，客户端 `RuntimeNetDriver.PlayAreaHalfExtentMm` 要同步改。
+    /// </para>
+    /// </summary>
+    public const int PlayAreaHalfExtentMm = 50000;
 
     /// <summary>
     /// 普攻射程（毫米，**圆形**：距离平方 ≤ 射程平方，见 `BattleRules.WithinBasicAttackRange`）。

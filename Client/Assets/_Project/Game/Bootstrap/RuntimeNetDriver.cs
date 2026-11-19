@@ -124,8 +124,10 @@ namespace NBC.Game.Bootstrap
         // 纠偏速度（米/秒）：往服务端位置靠拢
         private const float HeroReconcileSpeedMps = 8f;
 
-        // 与服务端一致的场地半边长（毫米）：±5 米
-        private const int PlayAreaHalfExtentMm = 5000;
+        // 与服务端一致的场地半边长（毫米）。
+        // 注意：R056 验收期间临时放大到 50 米（原 5000），改回时要和服务端
+        // `DungeonBattle.PlayAreaHalfExtentMm` 一起改，否则人会「走出服务端场地」。
+        private const int PlayAreaHalfExtentMm = 50000;
         private PlayerAnimation m_playerAnimation;
 
         // 本地英雄的大脑（血量为 0 时切到死亡状态；懒加载，只有 Battle 场景才存在）
