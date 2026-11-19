@@ -149,6 +149,12 @@ namespace NBC.Game.UI
                 ui.HidePanel(HudTargetPanel.PanelName);
                 ui.HidePanel(HudQuestPanel.PanelName);
             }
+
+            // 面板实例被 UIManager 收起来了，这里的引用必须一起清。
+            // 注意：留着手里的旧引用，下次 Bind 会以为「已经开过面板」而跳过 ShowPanel，
+            //       两块 HUD 就再也不会出现 —— 现象是只有第一次进副本能正常显示。
+            m_targetPanel = null;
+            m_questPanel = null;
         }
 
         // 功能：每帧刷血条，每 0.25 秒刷任务行。
