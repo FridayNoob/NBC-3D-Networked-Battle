@@ -1189,6 +1189,13 @@ namespace NBC.Game.Bootstrap
                 return;
             }
 
+            // 进副本那几帧资源层还在装（HpBarDemo 里 await InstallAsync），
+            // 这时让 UIManager 去加载 Canvas 只会报「资源层尚未初始化」——等它好了再挂。
+            if (!NBC.Framework.Asset.AssetManager.Instance.IsInitialized)
+            {
+                return;
+            }
+
             if (m_hudDriver == null)
             {
                 m_hudDriver = GetComponent<RuntimeHudDriver>();

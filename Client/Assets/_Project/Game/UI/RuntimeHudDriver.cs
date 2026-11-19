@@ -2,6 +2,7 @@
 //   RuntimeHudDriver（类）：副本里唯一的 HUD 大脑，按快照挑 BOSS 与目标、按任务状态拼追踪行。
 
 using System.Collections.Generic;
+using NBC.Framework.Asset;
 using NBC.Framework.UI;
 using NBC.Game.Config;
 using NBC.Game.Net;
@@ -50,6 +51,12 @@ namespace NBC.Game.UI
         // 上游：RuntimeNetDriver.OnJoinSucceeded；下游：UIManager.ShowPanel。
         public void Bind(PresentationFeed feed, NetSession session)
         {
+            // 资源层没装好就别去请求面板：UIManager 加载 Canvas 会报「资源层尚未初始化」。
+            if (AssetManager.Instance == null || !AssetManager.Instance.IsInitialized)
+            {
+                return;
+            }
+
             m_feed = feed;
             m_session = session;
             ResolveConfigs(true);
@@ -104,8 +111,9 @@ namespace NBC.Game.UI
 
             bool ready = m_questConfig != null && m_conditionConfig != null && m_monsterConfig != null;
 
-            if (ready || !requestIfMissing || m_configsRequested)
+            if (ready || !requestIfMissing || m_configsRequested || mgr.Source == null)
             {
+                // 注意：没设来源时不打 m_configsRequested —— 等启动流程 SetSource 之后还要再试。
                 return ready;
             }
 
