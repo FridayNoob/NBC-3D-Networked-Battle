@@ -126,6 +126,11 @@ namespace NBC.Game.Player
             // R042：结算面板已经接管屏幕时，死亡流程让位（结算优先，不让「你已倒下」再压上去）
             if (NBC.Game.UI.DungeonResultPanel.IsShowing)
             {
+                // 结算是一局的终点：不再走死亡倒计时，并且把可能已经亮起来的黑幕收掉。
+                // 不收的话，胜利画面会和「你已倒下」叠在一起，而且回世界后还挂在屏幕上。
+                m_counting = false;
+                m_resolved = true;
+                NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
                 return;
             }
 

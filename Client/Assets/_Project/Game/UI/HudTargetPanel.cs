@@ -109,7 +109,10 @@ namespace NBC.Game.UI
         // 功能：把当前/最大血写进一条填充图与一个数字。
         // 入参：fill 填充图（可为空）；value 数字（可为空）；hp 当前血；maxHp 最大血。
         // 返回：无。
-        // 步骤：1) maxHp <= 0 时比例按 0 2) hp 钳到 0..maxHp 3) 写 fillAmount 与「当前/最大」。
+        // 步骤：1) maxHp <= 0 时比例按 0 2) hp 钳到 0..maxHp 3) 写填充比例与「当前/最大」。
+        // 注意：Image 没有 sprite 时，即使 Type = Filled，Unity 也只画整块矩形、fillAmount 不生效
+        //       （现象就是「数字在掉、红条不变短」）。所以这里沿用 HpBarPanel 的两条路：
+        //       有 sprite 用 fillAmount，没有就改右锚点收缩。
         private static void ApplyBar(Image fill, TMP_Text value, int hp, int maxHp)
         {
             float ratio = 0f;
@@ -131,7 +134,16 @@ namespace NBC.Game.UI
 
             if (fill != null)
             {
-                fill.fillAmount = ratio;
+                if (fill.type == Image.Type.Filled && fill.sprite != null)
+                {
+                    fill.fillAmount = ratio;
+                }
+                else
+                {
+                    // 兜底：把右边界收到比例处，视觉上同样是血条变短
+                    RectTransform rect = fill.rectTransform;
+                    rect.anchorMax = new Vector2(ratio, rect.anchorMax.y);
+                }
             }
         }
     }

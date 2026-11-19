@@ -41,6 +41,10 @@ namespace NBC.Game.UI
         private TMP_Text m_title;
         private TMP_Text m_countdown;
         private TMP_Text m_status;
+
+        // 黑幕要一起显隐的四个物体：背景 + 三段文字。
+        // 只关背景是不够的（文字挂在另一条分支下），否则会出现「人已经活了、字还浮在屏幕上」。
+        private GameObject[] m_visuals;
         private bool m_showing;
         private bool m_isStub;
 
@@ -129,6 +133,11 @@ namespace NBC.Game.UI
                     real.SetCountdown(s_wantCountdown);
                 }
             }
+            else
+            {
+                // 预加载（PlayerDeathFlow.Start 会先要一次）不能把黑幕亮出来：没人要就直接藏好
+                real.Hide();
+            }
         }
 
         // 功能：取 prefab 里的控件。
@@ -146,6 +155,37 @@ namespace NBC.Game.UI
             color.a = BackdropAlpha;
             m_backdrop.color = color;
             m_backdrop.raycastTarget = false;
+
+            // 一次性记住要显隐的四个物体：背景与三段文字（它们不是同一条父子链）
+            m_visuals = new GameObject[4];
+            m_visuals[0] = m_backdrop.gameObject;
+            m_visuals[1] = m_title != null ? m_title.gameObject : null;
+            m_visuals[2] = m_countdown != null ? m_countdown.gameObject : null;
+            m_visuals[3] = m_status != null ? m_status.gameObject : null;
+
+            // 面板是「死亡时才该出现」的东西：加载完先整体藏起来，等 Show 再打开
+            SetVisualsActive(false);
+        }
+
+        // 功能：把背景与三段文字一起显隐。
+        // 入参：active true 显示、false 隐藏。
+        // 返回：无。
+        // 步骤：遍历 OnInit 记下的四个物体，跳过空的，逐个 SetActive。
+        // 上游：OnInit、Show、Hide。
+        private void SetVisualsActive(bool active)
+        {
+            if (m_visuals == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_visuals.Length; i++)
+            {
+                if (m_visuals[i] != null && m_visuals[i].activeSelf != active)
+                {
+                    m_visuals[i].SetActive(active);
+                }
+            }
         }
 
         // 功能：打开黑幕并写入标题与提示。
@@ -164,11 +204,7 @@ namespace NBC.Game.UI
             }
 
             m_showing = true;
-
-            if (m_backdrop != null)
-            {
-                m_backdrop.gameObject.SetActive(true);
-            }
+            SetVisualsActive(true);
 
             if (m_title != null)
             {
@@ -217,10 +253,19 @@ namespace NBC.Game.UI
             s_wantShow = false;
             s_wantCountdown = -1f;
             m_showing = false;
+            SetVisualsActive(false);
+        }
 
-            if (!m_isStub && m_backdrop != null)
+        // 功能：如果黑幕正显示着就关掉（场景切换 / 结算面板接管时用）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 从来没有请求过面板就什么都不用做 2) 正在显示才 Hide。
+        // 上游：RuntimeNetDriver.ReturnToWorldRoutine 等「换场」流程。
+        public static void HideIfShowing()
+        {
+            if (s_instance != null && s_instance.IsShowing)
             {
-                m_backdrop.gameObject.SetActive(false);
+                s_instance.Hide();
             }
         }
     }

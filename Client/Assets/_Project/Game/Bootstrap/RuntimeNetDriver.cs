@@ -317,6 +317,9 @@ namespace NBC.Game.Bootstrap
             //    等新快照到（30Hz，两三个 tick）→ 清槽位与表现层 → 下一帧按新快照重建。
             yield return new WaitForSecondsRealtime(0.25f);
 
+            // 重开这一局：上一局可能刚亮过死亡黑幕（比如输了之后点「再来一次」），一并收掉
+            NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
+
             if (m_binder != null)
             {
                 m_binder.ClearSlots();
@@ -348,6 +351,10 @@ namespace NBC.Game.Bootstrap
             m_bindPresentation = false;
             m_feed.Clear();
             CloseHud();
+
+            // ⚠️ 死亡黑幕要在这里收掉：胜利结算时可能有一块「你已倒下」还亮着，
+            //    它是 DontDestroyOnLoad 的 Canvas 下的面板，切场景不会自己消失。
+            NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
 
             if (m_binder != null)
             {
