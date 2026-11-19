@@ -104,10 +104,22 @@ namespace NBC.Editor
                 "int,int,int,int,int,int,int,int,string\n" +
                 "key,\"range(1,999999)\",\"range(0,1)\",,,\"range(0,20000)\",\"range(0,20000)\",\"range(0,20000)\",\"len(0,32)\"\n";
 
-            string path = Path.Combine(GetProjectRoot(), CsvPath);
+            string projectRoot = GetProjectRoot();
+
+            if (projectRoot.Length == 0)
+            {
+                EditorUtility.DisplayDialog(
+                    "写回障碍",
+                    "找不到仓库根目录（没有找到含 Configs/Design 的那一级）。\n\n" +
+                    "没有写任何文件，请检查工程目录结构。",
+                    "知道了");
+                return;
+            }
+
+            string path = Path.Combine(projectRoot, CsvPath);
             File.WriteAllText(path, header + rows, new UTF8Encoding(false));
 
-            Debug.Log($"[障碍] 已写回 {sorted.Count} 条到 {CsvPath}（副本 {DungeonId}）");
+            Debug.Log($"[障碍] 已写回 {sorted.Count} 条到 {path}（副本 {DungeonId}）");
 
             foreach (string problem in problems)
             {
@@ -122,9 +134,38 @@ namespace NBC.Editor
             EditorUtility.DisplayDialog("写回障碍", detail, "知道了");
         }
 
-        /// <summary>取工程根目录（`Assets` 的上一级）。</summary>
-        /// <returns>绝对路径，末尾不带分隔符。</returns>
+        /// <summary>
+        /// 取仓库根目录（`Configs\Design` 所在的那一级）。
+        /// <para>
+        /// 注意：本工程的 Unity 目录不是仓库根 —— `Application.dataPath` 是
+        /// `<仓库>\Client\Assets`，往上两级才是 `<仓库>`（`Configs`、`Server`、`Docs` 都在这儿）。
+        /// 所以这里不写死"上一级"，而是往上找第一个含 `Configs\Design` 的目录：
+        /// 以后 Unity 工程挪位置也不会再写错地方。
+        /// </para>
+        /// </summary>
+        /// <returns>仓库根绝对路径；找不到返回空串（调用方负责报错，别在错的地方写文件）。</returns>
         private static string GetProjectRoot()
-            => Directory.GetParent(Application.dataPath)!.FullName;
+        {
+            DirectoryInfo dir = new DirectoryInfo(Application.dataPath);
+
+            for (int depth = 0; depth < 6; depth++)
+            {
+                if (Directory.Exists(Path.Combine(dir.FullName, "Configs", "Design")))
+                {
+                    return dir.FullName;
+                }
+
+                DirectoryInfo parent = dir.Parent;
+
+                if (parent == null)
+                {
+                    break;
+                }
+
+                dir = parent;
+            }
+
+            return string.Empty;
+        }
     }
 }
