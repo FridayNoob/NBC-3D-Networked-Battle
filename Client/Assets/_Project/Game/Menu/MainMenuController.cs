@@ -84,6 +84,9 @@ namespace NBC.Game.Menu
             EnsureSession();
             Refresh();
 
+            // 连接开始时就把目标地址打出来：失败时能立刻分辨「连的是哪」。
+            Debug.Log("[主菜单] 正在连接 " + Host + ":" + Port + "（昵称 " + m_state.PlayerName + "）");
+
             StartCoroutine(ConnectRoutine());
         }
 
@@ -143,10 +146,15 @@ namespace NBC.Game.Menu
         // 功能：失败后恢复界面，并把这次建的会话物体销毁（下次点开始是全新连接）。
         // 入参：reason 失败原因。
         // 返回：无。
+        // 步骤：1) 写状态与提示 2) 打一条 warning（排查时不用盯着界面看）3) 销毁这次建的会话物体。
+        // 上游：ConnectRoutine / OnSceneLoaded；下游：MainMenuState.Fail、MainMenuView.SetHint。
         private void FailAndCleanup(string reason)
         {
             m_state.Fail(reason);
             Refresh();
+
+            // 界面上的提示容易被忽略，Console 也留一条：失败原因要能从日志里查。
+            Debug.LogWarning("[主菜单] 连接失败：" + reason);
 
             if (m_sessionObject != null)
             {
