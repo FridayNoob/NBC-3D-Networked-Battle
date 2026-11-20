@@ -180,7 +180,7 @@ namespace NBC.Tests.EditMode
         // 功能：验证技能期间禁移动、到点回移动层。
         // 入参：无。
         // 返回：无。
-        // 步骤：请求技能 1 → 推一帧断言 Skill1 与禁移动 → 推满 240 帧断言回到跑。
+        // 步骤：请求技能 1 → 推一帧断言 Skill1 与禁移动 → 推满 160 帧断言回到跑。
         // 上游/下游：NUnit 调用。
         [Test]
         public void Skill_BlocksMovementForItsDuration()
@@ -192,7 +192,7 @@ namespace NBC.Tests.EditMode
             Assert.AreEqual(PlayerActionId.Skill1, m_machine.Parameters.ActionId, 0.001f);
             Assert.IsFalse(m_motion.MovementEnabled);
 
-            AdvanceTo(240);
+            AdvanceTo(160);
             Tick(0f, 1f);
 
             Assert.IsFalse(m_machine.Parameters.ActionBusy);

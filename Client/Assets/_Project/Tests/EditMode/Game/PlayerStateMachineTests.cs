@@ -80,7 +80,7 @@ namespace NBC.Tests.EditMode
             m_context = new PlayerStateContext(m_motion);
             m_machine = new PlayerStateMachine(
                 m_context,
-                new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4, 12),
+                new PlayerTimings(60, 60, 93, 160, 96, 176, 60, 88, 120, 90, 18, 4, 12),
                 new PlayerSpeeds(2f, 5f, 8f, 1.5f, 3f));
             m_frame = 0;
         }

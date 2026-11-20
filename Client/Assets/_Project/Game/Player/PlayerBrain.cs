@@ -84,17 +84,17 @@ namespace NBC.Game.Player
         [SerializeField]
         private int m_attack3Frames = 93;
 
-        // 技能 1 帧数
+        // 技能 1 帧数（动画 4.0 秒、控制器播 1.5 倍速 ⇒ 2.67 秒 = 160 帧）
         [SerializeField]
-        private int m_skill1Frames = 240;
+        private int m_skill1Frames = 160;
 
-        // 技能 2 帧数
+        // 技能 2 帧数（动画 2.4 秒、1.5 倍速 ⇒ 1.6 秒 = 96 帧）
         [SerializeField]
-        private int m_skill2Frames = 144;
+        private int m_skill2Frames = 96;
 
-        // 技能 3 帧数
+        // 技能 3 帧数（动画 4.4 秒、1.5 倍速 ⇒ 2.93 秒 = 176 帧）
         [SerializeField]
-        private int m_skill3Frames = 264;
+        private int m_skill3Frames = 176;
 
         // 受击帧数
         [SerializeField]

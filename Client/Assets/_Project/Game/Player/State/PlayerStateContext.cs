@@ -139,7 +139,7 @@ namespace NBC.Game.Player
         // 上游/下游：PlayerBrain 的 Inspector 默认值参考；测试用 PlayerTimings.Default。
         public static PlayerTimings Default
         {
-            get { return new PlayerTimings(60, 60, 93, 240, 144, 264, 60, 88, 120, 90, 18, 4, 12); }
+            get { return new PlayerTimings(60, 60, 93, 160, 96, 176, 60, 88, 120, 90, 18, 4, 12); }
         }
     }
 

@@ -753,9 +753,9 @@ MonoBehaviour:
   m_attack1Frames: 60
   m_attack2Frames: 60
   m_attack3Frames: 93
-  m_skill1Frames: 240
-  m_skill2Frames: 144
-  m_skill3Frames: 264
+  m_skill1Frames: 160
+  m_skill2Frames: 96
+  m_skill3Frames: 176
   m_hitFrames: 18
   m_dashFrames: 18
   m_stunFrames: 45
