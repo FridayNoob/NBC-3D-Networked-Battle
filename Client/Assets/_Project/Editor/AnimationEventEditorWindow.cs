@@ -49,6 +49,30 @@ namespace NBC.Editor
         // 窗口滚动位置
         private Vector2 m_scroll;
 
+        // 预览用的目标物体（要拖入带 Animator 的模型，否则没有可采样的骨架）
+        private GameObject m_previewTarget;
+
+        // 预览时间，单位秒（拖动滑条时实时采样）
+        private float m_previewTime;
+
+        // 预览时假定的帧率，用来把秒换算成"第几帧"给人看
+        private const float PreviewFrameRate = 30f;
+
+        // 是否已经进入 AnimationMode（退出窗口时要还原场景姿势）
+        private bool m_previewing;
+
+        // 预览开始时记下的局部变换（AnimationMode 只在部分情况下自动还原，这里自己兜底）
+        private Transform[] m_snapshotTransforms;
+
+        // 预览开始时的局部位置
+        private Vector3[] m_snapshotPositions;
+
+        // 预览开始时的局部旋转
+        private Quaternion[] m_snapshotRotations;
+
+        // 预览开始时的局部缩放
+        private Vector3[] m_snapshotScales;
+
         // 功能：菜单入口，打开窗口。
         // 入参：无
         // 返回：无
@@ -81,6 +105,8 @@ namespace NBC.Editor
             }
 
             DrawClipInfo();
+            EditorGUILayout.Space();
+            DrawPreview();
             EditorGUILayout.Space();
             DrawAddRow();
             EditorGUILayout.Space();
@@ -126,6 +152,191 @@ namespace NBC.Editor
             {
                 EditorGUILayout.LabelField("循环", "是");
             }
+        }
+
+        // 功能：画"预览带"——把片段在指定时间采一次样，直接看 Scene 视图里那一帧的姿势。
+        // 入参：无
+        // 返回：无
+        // 步骤：1) 选目标物体 2) 时间滑条显示秒与帧号 3) 上一帧/下一帧微调 4) 拖动即采样 5) 点按钮把时间填给新增区
+        // 上游：OnGUI
+        // 下游：SamplePreview / StopPreview
+        private void DrawPreview()
+        {
+            EditorGUILayout.LabelField("预览（拖滑条看画面，再锁定时间）", EditorStyles.boldLabel);
+
+            m_previewTarget = (GameObject)EditorGUILayout.ObjectField("目标物体", m_previewTarget, typeof(GameObject), true);
+
+            if (m_previewTarget == null)
+            {
+                EditorGUILayout.HelpBox("把场景里带 Animator 的模型拖进来（比如 [Player_Hero] 下面的 SwordGirl_FullBody）。", MessageType.Info);
+                return;
+            }
+
+            float maxTime = Mathf.Max(0f, m_clip.length);
+            float picked = EditorGUILayout.Slider("预览时间（秒）", m_previewTime, 0f, maxTime);
+
+            if (!Mathf.Approximately(picked, m_previewTime))
+            {
+                m_previewTime = picked;
+                SamplePreview(picked);
+            }
+
+            int frame = Mathf.RoundToInt(m_previewTime * PreviewFrameRate);
+            EditorGUILayout.LabelField("当前帧", frame + "（" + PreviewFrameRate.ToString("F0") + " fps 口径）");
+
+            EditorGUILayout.BeginHorizontal();
+
+            if (GUILayout.Button("上一帧"))
+            {
+                m_previewTime = Mathf.Max(0f, m_previewTime - 1f / PreviewFrameRate);
+                SamplePreview(m_previewTime);
+            }
+
+            if (GUILayout.Button("下一帧"))
+            {
+                m_previewTime = Mathf.Min(maxTime, m_previewTime + 1f / PreviewFrameRate);
+                SamplePreview(m_previewTime);
+            }
+
+            if (GUILayout.Button("按 2 秒看"))
+            {
+                m_previewTime = Mathf.Min(2f, maxTime);
+                SamplePreview(m_previewTime);
+            }
+
+            if (GUILayout.Button("锁定此时间"))
+            {
+                m_timeSeconds = Mathf.Clamp(m_previewTime, 0f, maxTime);
+            }
+
+            if (GUILayout.Button("退出预览"))
+            {
+                StopPreview();
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+
+        // 功能：在目标物体上采样片段到指定时间（只改编辑器里的临时姿势，不动资产）。
+        // 入参：time 采样时间，单位秒
+        // 返回：无
+        // 步骤：1) 进 AnimationMode 2) BeginSampling 3) SampleAnimation 4) EndSampling 5) 刷 Scene 视图
+        // 上游：DrawPreview
+        // 下游：Scene 视图
+        private void SamplePreview(float time)
+        {
+            if (m_clip == null || m_previewTarget == null)
+            {
+                return;
+            }
+
+            if (!AnimationMode.InAnimationMode())
+            {
+                AnimationMode.StartAnimationMode();
+                m_previewing = true;
+                CaptureSnapshot();
+            }
+
+            AnimationMode.BeginSampling();
+            m_clip.SampleAnimation(m_previewTarget, time);
+            AnimationMode.EndSampling();
+            SceneView.RepaintAll();
+        }
+
+        // 功能：退出预览，把场景里被采样出来的姿势还原。
+        // 入参：无
+        // 返回：无
+        // 步骤：1) 若在 AnimationMode 就 StopAnimationMode 2) 清标记
+        // 上游：DrawPreview 的按钮 / OnDisable
+        // 下游：Unity 编辑器
+        private void StopPreview()
+        {
+            RestoreSnapshot();
+
+            if (AnimationMode.InAnimationMode())
+            {
+                AnimationMode.StopAnimationMode();
+            }
+
+            m_previewing = false;
+            SceneView.RepaintAll();
+        }
+
+        // 功能：进入预览前，把目标物体整棵子树的局部变换记下来。
+        // 入参：无
+        // 返回：无
+        // 步骤：1) 取全部 Transform 2) 分别拷位置/旋转/缩放
+        // 上游：SamplePreview（第一次进入预览时）
+        // 下游：RestoreSnapshot
+        private void CaptureSnapshot()
+        {
+            if (m_previewTarget == null)
+            {
+                return;
+            }
+
+            m_snapshotTransforms = m_previewTarget.GetComponentsInChildren<Transform>(true);
+            int count = m_snapshotTransforms.Length;
+            m_snapshotPositions = new Vector3[count];
+            m_snapshotRotations = new Quaternion[count];
+            m_snapshotScales = new Vector3[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                Transform item = m_snapshotTransforms[i];
+                m_snapshotPositions[i] = item.localPosition;
+                m_snapshotRotations[i] = item.localRotation;
+                m_snapshotScales[i] = item.localScale;
+            }
+        }
+
+        // 功能：把预览期间被采样改掉的局部变换还原回去。
+        // 入参：无
+        // 返回：无
+        // 步骤：1) 没有快照就返回 2) 逐个还原（跳过已被销毁的物体） 3) 清空快照
+        // 上游：StopPreview
+        // 下游：场景里的 Transform
+        private void RestoreSnapshot()
+        {
+            if (m_snapshotTransforms == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_snapshotTransforms.Length; i++)
+            {
+                Transform item = m_snapshotTransforms[i];
+
+                if (item == null)
+                {
+                    continue;
+                }
+
+                item.localPosition = m_snapshotPositions[i];
+                item.localRotation = m_snapshotRotations[i];
+                item.localScale = m_snapshotScales[i];
+            }
+
+            m_snapshotTransforms = null;
+            m_snapshotPositions = null;
+            m_snapshotRotations = null;
+            m_snapshotScales = null;
+        }
+
+        // 功能：窗口关闭时确保退出预览，避免场景残留采样姿势。
+        // 入参：无
+        // 返回：无
+        // 步骤：调 StopPreview
+        // 上游：Unity 生命周期
+        // 下游：StopPreview
+        private void OnDisable()
+        {
+            if (!m_previewing)
+            {
+                return;
+            }
+
+            StopPreview();
         }
 
         // 功能：画新增一行（时间 / 函数 / 参数 / 添加按钮）。
