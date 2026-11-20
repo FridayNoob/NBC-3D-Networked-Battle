@@ -266,8 +266,8 @@ namespace NBC.Game.GameFlow
 
             if (driver != null)
             {
-                driver.AutoJoin = true;
-                driver.BindPresentation = true;
+                // 进副本只有一个入口：它会同时打开自动进房、清请求标记、按「活着」起步、打开表现层。
+                driver.EnterDungeon();
             }
             else
             {

@@ -56,6 +56,10 @@ namespace NBC.Game.Bootstrap
         // 是否把快照画成场景物体、并纠偏本地英雄（在 World 里连服时要关掉，否则会画出一堆副本怪）
         [SerializeField] private bool m_bindPresentation = true;
 
+        // 副本进出的四个开关收在一处：进入 / 离开各只有一个入口，
+        // 免得「只复位了一半」——参见 FIXES 2026-11-20「回世界后还挂在房间里」。
+        private readonly BattlePresence m_presence = new BattlePresence();
+
         // 运行时同步方式
         [SerializeField] private ERuntimeSyncMode m_mode = ERuntimeSyncMode.StateSync;
 
@@ -84,9 +88,6 @@ namespace NBC.Game.Bootstrap
     // 只用于诊断「重开后怪多久才出现」，不影响任何逻辑。
     private float m_restartWentAt;
     private bool m_restartWatching;
-
-        // 是否已经发过进房请求（只发一次）
-        private bool m_joinRequested;
 
         // 发送节流累加器
         private float m_sendAccumulator;
@@ -137,8 +138,7 @@ namespace NBC.Game.Bootstrap
         // 本地英雄的大脑（血量为 0 时切到死亡状态；懒加载，只有 Battle 场景才存在）
         private PlayerBrain m_playerBrain;
 
-        // 本地英雄是否还活着（死亡流程读它；还没收到快照时按活着算，避免开局误判）
-        private bool m_heroAlive = true;
+        // 本地英雄是否还活着改由 m_presence 统一维护（见 BattlePresence）。
 
         // 当前快照里的英雄个数（1 = 单人副本，>1 = 多人副本；死亡后决定「退出」还是「旁观」）
         private int m_heroEntityCount;
@@ -400,7 +400,7 @@ namespace NBC.Game.Bootstrap
         // 上游/下游：PlayerDeathFlow.Update 读它；TrackHeroHealth 写它。
         public bool HeroAlive
         {
-            get { return m_heroAlive; }
+            get { return m_presence.HeroAlive; }
         }
 
         // 功能：告诉调用方当前快照里有几个英雄。
@@ -449,7 +449,7 @@ namespace NBC.Game.Bootstrap
             //    服务端可能在退房那一刻才把这条结算发出来；更常见的是退房后自动重新进房，
             //    结算跟着落到 World 场景里，就是「草地上压着一块失败面板」。
             //    判据用 BindPresentation（= 表现层正绑在副本里），比 IsJoined 更贴合"我现在在不在副本中"。
-            if (!m_bindPresentation)
+            if (!m_presence.InDungeon)
             {
                 Debug.Log("[结算] 已经离开副本，忽略迟到的结算（" + DungeonOutcomeText.Title(result.Outcome) + "）。");
                 return;
@@ -518,7 +518,7 @@ namespace NBC.Game.Bootstrap
 
             // 新一局马上就会发来「活着的英雄」，这里先把死亡标记擦掉：
             //   不清的话 PlayerDeathFlow 会拿上一局的 false 立刻又进倒计时、黑幕再亮一次。
-            m_heroAlive = true;
+            m_presence.SetHeroAlive(true);
             ReviveLocalPlayerAfterRestart();
 
             if (m_binder != null)
@@ -566,27 +566,21 @@ namespace NBC.Game.Bootstrap
         // 上游/下游：ReturnToWorld 启动。
         private IEnumerator ReturnToWorldRoutine()
         {
-            // ⚠️ 先掐掉「自动进房」：Update 里只要 AutoJoin && 在线 && 没在请求中 就会自己 JoinRoom，
-            //    退房之后 RoomId 变空 ⇒ 下一帧就又进了一个房间（回 World 了还挂在副本里），
-            //    症状是「回到世界后英雄半血、还弹结算/黑幕」。进副本时 DungeonEntrance 会重新打开它。
-            m_autoJoin = false;
+            // ⚠️ 先把副本进出的四个开关一次性打到「在世界」：
+            //    以前只发 LeaveRoom，没关 AutoJoin ⇒ 退房后 RoomId 变空，下一帧 Update 又自动进了房，
+            //    人站在草地上却还挂在副本里（结算面板 / 死亡黑幕跟着冒出来）。
+            //    现在只允许走 ExitToWorld 这一个入口，不许零散改字段。
+            m_presence.ExitToWorld();
 
             if (m_session != null)
             {
                 m_session.LeaveRoom();
             }
 
-            m_joinRequested = true;
-
-            // 这一局结束了：英雄的"死"只属于副本。不回位的话，World 里那份新的死亡流程
-            // 会读到 heroAlive=False（上一局留下的），立刻开始倒计时并把黑幕亮出来。
-            m_heroAlive = true;
-
             // ⚠️ 回世界前先把「表现层」彻底关掉：
             //    切场景会把 Battle 里的绑定器连槽位一起销毁，但驱动是跨场景常驻的，
             //    `m_feed` 里还留着上一局的实体快照 ⇒ 下一帧 `RefreshPresentation` 会在
             //    **World 场景里重新建一个绑定器**，把副本里的狼当成 World 的单位画出来。
-            m_bindPresentation = false;
             m_feed.Clear();
             CloseHud();
 
@@ -608,7 +602,7 @@ namespace NBC.Game.Bootstrap
 
             yield return new WaitForSecondsRealtime(0.2f);
 
-            m_joinRequested = false;
+            m_presence.ClearJoinRequested();
 
             SceneFlow.Instance.LoadAsync(GameScene.World, OnDungeonSceneLoaded);
         }
@@ -637,7 +631,7 @@ namespace NBC.Game.Bootstrap
             NBC.Game.UI.DungeonResultPanel.HideIfShowing();
 
             // World 场景不需要表现层（没人观战）；下次进副本时 DungeonEntrance 会重新打开它。
-            m_bindPresentation = false;
+            m_presence.MarkInDungeon(false);
             PlayerMove player = FindObjectOfType<PlayerMove>();
 
             if (player != null)
@@ -685,8 +679,20 @@ namespace NBC.Game.Bootstrap
         // 下游：Update 的进房判断
         public bool AutoJoin
         {
-            get { return m_autoJoin; }
-            set { m_autoJoin = value; }
+            get { return m_presence.AutoJoin; }
+            set { m_autoJoin = value; m_presence.SetAutoJoin(value); }
+        }
+
+        // 功能：进副本：把四个开关一次性打到「在副本里」，并允许自动进房。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 交给 BattlePresence.EnterDungeon 2) 同步序列化字段，免得 Inspector 值与运行值不一致。
+        // 上游/下游：DungeonEntrance.FinishEnter；下游 Update 的进房判断与表现层。
+        public void EnterDungeon()
+        {
+            m_presence.EnterDungeon();
+            m_autoJoin = m_presence.AutoJoin;
+            m_bindPresentation = m_presence.InDungeon;
         }
 
         // 功能：控制是否把快照画到场景里、并纠偏本地英雄。
@@ -697,8 +703,8 @@ namespace NBC.Game.Bootstrap
         // 下游：RefreshPresentation 的首行判断
         public bool BindPresentation
         {
-            get { return m_bindPresentation; }
-            set { m_bindPresentation = value; }
+            get { return m_presence.InDungeon; }
+            set { m_bindPresentation = value; m_presence.MarkInDungeon(value); }
         }
 
         // 功能：在 Start 之前改连接参数（入口脚本用）。
@@ -789,6 +795,10 @@ namespace NBC.Game.Bootstrap
         // 下游：CountingTransport、NetSession.Connect
         private void Start()
         {
+            // Inspector 上的初值要灌进状态表：之后所有读写都走 m_presence，避免两套真值。
+            m_presence.SetAutoJoin(m_autoJoin);
+            m_presence.MarkInDungeon(m_bindPresentation);
+
             m_feed = new PresentationFeed();
             m_reconnector = new NetReconnector(5, m_dungeonId);
 
@@ -840,9 +850,9 @@ namespace NBC.Game.Bootstrap
 
             DriveReconnect();
 
-            if (m_autoJoin && m_session.IsOnline && !m_joinRequested)
+            if (m_presence.AutoJoin && m_session.IsOnline && !m_presence.JoinRequested)
             {
-                m_joinRequested = true;
+                m_presence.MarkJoinRequested();
 
                 // 房号留空 = 服务端安排；副本编号决定用哪张图
                 m_session.JoinRoom(string.Empty, m_dungeonId);
@@ -1076,7 +1086,7 @@ namespace NBC.Game.Bootstrap
         // 下游：NetSession.Disconnect、NetRuntimeStats.Reset
         private void OnDestroy()
         {
-            m_joinRequested = false;
+            m_presence.ClearJoinRequested();
             m_wasInRoom = false;
 
             if (m_reconnector != null)
@@ -1484,7 +1494,7 @@ namespace NBC.Game.Bootstrap
         // 下游：PresentationFeed.Refresh、SnapshotSceneBinder.Ensure
         private void RefreshPresentation()
         {
-            if (!m_bindPresentation)
+            if (!m_presence.InDungeon)
             {
                 return;
             }
@@ -1707,7 +1717,7 @@ namespace NBC.Game.Bootstrap
 
             HeroHp = hero.Hp;
             HeroMaxHp = hero.MaxHp;
-            m_heroAlive = hero.Alive;
+            m_presence.SetHeroAlive(hero.Alive);
             m_heroEntityCount = CountHeroEntities();
 
             // 血量为 0：让本地角色进死亡状态（只切一次，PlayerBrain 自己会拒绝重复请求）
