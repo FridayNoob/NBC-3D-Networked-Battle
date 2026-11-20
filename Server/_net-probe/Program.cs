@@ -234,6 +234,10 @@ namespace NBC.NetProbe
             Skills_Invulnerability();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·六】多段命中（R043b 扩展）：一行写多个命中帧，伤害均分、逐段结算");
+            Skills_MultiSegment();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -9149,7 +9153,7 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             SkillRow? slash = tables.FindSkill(2001);
             int rangeMm = slash == null ? 0 : slash.Value.RangeMm;
-            int hitFrame = slash == null ? 0 : slash.Value.HitFrame;
+            int hitFrame = slash == null || slash.Value.HitFrames.Length == 0 ? 0 : slash.Value.HitFrames[0];
             int cooldownTicks = slash == null ? 0 : slash.Value.CooldownTicks;
 
             // 注意：这里刻意不写死任何数值。冷却、射程、命中帧都能被负责人在 CSV 里改，
@@ -9261,7 +9265,7 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             SkillRow? slash = tables.FindSkill(2001);
             int invulnTicks = slash == null ? 0 : slash.Value.InvulnTicks;
-            int hitFrame = slash == null ? 0 : slash.Value.HitFrame;
+            int hitFrame = slash == null || slash.Value.HitFrames.Length == 0 ? 0 : slash.Value.HitFrames[0];
             int rangeMm = slash == null ? 0 : slash.Value.RangeMm;
 
             Check("§17e 无敌：旋风斩解析出无敌帧",
@@ -9317,6 +9321,138 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             Check("§17e 无敌：免伤不影响技能自己的命中（命中帧按表）", hitFrame >= 1, "hitFrame=" + hitFrame);
         }
 
+        /// <summary>
+        /// 【十七·六】多段命中（R043b 扩展）：一行技能写多个命中帧，总伤害均分，每段各自按帧结算。
+        /// <para>纯函数先验"拆分不丢伤害"，再拿临时表把 2001 改成两段（10/20 帧、总 300）验真链路。</para>
+        /// </summary>
+        private static void Skills_MultiSegment()
+        {
+            int[] three = SkillSystem.SplitDamage(500, 3);
+            Check("§17f 多段：500 分三段是 166/166/168（余数 2 补给最后一段）",
+                three.Length == 3 && three[0] == 166 && three[1] == 166 && three[2] == 168,
+                string.Join(",", three));
+
+            int[] single = SkillSystem.SplitDamage(120, 1);
+            Check("§17f 多段：只有一段时原样返回",
+                single.Length == 1 && single[0] == 120, string.Join(",", single));
+
+            int[] empty = SkillSystem.SplitDamage(100, 0);
+            Check("§17f 多段：段数为 0 时返回空数组", empty.Length == 0, empty.Length.ToString());
+
+            int[] seven = SkillSystem.SplitDamage(1000, 7);
+            int total = 0;
+
+            for (int i = 0; i < seven.Length; i++)
+            {
+                total += seven[i];
+            }
+
+            Check("§17f 多段：七段拆完总和仍是 1000（余数补给最后一段）",
+                seven.Length == 7 && total == 1000 && seven[6] == 1000 - (142 * 6),
+                string.Join(",", seven));
+
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§17f 多段：找得到配置表目录（否则假绿）", false, "找不到 Configs\\Design");
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "nbc_multi_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                foreach (string file in Directory.GetFiles(sourceDir, "*.csv"))
+                {
+                    File.Copy(file, Path.Combine(tempDir, Path.GetFileName(file)), true);
+                }
+
+                string skillPath = Path.Combine(tempDir, "Skill.csv");
+                string[] lines = File.ReadAllLines(skillPath);
+                bool replaced = false;
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (!lines[i].StartsWith("2001,", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    lines[i] = "2001,旋风斩,300,Physical,\"10,20\",6000,2500,2667";
+                    replaced = true;
+                    break;
+                }
+
+                File.WriteAllText(skillPath, string.Join("\n", lines) + "\n", new UTF8Encoding(false));
+
+                Check("§17f 多段：临时表里把 2001 改成了两段", replaced, "没有找到 2001 那行");
+
+                ServerTables tables;
+                string error;
+
+                if (!ServerTables.TryLoad(tempDir, out tables, out error))
+                {
+                    Check("§17f 多段：临时表能加载", false, error);
+                    return;
+                }
+
+                SkillRow? slash = tables.FindSkill(2001);
+
+                Check("§17f 多段：命中帧解析成两个（10 与 20）",
+                    slash != null && slash.Value.HitFrames.Length == 2 &&
+                    slash.Value.HitFrames[0] == 10 && slash.Value.HitFrames[1] == 20,
+                    slash == null ? "找不到 2001" : string.Join(",", slash.Value.HitFrames));
+
+                var battle = new DungeonBattle("r-multi", 1001, 40, 1200, 20);
+                battle.AttachTables(tables);
+
+                BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1);
+                BattleEntity boss = battle.AddEntity(6003, 1, 1000, 1250, 0);
+
+                string reason;
+
+                Check("§17f 多段：技能放得出去", battle.TryCastSkill(hero, 2001, boss.Id, out reason), reason);
+
+                Check("§17f 多段：一次施法排了两段待结算",
+                    battle.Skills != null && battle.Skills.PendingCount == 2,
+                    battle.Skills == null ? "Skills 为空" : "pending=" + battle.Skills.PendingCount);
+
+                for (int i = 0; i < 9; i++)
+                {
+                    battle.Step();
+                }
+
+                Check("§17f 多段：第 9 帧还没掉血", boss.Hp == 1000, "hp=" + boss.Hp);
+
+                battle.Step();
+
+                Check("§17f 多段：第 10 帧掉第一段 150", boss.Hp == 850, "hp=" + boss.Hp);
+
+                for (int i = 0; i < 9; i++)
+                {
+                    battle.Step();
+                }
+
+                Check("§17f 多段：第 19 帧仍只有第一段的伤害", boss.Hp == 850, "hp=" + boss.Hp);
+
+                battle.Step();
+
+                Check("§17f 多段：第 20 帧第二段结算，总共掉 300", boss.Hp == 700, "hp=" + boss.Hp);
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch
+                {
+                    // 临时目录删不掉不影响结论。
+                }
+            }
+        }
         private static QuestTables LoadQuestTables()
         {
             string dir;

@@ -186,10 +186,47 @@ namespace NBC.Server.Game
                 m_cooldowns[(caster.Id, skillId)] = skill.CooldownTicks;
             }
 
-            m_pending.Add(new PendingCast(caster.Id, targetId, skill.Damage, skill.HitFrame));
+            // 多段：一个技能可以有多条命中帧（如 "40,60,80"），总伤害均分，余数补给最后一段
+            int[] hitFrames = skill.HitFrames;
+            int[] damages = SplitDamage(skill.Damage, hitFrames.Length);
+
+            for (int i = 0; i < hitFrames.Length; i++)
+            {
+                m_pending.Add(new PendingCast(caster.Id, targetId, damages[i], hitFrames[i]));
+            }
+
             GrantInvulnerability(battle, caster, skill);
             CastCount++;
             return true;
+        }
+
+        /// <summary>把总伤害拆成若干段：前几段取整，余数补给最后一段（保证总和不变）。</summary>
+        /// <param name="total">总伤害（点）。</param>
+        /// <param name="segments">段数（小于等于 0 时返回空数组）。</param>
+        /// <returns>每段伤害，长度为段数。</returns>
+        public static int[] SplitDamage(int total, int segments)
+        {
+            if (segments <= 0)
+            {
+                return Array.Empty<int>();
+            }
+
+            if (segments == 1)
+            {
+                return new[] { total };
+            }
+
+            int baseDamage = total / segments;
+            int remainder = total - (baseDamage * segments);
+            var result = new int[segments];
+
+            for (int i = 0; i < segments; i++)
+            {
+                result[i] = baseDamage;
+            }
+
+            result[segments - 1] += remainder;
+            return result;
         }
 
         // 功能：判断某个单位此刻是否处于技能无敌窗口内。

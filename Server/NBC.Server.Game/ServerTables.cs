@@ -288,8 +288,8 @@ public readonly struct SkillRow
     /// <summary>射程（毫米，圆形半径）。</summary>
     public readonly int RangeMm;
 
-    /// <summary>命中帧（逻辑帧，取自表里 hitFrames 的第一个值；至少 1）。</summary>
-    public readonly int HitFrame;
+    /// <summary>命中帧（逻辑帧升序；一个技能可以有多段，每段的伤害均分）。</summary>
+    public readonly int[] HitFrames;
 
     /// <summary>无敌时长（逻辑帧，30Hz；0 表示这个技能不无敌）。</summary>
     public readonly int InvulnTicks;
@@ -300,16 +300,16 @@ public readonly struct SkillRow
     /// <param name="damage">伤害。</param>
     /// <param name="cooldownTicks">冷却（逻辑帧）。</param>
     /// <param name="rangeMm">射程（毫米）。</param>
-    /// <param name="hitFrame">命中帧（逻辑帧）。</param>
+    /// <param name="hitFrames">命中帧数组（升序，至少一个元素）。</param>
     /// <param name="invulnTicks">无敌时长（逻辑帧，0 = 不无敌）。</param>
-    public SkillRow(int id, string name, int damage, int cooldownTicks, int rangeMm, int hitFrame, int invulnTicks)
+    public SkillRow(int id, string name, int damage, int cooldownTicks, int rangeMm, int[] hitFrames, int invulnTicks)
     {
         Id = id;
         Name = name;
         Damage = damage;
         CooldownTicks = cooldownTicks;
         RangeMm = rangeMm;
-        HitFrame = hitFrame;
+        HitFrames = hitFrames;
         InvulnTicks = invulnTicks;
     }
 }
@@ -606,9 +606,9 @@ public sealed class ServerTables
                     case "Skill":
                         for (int r = 0; r < sheet.RowCount; r++)
                         {
-                            // 命中帧取表里第一个值；表里没写就按 1 帧兜底（否则技能进队列后永不出队）
-                            int[] hitFrames = sheet.IntList(r, "hitFrames");
-                            int hitFrame = hitFrames.Length > 0 && hitFrames[0] > 0 ? hitFrames[0] : 1;
+                            // 命中帧可以写多段（如 "40,60,80"）：过滤掉 <=0 的值、按升序排好；
+                            // 表里没写就按 1 帧兜底（否则技能进队列后永不出队）
+                            int[] hitFrames = NormalizeHitFrames(sheet.IntList(r, "hitFrames"));
 
                             // 毫秒换算成逻辑帧并向上取整（30Hz 一帧 33ms）：5000ms ⇒ 152 帧
                             int cooldownMs = sheet.IntOr(r, "cooldownMs", 0);
@@ -625,7 +625,7 @@ public sealed class ServerTables
                                 sheet.Int(r, "damage"),
                                 cooldownTicks,
                                 sheet.IntOr(r, "rangeMm", 2000),
-                                hitFrame,
+                                hitFrames,
                                 invulnTicks);
                             result._skills[row.Id] = row;
                         }
@@ -699,6 +699,35 @@ public sealed class ServerTables
         }
 
         return false;
+    }
+
+    /// <summary>把表里的命中帧列表整理成可用数组：丢掉小于等于 0 的值、升序排序、空表按 1 帧兜底。</summary>
+    /// <param name="raw">表里读出来的原始列表（可能为空或乱序）。</param>
+    /// <returns>至少含一个元素的升序数组。</returns>
+    private static int[] NormalizeHitFrames(int[] raw)
+    {
+        if (raw == null || raw.Length == 0)
+        {
+            return new[] { 1 };
+        }
+
+        var valid = new List<int>(raw.Length);
+
+        for (int i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] > 0)
+            {
+                valid.Add(raw[i]);
+            }
+        }
+
+        if (valid.Count == 0)
+        {
+            return new[] { 1 };
+        }
+
+        valid.Sort();
+        return valid.ToArray();
     }
 }
 
