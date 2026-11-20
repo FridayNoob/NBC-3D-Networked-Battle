@@ -1789,17 +1789,32 @@ namespace NBC.Game.Net
         {
             // 还没进房就来的快照一律丢：那是上一局退出时服务端还在路上发的存货，
             // 里面英雄是死的，应用上去会让新一局一进场就判死。
+            //
+            // ⚠️ 这个小窗口必须能自己结束：进副本的流程是「先进房（收到席位表）→ 再加载场景 → 再调 EnterDungeon」，
+            //    席位表在 EnterDungeon 之前就到了，等不到下一张 —— 以前只靠 HandleRoomState 关窗户，
+            //    结果第二次进副本时这张窗户永远关不上：所有快照都被丢掉，画面里玩家和怪一起冻住。
+            //    所以这里再加一条出口：只要来的是「本局」的快照，就认它，并顺手把窗户关掉。
             if (m_discardSnapshots)
             {
-                m_staleMatchSnapshots++;
+                bool isCurrentMatch = m_room != null
+                    && !string.IsNullOrEmpty(m_room.RoomId)
+                    && snapshot.MatchId == m_room.MatchId;
 
-                if (m_staleMatchSnapshots == 1)
+                if (!isCurrentMatch)
                 {
-                    Log("丢弃进房前收到的快照：第 " + snapshot.ServerTick + " 帧（第 "
-                        + snapshot.MatchId + " 局），等新的席位表");
+                    m_staleMatchSnapshots++;
+
+                    if (m_staleMatchSnapshots == 1)
+                    {
+                        Log("丢弃进房前收到的快照：第 " + snapshot.ServerTick + " 帧（第 "
+                            + snapshot.MatchId + " 局），等新的席位表");
+                    }
+
+                    return;
                 }
 
-                return;
+                m_discardSnapshots = false;
+                Log("收到本局快照，恢复接收：第 " + snapshot.ServerTick + " 帧（第 " + snapshot.MatchId + " 局）");
             }
 
             if (m_room == null || string.IsNullOrEmpty(m_room.RoomId))

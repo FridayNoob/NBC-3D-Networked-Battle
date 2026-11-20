@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-20 | 第二次进副本时玩家和怪一起「冻住」、怪贴脸也不打人 | `NetSession.m_discardSnapshots` 只由 `HandleRoomState` 关闭；而进副本的顺序是「先进房收席位表 → 再加载场景 → 再 `EnterDungeon` 置标志」⇒ 窗口永远关不上，所有快照都被丢，客户端画面停在旧位置（怪看似贴脸、服务端其实在别处） | `Client/Assets/_Project/Game/Net/NetSession.cs`（`HandleSnapshot` 增加出口：来的是本局快照就恢复接收并关窗口） | Console 出现「收到本局快照，恢复接收」；第二次进副本玩家和怪都能动、怪会按距离打人 |
 | 2026-11-20 | 第二次进副本「血条还有血却判死亡」（HUD 读到没进房的驱动） | `HpBarDemoBehaviour.Start` 用 `RuntimeNetDriver.FindJoined()`，第二次进副本时它可能退回「没进房的菜单会话」（`HeroMaxHp == 0`）⇒ 血条此后永不刷新，停在上一局的值 | `Client/Assets/_Project/Boot/HpBarDemoBehaviour.cs`（`Update` 每次确认手里的是已进房驱动，不是就重新 `FindJoined()`，并只在 `IsJoined` 时才写血条） | 血条与实际血量一致；Console 出现「血条改读已进房的驱动」 |
 | 2026-11-20 | 再进副本「立刻死亡」（前两条的真正根因） | 英雄出生点 (-500,0) 距 BOSS 仅 2500mm（= 旋风斩射程）、距最近的怪 3500mm（< 仇恨 4000）；客户端加载 Battle 要 5~7 秒，服务端早已开打 ⇒ 玩家接管时人已经死了 | `Server/NBC.Server.Game/DungeonBattle.cs`（HeroSpawnPoint 挪到 (0,4500)）、`Server/_net-probe/Program.cs`（追击改二维逼近、边界用例按圆形距离、BOSS 仇恨判据反转） | 服务端日志「进入副本 15:51:01.353 → 死亡 15:51:08.601」= 加载期间被打死；net-probe 492/0 |
 | 2026-11-20 | 同上（第二版）：加了局号仍在进场那一帧读到 HP=0/1200 | 那一刻还没收到新的席位表，m_room 仍指向旧局，局号比较过不掉 | `Client/Assets/_Project/Game/Net/NetSession.cs`（DiscardSnapshotsUntilRoomState）、`Client/Assets/_Project/Game/Bootstrap/RuntimeNetDriver.cs` | EditMode 817/0、net-probe 492/0；Console 出现一次「丢弃进房前收到的快照…等新的席位表」 |
