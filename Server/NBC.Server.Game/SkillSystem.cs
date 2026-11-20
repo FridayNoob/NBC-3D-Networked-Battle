@@ -200,6 +200,27 @@ namespace NBC.Server.Game
             return true;
         }
 
+        // 功能：让某个单位在接下来若干帧内不掉血（技能无敌与开局保护共用这一份）。
+        // 入参：entityId 单位实例编号；untilTick 保护到第几帧（闭区间）
+        // 返回：无
+        // 步骤：1) 已有更晚的保护就不动（取 max，不叠加）2) 写入
+        // 上游：DungeonBattle.ProtectHero（开局保护）、GrantInvulnerability（技能无敌）
+        // 下游：m_invulnUntil、IsInvulnerable
+        public void Protect(int entityId, int untilTick)
+        {
+            if (entityId <= 0)
+            {
+                return;
+            }
+
+            if (m_invulnUntil.TryGetValue(entityId, out int existing) && existing > untilTick)
+            {
+                return;
+            }
+
+            m_invulnUntil[entityId] = untilTick;
+        }
+
         /// <summary>把总伤害拆成若干段：前几段取整，余数补给最后一段（保证总和不变）。</summary>
         /// <param name="total">总伤害（点）。</param>
         /// <param name="segments">段数（小于等于 0 时返回空数组）。</param>
@@ -244,6 +265,10 @@ namespace NBC.Server.Game
 
             return tick <= untilTick;
         }
+
+        /// <summary>清掉某个单位的无敌（探针用：测开局保护以外的规则时先把它摘掉）。</summary>
+        /// <param name="entityId">单位实例编号。</param>
+        public void ClearProtection(int entityId) => m_invulnUntil.Remove(entityId);
 
         // 功能：施法成功时给「玩家英雄」记一段无敌窗口（负责人 2026-11-20 定：只给玩家）。
         // 入参：battle 世界（取当前帧号）；caster 施法者；skill 技能行（取无敌时长）

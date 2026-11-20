@@ -236,6 +236,7 @@ namespace NBC.NetProbe
             Console.WriteLine();
             Console.WriteLine("【十七·六】多段命中（R043b 扩展）：一行写多个命中帧，伤害均分、逐段结算");
             Skills_MultiSegment();
+            Battle_SpawnGrace();
 
             Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
@@ -9369,6 +9370,53 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
         /// 【十七·六】多段命中（R043b 扩展）：一行技能写多个命中帧，总伤害均分，每段各自按帧结算。
         /// <para>纯函数先验"拆分不丢伤害"，再拿临时表把 2001 改成两段（10/20 帧、总 300）验真链路。</para>
         /// </summary>
+        /// <summary>
+        /// 【十七·七】开局保护：进副本后先无敌一小段，怪也不仇恨。
+        /// <para>起因：客户端要 5~7 秒才能加载完 Battle，期间服务端的怪已经开打了 ——
+        /// 玩家接管时血条已经是 1000/1200（少了 200）。保护时长来自 Dungeon.csv 的 spawnGraceMs。</para>
+        /// <para>这里故意不清保护（Harness.HeroOf 会清），先验保护本身，再验它到期后能正常掉血。</para>
+        /// </summary>
+        private static void Battle_SpawnGrace()
+        {
+            using (var h = new Harness())
+            {
+                Client a = h.ConnectAndHandshake("甲");
+                a.JoinRoom(string.Empty, 1001);
+                h.WaitUntil(() => a.LastRoom() != null, "进房拿到席位表");
+
+                Room? room = h.Registry.Find(a.LastRoom().RoomId);
+                DungeonBattle battle = room != null ? h.Battles.EnsureBattle(room) : null;
+                h.TickBattles(1);
+                BattleEntity hero = battle?.FindHeroOfPlayer(a.Ack.PlayerId);
+
+                Check("§17g 开局保护：副本表里配了保护时长（spawnGraceMs > 0）",
+                    battle != null && battle.SpawnGraceTicks > 0,
+                    battle == null ? "没有世界" : ("SpawnGraceTicks=" + battle.SpawnGraceTicks));
+
+                Check("§17g 开局保护：进副本那一刻英雄处于无敌状态",
+                    hero != null && battle.IsInvulnerable(hero.Id),
+                    hero == null ? "没有英雄" : "IsInvulnerable=false");
+
+                int hpBefore = hero.Hp;
+                battle.ApplyDamage(hero.Id, 200);
+
+                Check("§17g 开局保护：保护期内打 200 点一滴血不掉",
+                    hero.Hp == hpBefore, $"hp={hero.Hp}（打前 {hpBefore}）");
+
+                for (int i = 0; i < battle.SpawnGraceTicks + 1; i++)
+                {
+                    battle.Step();
+                }
+
+                Check("§17g 开局保护：保护到期后不再免伤", !battle.IsInvulnerable(hero.Id), "还在无敌");
+
+                int beforeLanded = hero.Hp;
+                battle.ApplyDamage(hero.Id, 200);
+
+                Check("§17g 开局保护：到期后伤害正常结算",
+                    hero.Hp == beforeLanded - 200, $"hp={hero.Hp}（打前 {beforeLanded}）");
+            }
+        }
         private static void Skills_MultiSegment()
         {
             int[] three = SkillSystem.SplitDamage(500, 3);
@@ -10204,7 +10252,22 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             public BattleEntity HeroOf(Client client)
             {
                 DungeonBattle battle = BattleOf(client);
-                return battle == null || client.Ack == null ? null : battle.FindHeroOfPlayer(client.Ack.PlayerId);
+
+                if (battle == null || client.Ack == null)
+                {
+                    return null;
+                }
+
+                BattleEntity hero = battle.FindHeroOfPlayer(client.Ack.PlayerId);
+
+                // 探针默认不相信「开局保护」：它来自副本表的 spawnGraceMs（5000ms ≈ 150 帧），
+                // 会把所有"打了要掉血"的用例一起挡掉。需要验保护的用例自己重新上。
+                if (hero != null)
+                {
+                    battle.ClearProtection(hero.Id);
+                }
+
+                return hero;
             }
 
             /// <summary>一边发输入一边推帧（模拟"客户端每帧发一条"）。</summary>

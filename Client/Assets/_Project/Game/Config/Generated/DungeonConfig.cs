@@ -94,6 +94,7 @@ namespace NBC.Game.Config
                 row.spawnRadiusMm = ParseInt(Cell(cells, header, "spawnRadiusMm"));
                 row.monsters = ParseIntArray(Cell(cells, header, "monsters"));
                 row.bossId = ParseInt(Cell(cells, header, "bossId"));
+                row.spawnGraceMs = ParseInt(Cell(cells, header, "spawnGraceMs"));
 
                 rows.Add(row);
             }

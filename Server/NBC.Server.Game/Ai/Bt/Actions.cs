@@ -43,6 +43,13 @@ namespace NBC.Server.Game.Ai.Bt
                 return null;
             }
 
+            // 开局保护期间不打：英雄刚进副本、客户端还在加载，这时候的仇恨只会变成"进场就挨打"。
+            // 保护时长来自副本表（Dungeon.csv 的 spawnGraceMs），见 DungeonBattle.ProtectHero。
+            if (ctx.World.IsInvulnerable(hero.Id))
+            {
+                return null;
+            }
+
             return hero;
         }
 

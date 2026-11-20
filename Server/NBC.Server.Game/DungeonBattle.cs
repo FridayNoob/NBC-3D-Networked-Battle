@@ -670,6 +670,9 @@ public sealed class DungeonBattle
 
         // 技能系统也在这里建：它的所有规则都依赖表（技能行、单位的技能列表）
         m_skills = new SkillSystem(tables);
+        
+        // 开局保护时长也来自副本表：客户端加载那几秒，英雄不该掉血（见 ProtectHero）。
+        SpawnGraceTicks = tables.FindDungeon(DungeonId)?.SpawnGraceTicks ?? 0;
     }
 
     // 技能系统（没挂表时为 null；探针与调试用）
@@ -705,6 +708,29 @@ public sealed class DungeonBattle
     /// <param name="entityId">单位实例编号。</param>
     /// <returns>true = 这一帧打不动它。</returns>
     public bool IsInvulnerable(int entityId) => m_skills != null && m_skills.IsInvulnerable(entityId, (int)Tick);
+    /// <summary>给某个单位上「开局保护」：从现在起 SpawnGraceTicks 帧内不掉血。</summary>
+    /// <param name="entityId">单位实例编号。</param>
+    /// <remarks>
+    /// 为什么要它：客户端加载 Battle 场景要 5~7 秒，这段时间服务端已经在跑 AI，
+    /// 怪可能走过来放技能 —— 玩家接管时平白少一截血（2026-11-20 实测「进副本就少 200」）。
+    /// 保护时长来自 Dungeon.csv 的 spawnGraceMs，不是代码常量。
+    /// </remarks>
+    public void ProtectHero(int entityId)
+    {
+        if (m_skills == null || SpawnGraceTicks <= 0)
+        {
+            return;
+        }
+
+        m_skills.Protect(entityId, (int)Tick + SpawnGraceTicks);
+    }
+
+    /// <summary>清掉某个单位的无敌（探针用）。</summary>
+    /// <param name="entityId">单位实例编号。</param>
+    public void ClearProtection(int entityId) => m_skills?.ClearProtection(entityId);
+
+    /// <summary>开局保护时长（逻辑帧，来自副本表）。</summary>
+    public int SpawnGraceTicks { get; private set; }
 
     /// <summary>本副本的障碍判定表（探针与调试用；没挂表时是 BattleField.Empty）。</summary>
     public BattleField Field => m_field;

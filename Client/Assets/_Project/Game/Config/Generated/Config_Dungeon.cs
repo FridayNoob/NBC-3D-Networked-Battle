@@ -16,5 +16,6 @@ namespace NBC.Game.Config
         public int spawnRadiusMm;  // 出生点半径（毫米）（int）
         public int[] monsters;  // 普通怪（写重复＝刷多只）（ref:Monster[]）
         public int bossId;  // BOSS（ref:Monster）
+        public int spawnGraceMs;  // 开局保护（毫秒）（int）
     }
 }

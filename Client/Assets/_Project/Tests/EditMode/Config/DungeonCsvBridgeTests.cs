@@ -132,7 +132,7 @@ namespace NBC.Tests.EditMode
             List<CsvColumn> columns = DungeonCsvBridge.ReadColumns(out string error);
 
             Assert.IsEmpty(error, "读表头不应该报错：" + error);
-            Assert.AreEqual(6, columns.Count, "Dungeon.csv 应有 6 列");
+            Assert.AreEqual(7, columns.Count, "Dungeon.csv 应有 7 列（第 7 列是 2026-11-20 加的开局保护 spawnGraceMs）");
             Assert.AreEqual("name", columns[1].Name);
             Assert.AreEqual("名称", columns[1].Label, "第二列中文名应来自 CSV 第二行");
             Assert.AreEqual("出生点半径（毫米）", columns[3].Label);

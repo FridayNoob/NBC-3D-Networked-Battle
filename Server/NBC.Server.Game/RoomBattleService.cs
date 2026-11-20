@@ -422,10 +422,17 @@ public sealed class RoomBattleService
             }
 
             (int spawnX, int spawnZ) = DungeonBattle.HeroSpawnPoint(i);
-            battle.AddEntity(DungeonBattle.HeroConfigId, 0, battle.HeroMaxHp, spawnX, spawnZ,
+            BattleEntity? hero = battle.AddEntity(DungeonBattle.HeroConfigId, 0, battle.HeroMaxHp, spawnX, spawnZ,
                              playerId: playerId,
                              attackDamage: battle.BasicAttackDamage,
                              moveSpeedMmPerTick: battle.HeroMoveMmPerTick);
+
+            // 开局保护：客户端加载 Battle 要 5~7 秒，这段时间服务端已经在跑 AI。
+            // 不给保护的话，玩家接管时可能已经少了一截血（2026-11-20 实测「进副本就少 200」）。
+            if (hero != null)
+            {
+                battle.ProtectHero(hero.Id);
+            }
 
             // ⚠️ **入场就在战绩里占一行**（SRV-17a）：否则"整局什么都没做"的玩家
             //    在草稿里根本不存在 ⇒ 明细里连"0 杀 0 死"那一行都没有 ⇒ 事后答不出"他在不在场"。

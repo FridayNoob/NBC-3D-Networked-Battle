@@ -213,6 +213,9 @@ public readonly struct DungeonRow
     /// <summary>BOSS 的怪编号。</summary>
     public readonly int BossId;
 
+    /// <summary>开局保护时长（逻辑帧）：英雄进副本后这么多帧内不掉血、怪也不仇恨（CSV 里写毫秒，这里换算成帧）。</summary>
+    public readonly int SpawnGraceTicks;
+
     /// <summary>记一行。</summary>
     /// <param name="id">编号。</param>
     /// <param name="name">名称。</param>
@@ -220,7 +223,8 @@ public readonly struct DungeonRow
     /// <param name="spawnRadiusMm">出生点半径。</param>
     /// <param name="monsters">普通怪。</param>
     /// <param name="bossId">BOSS。</param>
-    public DungeonRow(int id, string name, int maxPlayers, int spawnRadiusMm, int[] monsters, int bossId)
+    /// <param name="spawnGraceTicks">开局保护帧数。</param>
+    public DungeonRow(int id, string name, int maxPlayers, int spawnRadiusMm, int[] monsters, int bossId, int spawnGraceTicks)
     {
         Id = id;
         Name = name;
@@ -228,6 +232,7 @@ public readonly struct DungeonRow
         SpawnRadiusMm = spawnRadiusMm;
         Monsters = monsters;
         BossId = bossId;
+        SpawnGraceTicks = spawnGraceTicks;
     }
 }
 
@@ -384,6 +389,21 @@ public sealed class ServerTables
     /// <returns>行；没有返回 null。</returns>
     public DungeonRow? FindDungeon(int id)
         => _dungeons.TryGetValue(id, out DungeonRow row) ? row : (DungeonRow?)null;
+
+    /// <summary>把毫秒换算成逻辑帧（向上取整）。</summary>
+    /// <param name="milliseconds">毫秒；小于等于 0 返回 0。</param>
+    /// <returns>逻辑帧数。</returns>
+    private static int ToTicks(int milliseconds)
+    {
+        if (milliseconds <= 0)
+        {
+            return 0;
+        }
+
+        int tickMs = 1000 / NetContract.TickRate;
+
+        return (milliseconds + tickMs - 1) / tickMs;
+    }
 
     /// <summary>取怪。</summary>
     /// <param name="id">编号。</param>
@@ -545,7 +565,8 @@ public sealed class ServerTables
                                 sheet.Int(r, "maxPlayers"),
                                 sheet.Int(r, "spawnRadiusMm"),
                                 sheet.IntList(r, "monsters"),
-                                sheet.Int(r, "bossId"));
+                                sheet.Int(r, "bossId"),
+                                ToTicks(sheet.IntOr(r, "spawnGraceMs", 0)));
                             result._dungeons[row.Id] = row;
                         }
 
