@@ -9,8 +9,8 @@ using NBC.Shared.Battle;
 namespace NBC.Server.Game
 {
     // 主要功能：判定一次技能能不能放，放出去之后按命中帧延迟扣血。
-    // 主要数据成员：_tables（配置表）、_cooldowns（每对「施法者+技能」剩余逻辑帧）、_pending（待结算队列）。
-    // 主要外部方法：TryCast（入口，五道关）、Tick（每帧递减与结算）、CooldownTicksLeft（给界面/探针查剩余帧）。
+    // 主要数据成员：_tables（配置表）、_cooldowns（每对「施法者+技能」剩余逻辑帧）、_pending（待结算队列）、_invulnUntil（技能无敌窗口）。
+    // 主要外部方法：TryCast（入口，五道关）、Tick（每帧递减与结算）、CooldownTicksLeft（给界面/探针查剩余帧）、IsInvulnerable（免伤查询）。
     // 谁在用它：DungeonBattle（门面转调 + 每帧 Tick）、RoomBattleService（玩家上行）、CastSkillAction（BOSS）。
     // 注意：规则只在这里实现一份；DungeonBattle 不再复制"射程/冷却"判断。
     public sealed class SkillSystem
@@ -23,6 +23,9 @@ namespace NBC.Server.Game
 
         // 待结算队列（按入队顺序结算，保证同帧多次释放的顺序确定）
         private readonly List<PendingCast> m_pending = new();
+
+        // 技能无敌窗口：键是单位实例编号，值是「无敌到第几帧」（闭区间；不存在表示不无敌）
+        private readonly Dictionary<int, int> m_invulnUntil = new();
 
         // 一次待结算的命中
         private readonly struct PendingCast
@@ -184,8 +187,55 @@ namespace NBC.Server.Game
             }
 
             m_pending.Add(new PendingCast(caster.Id, targetId, skill.Damage, skill.HitFrame));
+            GrantInvulnerability(battle, caster, skill);
             CastCount++;
             return true;
+        }
+
+        // 功能：判断某个单位此刻是否处于技能无敌窗口内。
+        // 入参：entityId 单位实例编号；tick 当前逻辑帧（世界帧号）
+        // 返回：true = 这一帧打不动它
+        // 步骤：1) 表里没有这个单位就返回 false 2) 结束帧大于等于当前帧才算无敌（闭区间）
+        // 上游：DungeonBattle.ApplyDamage、DungeonBattle.IsInvulnerable
+        // 下游：m_invulnUntil
+        public bool IsInvulnerable(int entityId, int tick)
+        {
+            if (!m_invulnUntil.TryGetValue(entityId, out int untilTick))
+            {
+                return false;
+            }
+
+            return tick <= untilTick;
+        }
+
+        // 功能：施法成功时给「玩家英雄」记一段无敌窗口（负责人 2026-11-20 定：只给玩家）。
+        // 入参：battle 世界（取当前帧号）；caster 施法者；skill 技能行（取无敌时长）
+        // 返回：无
+        // 步骤：
+        //   1) 时长为 0 或不是玩家英雄 → 什么都不做（怪物放技能照旧会掉血）
+        //   2) 结束帧 = 当前帧 + 时长；已有窗口时取更晚的那个（不累加，防以后连放叠加）
+        // 上游：TryCast 放行之后
+        // 下游：IsInvulnerable
+        private void GrantInvulnerability(DungeonBattle battle, BattleEntity caster, SkillRow skill)
+        {
+            if (skill.InvulnTicks <= 0)
+            {
+                return;
+            }
+
+            if (caster.Kind != 0 || caster.PlayerId == 0)
+            {
+                return;
+            }
+
+            int untilTick = (int)battle.Tick + skill.InvulnTicks;
+
+            if (m_invulnUntil.TryGetValue(caster.Id, out int existing) && existing > untilTick)
+            {
+                return;
+            }
+
+            m_invulnUntil[caster.Id] = untilTick;
         }
 
         // 功能：每帧推进 —— 冷却递减、待结算递减到 0 就扣血。

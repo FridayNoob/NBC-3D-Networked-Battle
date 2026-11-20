@@ -95,6 +95,7 @@ namespace NBC.Game.Config
                 row.hitFrames = ParseIntArray(Cell(cells, header, "hitFrames"));
                 row.cooldownMs = ParseInt(Cell(cells, header, "cooldownMs"));
                 row.rangeMm = ParseInt(Cell(cells, header, "rangeMm"));
+                row.invulnMs = ParseInt(Cell(cells, header, "invulnMs"));
 
                 rows.Add(row);
             }

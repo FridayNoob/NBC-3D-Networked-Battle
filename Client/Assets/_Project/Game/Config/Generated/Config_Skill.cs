@@ -17,5 +17,6 @@ namespace NBC.Game.Config
         public int[] hitFrames;  // 命中帧（int[]）
         public int cooldownMs;  // 冷却（毫秒）（int）
         public int rangeMm;  // 射程（毫米）（int）
+        public int invulnMs;  // 无敌时长（毫秒）（int）
     }
 }

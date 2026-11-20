@@ -1,7 +1,7 @@
-﻿id,name,damage,damageType,hitFrames,cooldownMs,rangeMm
-编号,名称,伤害（点）,伤害类型,命中帧,冷却（毫秒）,射程（毫米）
-int,string,int,enum:EDamageType,int[],int,int
-key,"len(1,16)","range(1,99999)",,,"range(0,60000)","range(100,20000)"
-2001,旋风斩,500,Physical,40,6000,2500
-2002,上挑斩,80,Physical,22,8000,2500
-2003,突进斩,120,Physical,48,12000,3000
+﻿id,name,damage,damageType,hitFrames,cooldownMs,rangeMm,invulnMs
+编号,名称,伤害（点）,伤害类型,命中帧,冷却（毫秒）,射程（毫米）,无敌时长（毫秒）
+int,string,int,enum:EDamageType,int[],int,int,int
+key,"len(1,16)","range(1,99999)",,,"range(0,60000)","range(100,20000)","range(0,10000)"
+2001,旋风斩,500,Physical,40,6000,2500,2667
+2002,上挑斩,80,Physical,22,8000,2500,1600
+2003,突进斩,120,Physical,48,12000,3000,2933

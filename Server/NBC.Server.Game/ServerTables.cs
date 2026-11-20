@@ -291,6 +291,9 @@ public readonly struct SkillRow
     /// <summary>命中帧（逻辑帧，取自表里 hitFrames 的第一个值；至少 1）。</summary>
     public readonly int HitFrame;
 
+    /// <summary>无敌时长（逻辑帧，30Hz；0 表示这个技能不无敌）。</summary>
+    public readonly int InvulnTicks;
+
     /// <summary>记一行。</summary>
     /// <param name="id">编号。</param>
     /// <param name="name">名称。</param>
@@ -298,7 +301,8 @@ public readonly struct SkillRow
     /// <param name="cooldownTicks">冷却（逻辑帧）。</param>
     /// <param name="rangeMm">射程（毫米）。</param>
     /// <param name="hitFrame">命中帧（逻辑帧）。</param>
-    public SkillRow(int id, string name, int damage, int cooldownTicks, int rangeMm, int hitFrame)
+    /// <param name="invulnTicks">无敌时长（逻辑帧，0 = 不无敌）。</param>
+    public SkillRow(int id, string name, int damage, int cooldownTicks, int rangeMm, int hitFrame, int invulnTicks)
     {
         Id = id;
         Name = name;
@@ -306,6 +310,7 @@ public readonly struct SkillRow
         CooldownTicks = cooldownTicks;
         RangeMm = rangeMm;
         HitFrame = hitFrame;
+        InvulnTicks = invulnTicks;
     }
 }
 
@@ -610,13 +615,18 @@ public sealed class ServerTables
                             int tickMs = 1000 / NetContract.TickRate;
                             int cooldownTicks = cooldownMs <= 0 ? 0 : ((cooldownMs + tickMs - 1) / tickMs);
 
+                            // 无敌时长同一套换算：2667ms ⇒ 81 帧。填 0（或没这一列）= 这个技能不无敌
+                            int invulnMs = sheet.IntOr(r, "invulnMs", 0);
+                            int invulnTicks = invulnMs <= 0 ? 0 : ((invulnMs + tickMs - 1) / tickMs);
+
                             var row = new SkillRow(
                                 sheet.Int(r, "id"),
                                 sheet.Str(r, "name"),
                                 sheet.Int(r, "damage"),
                                 cooldownTicks,
                                 sheet.IntOr(r, "rangeMm", 2000),
-                                hitFrame);
+                                hitFrame,
+                                invulnTicks);
                             result._skills[row.Id] = row;
                         }
 

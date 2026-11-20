@@ -370,6 +370,13 @@ public readonly struct DamageResult
     /// <summary>目标不存在。</summary>
     /// <returns>结果。</returns>
     public static DamageResult Missing() => new(null, default, 0, false);
+
+    /// <summary>
+    /// 目标正在技能无敌窗口里（R057）：这次伤害不结算。
+    /// <para>用 <see cref="Ok"/> 判断成功的调用方会自然当成「没打中」，于是不记伤害事件、不记账、也不判死亡。</para>
+    /// </summary>
+    /// <returns>结果。</returns>
+    public static DamageResult Blocked() => new(null, default, 0, false);
 }
 
 /// <summary>一局副本战斗的**权威世界**（M3 状态同步）。</summary>
@@ -693,6 +700,11 @@ public sealed class DungeonBattle
     // 下游：SkillSystem.CooldownTicksLeft
     public int SkillCooldownTicksLeft(int casterId, int skillId)
         => m_skills == null ? 0 : m_skills.CooldownTicksLeft(casterId, skillId);
+
+    /// <summary>查询某个单位此刻是否处于技能无敌窗口（R057；探针与日志用）。</summary>
+    /// <param name="entityId">单位实例编号。</param>
+    /// <returns>true = 这一帧打不动它。</returns>
+    public bool IsInvulnerable(int entityId) => m_skills != null && m_skills.IsInvulnerable(entityId, (int)Tick);
 
     /// <summary>本副本的障碍判定表（探针与调试用；没挂表时是 BattleField.Empty）。</summary>
     public BattleField Field => m_field;
@@ -1025,6 +1037,16 @@ public sealed class DungeonBattle
         if (target == null)
         {
             return DamageResult.Missing();
+        }
+
+        // R057：技能无敌窗口内**任何伤害都不结算**（负责人 2026-11-20 定）。
+        // ⚠️ 位置必须在所有记账/事件/判死之前 —— 免伤不是"扣 0 血"，
+        //    而是"这一下根本没发生"：飘字不弹、承伤不加、也不会被打死。
+        // ⚠️ 放在 `ApplyDamage` 这唯一闸门上，就自动覆盖普攻、技能、掉落伤害等所有来源，
+        //    不需要每个调用点各判一次（W15：一个判据只有一处实现）。
+        if (IsInvulnerable(targetId))
+        {
+            return DamageResult.Blocked();
         }
 
         bool wasAlive = target.Alive;

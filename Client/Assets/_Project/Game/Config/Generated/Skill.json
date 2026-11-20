@@ -1,9 +1,9 @@
 {
   "table": "Skill",
-  "fields": ["id", "name", "damage", "damageType", "hitFrames", "cooldownMs", "rangeMm"],
+  "fields": ["id", "name", "damage", "damageType", "hitFrames", "cooldownMs", "rangeMm", "invulnMs"],
   "rows": [
-    { "id": 2001, "name": "旋风斩", "damage": 500, "damageType": "Physical", "hitFrames": [ 40 ], "cooldownMs": 6000, "rangeMm": 2500 },
-    { "id": 2002, "name": "上挑斩", "damage": 80, "damageType": "Physical", "hitFrames": [ 22 ], "cooldownMs": 8000, "rangeMm": 2500 },
-    { "id": 2003, "name": "突进斩", "damage": 120, "damageType": "Physical", "hitFrames": [ 48 ], "cooldownMs": 12000, "rangeMm": 3000 }
+    { "id": 2001, "name": "旋风斩", "damage": 500, "damageType": "Physical", "hitFrames": [ 40 ], "cooldownMs": 6000, "rangeMm": 2500, "invulnMs": 2667 },
+    { "id": 2002, "name": "上挑斩", "damage": 80, "damageType": "Physical", "hitFrames": [ 22 ], "cooldownMs": 8000, "rangeMm": 2500, "invulnMs": 1600 },
+    { "id": 2003, "name": "突进斩", "damage": 120, "damageType": "Physical", "hitFrames": [ 48 ], "cooldownMs": 12000, "rangeMm": 3000, "invulnMs": 2933 }
   ]
 }

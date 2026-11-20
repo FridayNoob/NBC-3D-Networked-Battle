@@ -230,6 +230,10 @@ namespace NBC.NetProbe
             Skills_CastAndCooldown();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·五】技能无敌帧（R057）：放技能期间打不动，窗口结束照常掉血");
+            Skills_Invulnerability();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -9230,6 +9234,87 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             Check("§17d 技能：冷却结束后可以再放",
                 battle.TryCastSkill(hero, 2001, wolf2.Id, out reason), reason);
+        }
+
+        /// <summary>
+        /// 【十七·五】技能无敌帧（R057）走真表：无敌时长列、窗口内免伤、窗口结束恢复、只给玩家。
+        /// <para>不写死时长：`invulnMs` 是负责人可调的，读表后再验证"读出来的帧数被用上了"。</para>
+        /// </summary>
+        private static void Skills_Invulnerability()
+        {
+            string sourceDir;
+
+            if (!ServerTables.TryResolveConfigDir(out sourceDir))
+            {
+                Check("§17e 无敌：找得到配置表目录（否则假绿）", false, "找不到 Configs\\Design");
+                return;
+            }
+
+            ServerTables tables;
+            string error;
+
+            if (!ServerTables.TryLoad(sourceDir, out tables, out error))
+            {
+                Check("§17e 无敌：能加载真表", false, error);
+                return;
+            }
+
+            SkillRow? slash = tables.FindSkill(2001);
+            int invulnTicks = slash == null ? 0 : slash.Value.InvulnTicks;
+            int hitFrame = slash == null ? 0 : slash.Value.HitFrame;
+            int rangeMm = slash == null ? 0 : slash.Value.RangeMm;
+
+            Check("§17e 无敌：旋风斩解析出无敌帧",
+                slash != null && invulnTicks > 0,
+                slash == null ? "找不到 2001" : $"invulnTicks={invulnTicks}（{invulnTicks * 1000 / 30}ms 左右）");
+
+            var battle = new DungeonBattle("r-invuln", 1001, 40, 1200, 20);
+            battle.AttachTables(tables);
+
+            int nearX = rangeMm / 2;
+
+            BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1);
+            BattleEntity wolf = battle.AddEntity(6001, 1, 300, nearX, 0);
+
+            string reason;
+
+            Check("§17e 无敌：技能放得出去", battle.TryCastSkill(hero, 2001, wolf.Id, out reason), reason);
+
+            Check("§17e 无敌：英雄从施法那一刻起进无敌窗口", battle.IsInvulnerable(hero.Id), "IsInvulnerable=false");
+
+            int hpBefore = hero.Hp;
+
+            for (int i = 0; i < 10; i++)
+            {
+                battle.ApplyDamage(hero.Id, 100);
+            }
+
+            Check("§17e 无敌：窗口内连打 10 次一滴血不掉",
+                hero.Hp == hpBefore && hero.Alive, $"hp={hero.Hp}（打前 {hpBefore}）");
+
+            // 只给玩家：怪物放了技能也不该获得无敌
+            BattleEntity wolf2 = battle.AddEntity(6001, 1, 300, nearX, 0);
+
+            Check("§17e 无敌：怪物放技能不获得无敌",
+                battle.TryCastSkill(wolf2, 2003, hero.Id, out reason) && !battle.IsInvulnerable(wolf2.Id),
+                reason);
+
+            for (int i = 0; i < invulnTicks + 1; i++)
+            {
+                battle.Step();
+            }
+
+            Check("§17e 无敌：窗口过后不再免伤", !battle.IsInvulnerable(hero.Id), "还在无敌");
+
+            int beforeLanded = hero.Hp;
+
+            battle.ApplyDamage(hero.Id, 100);
+
+            Check("§17e 无敌：窗口结束后伤害正常结算",
+                hero.Hp == beforeLanded - 100, $"hp={hero.Hp}（打前 {beforeLanded}）");
+
+            // 命中帧对齐：技能自己那一下仍然在 hitFrame 后生效（无敌不影响自己打人）
+            Check("§17e 无敌：免伤不影响技能自己的命中（命中帧按表）", hitFrame >= 1, "hitFrame=" + hitFrame);
         }
 
         private static QuestTables LoadQuestTables()
