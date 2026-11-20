@@ -253,6 +253,14 @@ namespace NBC.Game.Player
 
                 StripPoseClipEvents(animator);
 
+                // 动画事件只会派发给「Animator 所在的那个物体」上的组件；
+                // 玩家模型是子物体，所以接收器要挂在 animator.gameObject 上，挂在 [Player_Hero] 根部收不到。
+                if (animator.gameObject.GetComponent<PlayerAnimationEvents>() == null)
+                {
+                    animator.gameObject.AddComponent<PlayerAnimationEvents>();
+                    Debug.Log("[PlayerBrain] 已在模型物体上补挂 PlayerAnimationEvents：" + animator.gameObject.name, animator.gameObject);
+                }
+
                 if (GetComponent<PlayerSkinnedMeshGuard>() == null)
                 {
                     gameObject.AddComponent<PlayerSkinnedMeshGuard>();

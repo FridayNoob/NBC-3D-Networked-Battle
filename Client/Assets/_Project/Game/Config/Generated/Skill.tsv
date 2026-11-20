@@ -1,4 +1,4 @@
 id	name	damage	damageType	hitFrames	cooldownMs	rangeMm	invulnMs
-2001	旋风斩	500	Physical	40	6000	2500	2667
+2001	旋风斩	500	Physical	15,29,41	6000	2500	2667
 2002	上挑斩	80	Physical	22	8000	2500	1600
 2003	突进斩	120	Physical	48	12000	3000	2933
