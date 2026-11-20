@@ -145,6 +145,9 @@ namespace NBC.Game.Net
         // 第一张快照只记一句日志就够；每帧记会把日志刷爆。
         private bool m_loggedFirstSnapshot;
 
+        // 因为局号对不上被丢弃的快照条数（上一局的残留）；只用于日志与排查。
+        private int m_staleMatchSnapshots;
+
         // 已发出的输入条数，见 NextInputSeq；从 1 起。
         private int m_inputSeq;
 
@@ -1268,6 +1271,7 @@ namespace NBC.Game.Net
             }
 
             string previousRoomId = m_room != null ? m_room.RoomId : null;
+            int previousMatchId = m_room != null ? m_room.MatchId : -1;
 
             m_room = state;
 
@@ -1277,6 +1281,16 @@ namespace NBC.Game.Net
             {
                 m_world.Clear();
                 m_loggedFirstSnapshot = false;
+                m_staleMatchSnapshots = 0;
+            }
+
+            // 同一间房开了新一局（局号 +1）⇒ 上一局的实体已经作废，画面必须清干净，
+            // 否则重开那一刻还挂着上一局的尸体与残血。
+            if (previousMatchId >= 0 && previousMatchId != state.MatchId)
+            {
+                m_world.Clear();
+                m_loggedFirstSnapshot = false;
+                m_staleMatchSnapshots = 0;
             }
 
             if (string.IsNullOrEmpty(state.RoomId))
@@ -1756,6 +1770,33 @@ namespace NBC.Game.Net
         // 下游：SnapshotView.Apply、Log
         private void HandleSnapshot(WorldSnapshot snapshot)
         {
+            // 上一局残留的快照会晚一点到（网络管道里的存货）：里面英雄是死的，
+            // 新一局一进场就会被判成立刻死亡。局号比当前旧的直接丢。
+            if (m_room != null && snapshot.MatchId > 0)
+            {
+                if (snapshot.MatchId < m_room.MatchId)
+                {
+                    m_staleMatchSnapshots++;
+
+                    if (m_staleMatchSnapshots == 1)
+                    {
+                        Log("丢弃上一局的残留快照：第 " + snapshot.ServerTick + " 帧属于第 "
+                            + snapshot.MatchId + " 局，当前是第 " + m_room.MatchId + " 局");
+                    }
+
+                    return;
+                }
+
+                // 服务端先开打、后补发席位表时，局号会比本地这份新：以快照为准，往后就按它丢旧的。
+                if (snapshot.MatchId > m_room.MatchId)
+                {
+                    m_room.MatchId = snapshot.MatchId;
+                    m_world.Clear();
+                    m_loggedFirstSnapshot = false;
+                    m_staleMatchSnapshots = 0;
+                }
+            }
+
             bool applied = m_world.Apply(snapshot);
 
             if (!applied)

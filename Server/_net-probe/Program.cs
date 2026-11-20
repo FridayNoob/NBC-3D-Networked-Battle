@@ -3083,7 +3083,7 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
                 Check("网络模拟器：延迟下面进房与快照照样工作（不是「连上就完事」）",
                     inRoom && hasWorld && session.CurrentRoom != null && session.CurrentRoom.Members.Count >= 1,
-                    $"进房={inRoom}，收到世界={hasWorld}，房号={(session.CurrentRoom == null ? "无" : session.CurrentRoom.RoomId)}");
+                    $"进房={inRoom}，收到世界={hasWorld}，房号={(session.CurrentRoom == null ? "无" : session.CurrentRoom.RoomId)}，局号={(session.CurrentRoom == null ? -1 : session.CurrentRoom.MatchId)}，世界={session.World.Describe()}");
 
                 sim.Dispose();
             }

@@ -809,6 +809,10 @@ public sealed class RoomBattleService
             // 而客户端拒收不比上一张新的快照（防画面倒退），归零会让它把新世界全丢掉。
             view.ServerTick = serverTick;
 
+            // 局号：客户端用它丢弃「上一局残留、还在网络管道里的快照」——
+            // 那些快照里英雄是死的，新一局一进场就会被误判成立刻死亡。
+            view.MatchId = room.MatchId;
+
             byte[] payload = new ServerMessage { Snapshot = view }.ToByteArray();
 
             for (int i = 0; i < group.SessionIds.Count; i++)
@@ -825,6 +829,7 @@ public sealed class RoomBattleService
         {
             WorldSnapshot fullView = battle.ToSnapshot();
             fullView.ServerTick = serverTick;
+            fullView.MatchId = room.MatchId;
 
             byte[] full = new ServerMessage { Snapshot = fullView }.ToByteArray();
 

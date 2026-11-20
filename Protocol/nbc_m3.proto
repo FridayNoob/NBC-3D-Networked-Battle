@@ -217,6 +217,7 @@ message WorldSnapshot
 {
     int32                   server_tick = 1;   // 服务端帧号（单调递增）
     repeated EntitySnapshot entities    = 2;
+    int32                   match_id    = 3;   // 这一局的对局号（房间的 MatchId）；上一局的残留快照由客户端丢弃
 }
 
 // ============================================================================

@@ -384,7 +384,10 @@ namespace NBC.Game.Player
 
             if (driver != null)
             {
-                driver.LeaveRoom();
+                // 只发 LeaveRoom 是不够的：驱动还开着 AutoJoin，退房后下一帧会自动重新进房，
+                // 服务端会在你切场景的途中又开一局（再进副本必死就是这么来的）。
+                // ExitDungeon 会先关 AutoJoin 再退房，并把表现层标记切到「不在副本里」。
+                driver.ExitDungeon();
             }
 
             DeathScreenOverlay.Ensure().Hide();

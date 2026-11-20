@@ -569,13 +569,8 @@ namespace NBC.Game.Bootstrap
             // ⚠️ 先把副本进出的四个开关一次性打到「在世界」：
             //    以前只发 LeaveRoom，没关 AutoJoin ⇒ 退房后 RoomId 变空，下一帧 Update 又自动进了房，
             //    人站在草地上却还挂在副本里（结算面板 / 死亡黑幕跟着冒出来）。
-            //    现在只允许走 ExitToWorld 这一个入口，不许零散改字段。
-            m_presence.ExitToWorld();
-
-            if (m_session != null)
-            {
-                m_session.LeaveRoom();
-            }
+            //    现在只允许走 ExitDungeon 这一个入口，不许零散改字段。
+            ExitDungeon();
 
             // ⚠️ 回世界前先把「表现层」彻底关掉：
             //    切场景会把 Battle 里的绑定器连槽位一起销毁，但驱动是跨场景常驻的，
@@ -697,7 +692,51 @@ namespace NBC.Game.Bootstrap
             m_presence.EnterDungeon();
             m_autoJoin = m_presence.AutoJoin;
             m_bindPresentation = m_presence.InDungeon;
+            ClearStalePresentation();
+            Debug.Log("[副本] 进副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
             ReviveLocalPlayerAfterRestart();
+        }
+
+        // 功能：清掉上一局留在表现层的快照，免得第一帧就按「上一局那个已经死了的英雄」判死。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 清快照视图（里面的英雄实例还是上一局那个，Alive=false）
+        //   2) 清单位槽位，等新快照重建
+        //   3) 复位血量记账，否则第一帧的「掉血飘字」会拿上一局的血量当基准
+        // 上游/下游：EnterDungeon 调用；下游 PresentationFeed.Clear、SnapshotSceneBinder.ClearSlots。
+        private void ClearStalePresentation()
+        {
+            if (m_feed != null)
+            {
+                m_feed.Clear();
+            }
+
+            if (m_binder != null)
+            {
+                m_binder.ClearSlots();
+            }
+
+            m_heroHpKnown = false;
+            m_heroLastHp = 0;
+        }
+
+        // 功能：离开副本回世界：退房 + 把四个开关一次性打到「不在副本里」。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 先关自动进房，再退房 —— 顺序反过来的话，退房让 RoomId 变空，下一帧 Update 会立刻自动重新进房，
+        //      服务端就会在你还在切场景时又开一局（表现是「刚回世界就又被塞进副本 / 再进必死」）
+        //   2) 退房走 NetSession.LeaveRoom
+        //   3) 同步序列化字段，保持 Inspector 值与运行值一致
+        // 上游/下游：PlayerDeathFlow.ExitToWorld、RuntimeNetDriver.ReturnToWorldRoutine；下游 BattlePresence.ExitToWorld。
+        public void ExitDungeon()
+        {
+            m_presence.ExitToWorld();
+            m_autoJoin = m_presence.AutoJoin;
+            m_bindPresentation = m_presence.InDungeon;
+            Debug.Log("[副本] 离开副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
+            LeaveRoom();
         }
 
         // 功能：控制是否把快照画到场景里、并纠偏本地英雄。
@@ -860,6 +899,7 @@ namespace NBC.Game.Bootstrap
                 m_presence.MarkJoinRequested();
 
                 // 房号留空 = 服务端安排；副本编号决定用哪张图
+                Debug.Log("[副本] 自动进房（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
                 m_session.JoinRoom(string.Empty, m_dungeonId);
             }
 
@@ -1728,6 +1768,8 @@ namespace NBC.Game.Bootstrap
             // 血量为 0：让本地角色进死亡状态（只切一次，PlayerBrain 自己会拒绝重复请求）
             if (!hero.Alive)
             {
+                Debug.Log("[副本] 快照说英雄已死（第 " + Time.frameCount + " 帧，HP=" + hero.Hp + "/" + hero.MaxHp
+                    + "，实体 #" + hero.EntityId + "）" + m_presence.ToString());
                 RequestPlayerDeathOnce();
             }
 
