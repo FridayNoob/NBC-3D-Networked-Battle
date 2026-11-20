@@ -445,6 +445,15 @@ namespace NBC.Game.Bootstrap
                 handler(result);
             }
 
+            // ⚠️ 已经退房（例如刚点了「返回世界」）时不能再弹结算：
+            //    服务端可能在退房那一刻才把这条结算发出来，落到 World 场景里就是
+            //    「草地上压着一块失败面板」。判据用 IsJoined（= 还在房间里）。
+            if (!IsJoined)
+            {
+                Debug.Log("[结算] 已经离开副本，忽略迟到的结算（" + DungeonOutcomeText.Title(result.Outcome) + "）。");
+                return;
+            }
+
             DungeonResultPanel.Ensure().Show(result, RestartDungeon, ReturnToWorld);
         }
 
@@ -574,6 +583,7 @@ namespace NBC.Game.Bootstrap
             // ⚠️ 死亡黑幕要在这里收掉：胜利结算时可能有一块「你已倒下」还亮着，
             //    它是 DontDestroyOnLoad 的 Canvas 下的面板，切场景不会自己消失。
             NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
+            NBC.Game.UI.DungeonResultPanel.HideIfShowing();
 
             if (m_binder != null)
             {
@@ -610,6 +620,11 @@ namespace NBC.Game.Bootstrap
             m_binder = null;
             m_feed.Clear();
             CloseHud();
+
+            // 换场后再关一次两个「全屏面板」：闭包里有异步（面板是异步加载的），
+            // 上一帧关掉、这一帧才加载完的实例会自己亮起来。
+            NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
+            NBC.Game.UI.DungeonResultPanel.HideIfShowing();
 
             // World 场景不需要表现层（没人观战）；下次进副本时 DungeonEntrance 会重新打开它。
             m_bindPresentation = false;

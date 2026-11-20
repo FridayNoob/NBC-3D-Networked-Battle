@@ -263,9 +263,20 @@ namespace NBC.Game.UI
         // 上游：RuntimeNetDriver.ReturnToWorldRoutine 等「换场」流程。
         public static void HideIfShowing()
         {
+            // 先把「想显示」的意图清掉：占位实例（还没加载到预制体）只要 s_wantShow 为真，
+            // 面板一加载就会自己亮起来 —— 换场景时正是这个时机最容易撞上。
+            s_wantShow = false;
+
             if (s_instance != null && s_instance.IsShowing)
             {
                 s_instance.Hide();
+            }
+
+            UIManager ui = UIManager.Instance;
+
+            if (ui != null)
+            {
+                ui.HidePanel(PanelName);
             }
         }
     }

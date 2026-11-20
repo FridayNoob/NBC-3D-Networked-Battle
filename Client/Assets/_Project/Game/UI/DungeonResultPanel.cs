@@ -123,6 +123,21 @@ namespace NBC.Game.UI
             IsShowing = false;
         }
 
+        // 功能：如果结算面板正显示着就关掉（换场景 / 离开副本时用）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 没有实例就什么都不用做 2) 显示中才 Hide。
+        // 上游/下游：RuntimeNetDriver.ReturnToWorldRoutine、OnDungeonSceneLoaded。
+        // 注意：面板物体挂在场景里，切场景时会被销毁，但『关掉』仍要先做一次 ——
+        //   否则同一帧里 PlayerDeathFlow 还会读到 IsShowing = true，把死亡倒计时卡住。
+        public static void HideIfShowing()
+        {
+            if (s_instance != null && IsShowing)
+            {
+                s_instance.Hide();
+            }
+        }
+
         // 功能：初始化时把画布建好（只建一次）。
         // 入参：无。
         // 返回：无。
