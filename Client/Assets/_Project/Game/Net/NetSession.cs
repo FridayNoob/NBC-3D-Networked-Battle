@@ -148,6 +148,9 @@ namespace NBC.Game.Net
         // 因为局号对不上被丢弃的快照条数（上一局的残留）；只用于日志与排查。
         private int m_staleMatchSnapshots;
 
+        // 进副本时置上：下一次 RoomState 之前的所有快照都丢掉（网络管道里的旧存货）。
+        private bool m_discardSnapshots;
+
         // 已发出的输入条数，见 NextInputSeq；从 1 起。
         private int m_inputSeq;
 
@@ -761,6 +764,19 @@ namespace NBC.Game.Net
             Send(new ClientMessage { LeaveRoom = new LeaveRoomRequest() });
         }
 
+        // 功能：进副本前把「进房」这条线重新盘一遍：丢弃手上还没消化的旧快照，直到下一次 RoomState。
+        // 入参：无
+        // 返回：无
+        // 步骤：置标记 → HandleSnapshot 全部丢掉；HandleRoomState 收到新席位表后自动清标记。
+        // 上游：RuntimeNetDriver.EnterDungeon
+        // 下游：HandleSnapshot、HandleRoomState
+        /// <summary>丢弃旧快照，直到下一次 RoomState（进副本时清管道里的残留）。</summary>
+        public void DiscardSnapshotsUntilRoomState()
+        {
+            m_discardSnapshots = true;
+            m_staleMatchSnapshots = 0;
+        }
+
         // 功能：请求重开当前副本（留在原房间，只把这一局重置：怪重新刷满）。
         // 入参：无。
         // 返回：无；结果由服务端广播的新快照体现（席位表不变）。
@@ -1274,6 +1290,7 @@ namespace NBC.Game.Net
             int previousMatchId = m_room != null ? m_room.MatchId : -1;
 
             m_room = state;
+            m_discardSnapshots = false;
 
             // 换房号（离开 / 进入另一个房间）⇒ 服务端的快照帧号从别处继续。
             // 不清本地 `SnapshotView.ServerTick`，新房间的快照会被判成「旧的」全部丢掉。
@@ -1770,9 +1787,37 @@ namespace NBC.Game.Net
         // 下游：SnapshotView.Apply、Log
         private void HandleSnapshot(WorldSnapshot snapshot)
         {
+            // 还没进房就来的快照一律丢：那是上一局退出时服务端还在路上发的存货，
+            // 里面英雄是死的，应用上去会让新一局一进场就判死。
+            if (m_discardSnapshots)
+            {
+                m_staleMatchSnapshots++;
+
+                if (m_staleMatchSnapshots == 1)
+                {
+                    Log("丢弃进房前收到的快照：第 " + snapshot.ServerTick + " 帧（第 "
+                        + snapshot.MatchId + " 局），等新的席位表");
+                }
+
+                return;
+            }
+
+            if (m_room == null || string.IsNullOrEmpty(m_room.RoomId))
+            {
+                m_staleMatchSnapshots++;
+
+                if (m_staleMatchSnapshots == 1)
+                {
+                    Log("丢弃不在房间时收到的快照：第 " + snapshot.ServerTick + " 帧（第 "
+                        + snapshot.MatchId + " 局）");
+                }
+
+                return;
+            }
+
             // 上一局残留的快照会晚一点到（网络管道里的存货）：里面英雄是死的，
             // 新一局一进场就会被判成立刻死亡。局号比当前旧的直接丢。
-            if (m_room != null && snapshot.MatchId > 0)
+            if (snapshot.MatchId > 0)
             {
                 if (snapshot.MatchId < m_room.MatchId)
                 {

@@ -693,6 +693,14 @@ namespace NBC.Game.Bootstrap
             m_autoJoin = m_presence.AutoJoin;
             m_bindPresentation = m_presence.InDungeon;
             ClearStalePresentation();
+
+            // 管道里还排着上一局的快照：在下一个席位表到达之前，一张都别用，
+            // 否则新一局第一帧就照着上一局的尸体把玩家判死。
+            if (m_session != null)
+            {
+                m_session.DiscardSnapshotsUntilRoomState();
+            }
+
             Debug.Log("[副本] 进副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
             ReviveLocalPlayerAfterRestart();
         }
