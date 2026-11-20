@@ -199,7 +199,26 @@ namespace NBC.Boot
         }
         private void Update()
         {
-            if (!m_assetsReady || m_panel == null || m_driver == null)
+            if (!m_assetsReady || m_panel == null)
+            {
+                return;
+            }
+
+            // 第二次进副本时，Start 拿到的可能是一个「还没进房」的驱动（FindJoined 会退而求其次），
+            // 那种驱动的 HeroMaxHp 一直是 0 ⇒ 血条永远停在上一局的值，看起来就是
+            // 「人已经死了、血条却还有血」。所以这里每次都确认手里的是「真进房」那个。
+            if (m_driver == null || !m_driver.IsJoined)
+            {
+                RuntimeNetDriver joined = RuntimeNetDriver.FindJoined();
+
+                if (joined != null && joined.IsJoined)
+                {
+                    m_driver = joined;
+                    Debug.Log("[HpBarDemo] 血条改读已进房的驱动：" + joined.gameObject.name);
+                }
+            }
+
+            if (m_driver == null || !m_driver.IsJoined)
             {
                 return;
             }

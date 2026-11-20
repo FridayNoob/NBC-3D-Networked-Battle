@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-20 | 第二次进副本「血条还有血却判死亡」（HUD 读到没进房的驱动） | `HpBarDemoBehaviour.Start` 用 `RuntimeNetDriver.FindJoined()`，第二次进副本时它可能退回「没进房的菜单会话」（`HeroMaxHp == 0`）⇒ 血条此后永不刷新，停在上一局的值 | `Client/Assets/_Project/Boot/HpBarDemoBehaviour.cs`（`Update` 每次确认手里的是已进房驱动，不是就重新 `FindJoined()`，并只在 `IsJoined` 时才写血条） | 血条与实际血量一致；Console 出现「血条改读已进房的驱动」 |
 | 2026-11-20 | 再进副本「立刻死亡」（前两条的真正根因） | 英雄出生点 (-500,0) 距 BOSS 仅 2500mm（= 旋风斩射程）、距最近的怪 3500mm（< 仇恨 4000）；客户端加载 Battle 要 5~7 秒，服务端早已开打 ⇒ 玩家接管时人已经死了 | `Server/NBC.Server.Game/DungeonBattle.cs`（HeroSpawnPoint 挪到 (0,4500)）、`Server/_net-probe/Program.cs`（追击改二维逼近、边界用例按圆形距离、BOSS 仇恨判据反转） | 服务端日志「进入副本 15:51:01.353 → 死亡 15:51:08.601」= 加载期间被打死；net-probe 492/0 |
 | 2026-11-20 | 同上（第二版）：加了局号仍在进场那一帧读到 HP=0/1200 | 那一刻还没收到新的席位表，m_room 仍指向旧局，局号比较过不掉 | `Client/Assets/_Project/Game/Net/NetSession.cs`（DiscardSnapshotsUntilRoomState）、`Client/Assets/_Project/Game/Bootstrap/RuntimeNetDriver.cs` | EditMode 817/0、net-probe 492/0；Console 出现一次「丢弃进房前收到的快照…等新的席位表」 |
 | 2026-11-20 | 死亡回 World 再进副本，一进场就判死（HP=0/1200）且无黑幕 | 上一局残留、还在网络管道里的快照被新一局当成真死；死亡退出路径也没关 AutoJoin | `Protocol/nbc_m3.proto`（WorldSnapshot 加 match_id=3）、`Server/NBC.Server.Game/RoomBattleService.cs`、`Client/Assets/_Project/Game/Net/NetSession.cs`、`Client/Assets/_Project/Game/Bootstrap/RuntimeNetDriver.cs`、`Client/Assets/_Project/Game/Player/PlayerDeathFlow.cs` | net-probe 492/0、EditMode 817/0；Console 出现「丢弃上一局的残留快照：第 N 帧属于第 X 局」 |
