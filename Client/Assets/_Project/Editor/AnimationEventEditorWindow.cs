@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using NBC.Game.Player;
 using UnityEditor;
 using UnityEngine;
@@ -73,6 +74,12 @@ namespace NBC.Editor
         // 预览开始时的局部缩放
         private Vector3[] m_snapshotScales;
 
+        // 技能命中帧扫描结果（空表示还没扫）
+        private List<SkillHitRow> m_skillRows;
+
+        // 技能命中帧列表的滚动位置
+        private Vector2 m_skillScroll;
+
         // 功能：菜单入口，打开窗口。
         // 入参：无
         // 返回：无
@@ -96,6 +103,8 @@ namespace NBC.Editor
         // 下游：AddEvent / RemoveEventAt
         private void OnGUI()
         {
+            SkillHitSection.Draw(ref m_skillRows, ref m_skillScroll);
+            EditorGUILayout.Space();
             DrawClipField();
 
             if (m_clip == null)

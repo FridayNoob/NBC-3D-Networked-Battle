@@ -25,7 +25,7 @@ namespace NBC.Game.Player
         // 技能起手事件的订阅者（index = 1~3，对应 Q/E/R）
         public event Action<int> SkillStarted;
 
-        // 技能命中事件的订阅者（index = 1~3）
+        // 技能命中事件的订阅者（skillId = 技能编号，例如 2001）
         public event Action<int> SkillHit;
 
         // 普攻命中事件的订阅者（combo = 1~3，对应三段连击）
@@ -65,16 +65,16 @@ namespace NBC.Game.Player
         }
 
         // 功能：技能命中（建议加在刀真正挥到的那一帧，和 Skill.csv 的 hitFrames 对齐）。
-        // 入参：index 技能序号（1~3）
+        // 入参：skillId 技能编号（例如 2001；同一个技能可以加多个事件表示多段）
         // 返回：无
         // 步骤：打日志 + 触发 SkillHit
         // 上游：动画事件 OnSkillHit
         // 下游：订阅 SkillHit 的特效脚本（刀光、命中火花）
-        public void OnSkillHit(int index)
+        public void OnSkillHit(int skillId)
         {
-            Log("技能 " + index + " 命中帧");
+            Log("技能 " + skillId + " 命中帧");
 
-            SkillHit?.Invoke(index);
+            SkillHit?.Invoke(skillId);
         }
 
         // 功能：普攻命中（三段连击各自的那一帧）。
