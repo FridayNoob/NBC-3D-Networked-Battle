@@ -150,6 +150,23 @@ namespace NBC.Game.UI
             BuildIfNeeded();
         }
 
+        // 功能：面板物体被销毁（换场景）时清掉静态引用与显示标记。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：只清自己那一份，别把别人的实例清掉。
+        // 上游：Unity 生命周期（切场景）。
+        // 下游：Ensure / HideIfShowing。
+        // 注意：静态 bool 不清会一直停在 true，死亡流程会以为"结算面板开着"而卡住倒计时。
+        private void OnDestroy()
+        {
+            if (s_instance == this)
+            {
+                s_instance = null;
+            }
+
+            IsShowing = false;
+        }
+
         // 功能：面板显示时响应快捷键（R 再来一次，Esc 返回世界）。
         // 入参：无。
         // 返回：无。

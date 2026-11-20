@@ -185,7 +185,10 @@ namespace NBC.Game.Player
 
             RuntimeNetDriver driver = GetDriver();
 
-            if (driver != null && driver.IsJoined && !driver.HeroAlive)
+            // 只有"表现层正绑在副本里"才算副本死亡：
+            // 回 World 之后驱动可能还留着上一局的 heroAlive=False（甚至自动重新进了房），
+            // 只看 IsJoined 会让人在草地上又倒一次。
+            if (driver != null && driver.IsJoined && driver.BindPresentation && !driver.HeroAlive)
             {
                 return true;
             }

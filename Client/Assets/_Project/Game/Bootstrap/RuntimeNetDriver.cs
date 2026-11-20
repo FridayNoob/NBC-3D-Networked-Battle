@@ -445,10 +445,11 @@ namespace NBC.Game.Bootstrap
                 handler(result);
             }
 
-            // ⚠️ 已经退房（例如刚点了「返回世界」）时不能再弹结算：
-            //    服务端可能在退房那一刻才把这条结算发出来，落到 World 场景里就是
-            //    「草地上压着一块失败面板」。判据用 IsJoined（= 还在房间里）。
-            if (!IsJoined)
+            // ⚠️ 已经退房 / 已经离开副本时不能再弹结算：
+            //    服务端可能在退房那一刻才把这条结算发出来；更常见的是退房后自动重新进房，
+            //    结算跟着落到 World 场景里，就是「草地上压着一块失败面板」。
+            //    判据用 BindPresentation（= 表现层正绑在副本里），比 IsJoined 更贴合"我现在在不在副本中"。
+            if (!m_bindPresentation)
             {
                 Debug.Log("[结算] 已经离开副本，忽略迟到的结算（" + DungeonOutcomeText.Title(result.Outcome) + "）。");
                 return;
@@ -565,12 +566,21 @@ namespace NBC.Game.Bootstrap
         // 上游/下游：ReturnToWorld 启动。
         private IEnumerator ReturnToWorldRoutine()
         {
+            // ⚠️ 先掐掉「自动进房」：Update 里只要 AutoJoin && 在线 && 没在请求中 就会自己 JoinRoom，
+            //    退房之后 RoomId 变空 ⇒ 下一帧就又进了一个房间（回 World 了还挂在副本里），
+            //    症状是「回到世界后英雄半血、还弹结算/黑幕」。进副本时 DungeonEntrance 会重新打开它。
+            m_autoJoin = false;
+
             if (m_session != null)
             {
                 m_session.LeaveRoom();
             }
 
             m_joinRequested = true;
+
+            // 这一局结束了：英雄的"死"只属于副本。不回位的话，World 里那份新的死亡流程
+            // 会读到 heroAlive=False（上一局留下的），立刻开始倒计时并把黑幕亮出来。
+            m_heroAlive = true;
 
             // ⚠️ 回世界前先把「表现层」彻底关掉：
             //    切场景会把 Battle 里的绑定器连槽位一起销毁，但驱动是跨场景常驻的，
