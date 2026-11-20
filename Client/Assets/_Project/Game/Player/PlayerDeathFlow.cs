@@ -297,6 +297,39 @@ namespace NBC.Game.Player
             }
         }
 
+        // 功能：新一局开始时把死亡流程整个复位（「再来一次」用，不要求角色已经死）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：1) 清掉倒计时/旁观/已结算三个标记 2) 关黑幕 3) 竖直积分清零 4) 让状态机复活 5) 恢复渲染器。
+        // 上游/下游：RuntimeNetDriver.RestartRoutine 调用；下游 PlayerBrain.NotifyRevive、PlayerJumpMotor.ResetToGround。
+        // 注意：这里**不搬位置** —— 新一局出生点由服务端快照决定，搬了反而会和快照对账打架。
+        public void ReviveAfterRestart()
+        {
+            EnsureFallbackRefs();
+            m_counting = false;
+            m_resolved = false;
+            m_spectating = false;
+
+            DeathScreenOverlay.HideIfShowing();
+
+            if (m_jumpMotor != null)
+            {
+                m_jumpMotor.ResetToGround();
+            }
+
+            if (m_brain != null)
+            {
+                m_brain.NotifyRevive();
+            }
+
+            SetRenderersVisible(true);
+
+            if (m_logDiagnostics)
+            {
+                Debug.Log("[死亡流程] 新一局开始，死亡状态已复位");
+            }
+        }
+
         // 功能：多人副本里进入旁观：藏起自己、关掉操作、黑幕改成提示。
         // 入参：无。
         // 返回：无。

@@ -391,6 +391,11 @@ namespace NBC.Game.Bootstrap
             // 重开这一局：上一局可能刚亮过死亡黑幕（比如输了之后点「再来一次」），一并收掉
             NBC.Game.UI.DeathScreenOverlay.HideIfShowing();
 
+            // 新一局马上就会发来「活着的英雄」，这里先把死亡标记擦掉：
+            //   不清的话 PlayerDeathFlow 会拿上一局的 false 立刻又进倒计时、黑幕再亮一次。
+            m_heroAlive = true;
+            ReviveLocalPlayerAfterRestart();
+
             if (m_binder != null)
             {
                 m_binder.ClearSlots();
@@ -399,6 +404,34 @@ namespace NBC.Game.Bootstrap
             m_feed.Clear();
 
             Debug.Log("[重开] 已原地重置表现层（不重载场景），等新快照重建单位");
+        }
+
+        // 功能：新一局开始时把本地玩家的死亡表现复位（角色从「倒在地上」站起来）。
+        // 入参：无。
+        // 返回：无。
+        // 步骤：
+        //   1) 优先找 PlayerDeathFlow：它管着倒计时、黑幕与旁观三件事，只复活状态机会留下半套状态
+        //   2) 没有死亡流程组件就退回只让大脑复活（至少不会一直躺着）
+        // 上游/下游：「再来一次」的协程调用；下游 PlayerDeathFlow.ReviveAfterRestart、PlayerBrain.NotifyRevive。
+        private void ReviveLocalPlayerAfterRestart()
+        {
+            PlayerDeathFlow flow = UnityEngine.Object.FindObjectOfType<PlayerDeathFlow>();
+
+            if (flow != null)
+            {
+                flow.ReviveAfterRestart();
+                return;
+            }
+
+            if (m_playerBrain == null)
+            {
+                m_playerBrain = UnityEngine.Object.FindObjectOfType<PlayerBrain>();
+            }
+
+            if (m_playerBrain != null)
+            {
+                m_playerBrain.NotifyRevive();
+            }
         }
 
         // 功能：回世界的协程（退房 → 关表现层 → 销毁带进副本的玩家 → 切 World）。
