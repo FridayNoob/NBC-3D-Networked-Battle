@@ -710,6 +710,44 @@ namespace NBC.Game.Bootstrap
         //   4) 发起连接（非阻塞，连上与否靠每帧 Pump 推进）
         // 上游：Unity 引擎
         // 下游：CountingTransport、NetSession.Connect
+        // 功能：开机自检——同一场景里出现多个 RuntimeNetDriver 时，立刻把所有名字报出来。
+        // 入参：无（Unity 引擎调用）
+        // 返回：无
+        // 步骤：数一遍场景里的驱动；超过一个就逐条打名字与「是否已进房」
+        // 上游：Unity 引擎
+        // 下游：RuntimeNetDriver.FindJoined（真正的挑选规则在那边）
+        // 注意：Login 的 [MenuSession] 会常驻，进副本又建 [DungeonSession]，
+        //       所以「两个驱动」是正常现象；但任何一处用 FindObjectOfType 去拿它，就是 bug 温床。
+        private void Awake()
+        {
+            RuntimeNetDriver[] all = FindObjectsOfType<RuntimeNetDriver>();
+
+            if (all.Length <= 1)
+            {
+                return;
+            }
+
+            var names = new System.Text.StringBuilder();
+
+            foreach (RuntimeNetDriver driver in all)
+            {
+                if (driver == null)
+                {
+                    continue;
+                }
+
+                if (names.Length > 0)
+                {
+                    names.Append("、");
+                }
+
+                names.Append(driver.gameObject.name).Append(driver.IsJoined ? "（已进房）" : "（未进房）");
+            }
+
+            Debug.LogError("[Net] 场景里有 " + all.Length + " 个 RuntimeNetDriver：" + names +
+                           " —— 发包前请用 RuntimeNetDriver.FindJoined()，不要用 FindObjectOfType。", this);
+        }
+
         private void Start()
         {
             m_feed = new PresentationFeed();

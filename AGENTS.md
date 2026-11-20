@@ -95,6 +95,29 @@
 - 待搬清单：**已清空**（2026-11-16 R049 验收后用 `AssetDatabase.MoveAsset` 把 `ModuleA.prefab`、`SwordGirl_FullBody.prefab` 从美术包搬进 `_Project/Prefabs`；GUID 保持，`World.unity` 的 39 处引用自动跟随，无需改 YAML）。以后新增场景引用时直接放这个目录。
 > 2026-11-13：负责人把 `Assets/Art` 整体并入 `Assets/_Project/Art`；`.gitignore` 规则已同步改到新路径（Model 约 4.7GB、Scenes 约 2.9GB 仍不进仓库）。
 
+## 0.7 唯一入口与「禁止静默失败」（负责人 2026-11-20 定）
+
+起因：技能请求发给了**常驻的菜单会话**（Login 建的 `[MenuSession]` 一直活在 DontDestroyOnLoad 里），
+服务端也有两处静默分支 ⇒ 玩家按 Q「没反应」，日志里一行提示都没有。教训写成两条硬规矩：
+
+**① 一件事只能有一个入口（多实例类型禁止 `FindObjectOfType`）**
+
+- 同一类型允许存在多个实例时（`RuntimeNetDriver`、`NetSession`、`PlayerBrain` 等），**业务代码不许用
+  `FindObjectOfType` 自己挑**；必须走显式入口：`RuntimeNetDriver.FindJoined()`、注册表、或依赖注入。
+- 新增这类类型时，`Awake` 里要有一致性自检：发现多个就 `Debug.LogError` **把所有名字打出来**（含是否已进房）。
+- 只有场景里"永远只有一个"的类型（`UIManager`、`SceneFlow` 这类单例）才允许 `Instance` / `FindObjectOfType`。
+
+**② 服务端禁止静默丢弃（Silent Failure）**
+
+- 任何"收到但不处理"的分支，必须**要么 `Note?.Invoke(...)` 记一行、要么累加计数器**，最好两者都做。
+- 每帧都会发生的分支要限流（例如"每个会话只记一次"），否则刷屏等于没有日志。
+- 判据：**玩家说"没反应"时，能不能 5 分钟内在日志里指到断点。** 指不到就是违规。
+
+**③ 表现与判定各有一条链，别混**
+
+- 动画事件（`OnSkillHit` 等）只做表现；伤害帧以服务端 `Skill.csv` 的 `hitFrames` 为准。
+- 要让两者一致，用工具从动画事件**生成**配置（`Tools/NBC/动画/动画事件编辑器` 的「写回 Skill.csv」），而不是两头各写一份。
+
 ## 1. 通用规则 2~15（全项目适用）
 
 | # | 规则 | 关键判据 |
@@ -413,6 +436,7 @@ dotnet build Server\_api-probe\ApiProbe.csproj -m:1 -t:Rebuild     # 0 错 / 10 
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-11-20 | 新增 §0.7「唯一入口与禁止静默失败」：多实例类型（`RuntimeNetDriver`/`NetSession`/`PlayerBrain`）禁止 `FindObjectOfType` 自选、必须走 `FindJoined`/注册表；服务端「收到但不处理」的分支必须记日志或计数（每帧的要限流）；动画事件只做表现，伤害帧以 `Skill.csv` 的 `hitFrames` 为真源 |
 | 2026-11-16 | §0.6 增加「场景实际引用的预制体统一放 `Client/Assets/_Project/Prefabs/`」；当天 R049 验收后已用 `AssetDatabase.MoveAsset` 把 `ModuleA`、`SwordGirl_FullBody` 搬入（GUID 不变、场景引用自动跟随），待搬清单清空 |
 | 2026-11-14 | **Test Runner 改为 AI 代跑**：新增 §4.3 授权（EditMode/PlayMode 测试由 AI 通过 MCP 触发并把真实结果写进 05）；§4.2、规则 13、§5.4 判据同步改口，仍禁止点编辑器窗口 / 手工 Play 实测 / 打包上传 |
 | 2026-11-08 | **本文件成为唯一规则真源**：`Docs/00-项目工作规则.md` 全量迁移入本文件后删除；新增 §0.1 代码量预算（500 行）、§0.2 通用 SOLID、§0.3 交互规则（提问一律弹窗，最多 6 个） |

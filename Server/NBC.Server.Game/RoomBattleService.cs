@@ -214,6 +214,9 @@ public sealed class RoomBattleService
     /// <summary>累计有几次输入因为 `player_id` 不是这个会话的而被拒（**权威被违反**）。</summary>
     public long InputsRejected { get; private set; }
 
+    /// <summary>累计有几次输入因为「会话不在任何房间」被丢弃（发到了常驻菜单会话就是这种）。</summary>
+    public long InputsDropped { get; private set; }
+
     /// <summary>累计打中了多少次普攻（判定通过）。</summary>
     public long AttacksLanded { get; private set; }
 
@@ -493,6 +496,9 @@ public sealed class RoomBattleService
     /// <param name="session">来源会话。</param>
     /// <param name="message">消息。</param>
     /// <returns>分发结果。</returns>
+    // 已经记过「不在房间」提示的会话号（每个会话只提示一次，避免按住键刷屏）
+    private readonly HashSet<long> _noRoomNoted = new();
+
     private DispatchResult HandleInput(ClientSession session, ClientMessage message)
     {
         PlayerInput input = message.Input;
@@ -519,7 +525,16 @@ public sealed class RoomBattleService
 
         if (room == null)
         {
-            // 不在房间里发输入：不算违规（客户端可能刚退房），忽略即可
+            // 不在房间里发输入：不算违规（客户端可能刚退房），但也不能一声不响 ——
+            // 每个会话只记一次，否则按住方向键会每帧刷屏。
+            InputsDropped++;
+
+            if (_noRoomNoted.Add(session.SessionId))
+            {
+                Note?.Invoke($"[输入] 会话 {session.SessionId}（玩家 {session.PlayerId}）不在任何房间，" +
+                             "输入被丢弃（每个会话只记这一次；多半是发到了常驻的菜单会话）");
+            }
+
             return DispatchResult.Handled;
         }
 
@@ -598,6 +613,9 @@ public sealed class RoomBattleService
 
         if (room == null)
         {
+            SkillCastsRefused++;
+            Note?.Invoke($"会话 {session.SessionId}（玩家 {session.PlayerId}）不在任何房间，" +
+                         $"技能 {cast.SkillId} 被丢弃 —— 多半是发到了常驻的菜单会话");
             return DispatchResult.Handled;
         }
 
@@ -605,6 +623,8 @@ public sealed class RoomBattleService
 
         if (battle == null)
         {
+            SkillCastsRefused++;
+            Note?.Invoke($"房间 {room.RoomId} 开不了局，玩家 {session.PlayerId} 的技能 {cast.SkillId} 被丢弃");
             return DispatchResult.Handled;
         }
 

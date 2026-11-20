@@ -2695,11 +2695,11 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                 //   技能伤害（500+80）照旧会掉，所以这一节改成按技能表算出期望值。
                 if (bossAttack <= 0)
                 {
-                    int skillDamage = 0;
                     MonsterRow? bossRow = h.Tables.FindMonster(boss.ConfigId);
 
-                    // BOSS 的两段技能各自打出来一次（伤害值来自 Skill 表，不写死）。
-                    List<int> bossSkillDamages = new();
+                    // 期望值按表算：BOSS 每个技能按 hitFrames 拆成多段，每段伤害 = SplitDamage 均分。
+                    //   ⚠️ 不能再用"一个技能一个伤害值"，负责人给 2001 配了三段（15,29,41）。
+                    List<int> expectedSegments = new();
 
                     if (bossRow != null)
                     {
@@ -2709,42 +2709,45 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
                             if (skill != null)
                             {
-                                skillDamage += skill.Value.Damage;
-                                bossSkillDamages.Add(skill.Value.Damage);
+                                expectedSegments.AddRange(
+                                    SkillSystem.SplitDamage(skill.Value.Damage, skill.Value.HitFrames.Length));
                             }
                         }
                     }
 
-                    bool everyBossSkillLanded = bossSkillDamages.Count > 0;
+                    // 每段都至少落地一次
+                    bool everySegmentLanded = expectedSegments.Count > 0;
 
-                    foreach (int expected in bossSkillDamages)
+                    foreach (int expected in expectedSegments)
                     {
                         if (!damages.Contains(expected))
                         {
-                            everyBossSkillLanded = false;
+                            everySegmentLanded = false;
                         }
                     }
 
                     Check("BOSS AI：攻击力 0 时靠技能打人，且 BOSS 的每段技能都打中了一次（R043b）",
-                        reached && everyBossSkillLanded,
+                        reached && everySegmentLanded,
                         $"走到 {distance}mm 后 hp {hpBefore} → {hpAfter}（掉了 {lost}；" +
-                        $"BOSS 技能伤害 {string.Join("+", bossSkillDamages)} = {skillDamage}，" +
-                        $"Monster.attack = {bossAttack}；掉血明细 {DescribeLines(hits)}）");
+                        $"BOSS 每段伤害 [{string.Join(",", expectedSegments)}]，Monster.attack = {bossAttack}；" +
+                        $"掉血明细 {DescribeLines(hits)}）");
 
-                    // 冷却生效的判据：单段技能伤害在一次观察窗口里只出现一次。
-                    bool eachBossSkillOnce = true;
+                    // 冷却生效：同一段伤害在窗口里出现的次数 == 它在表里出现的次数；
+                    //   场上的野狼也会放技能，那些不在期望表里的数值一律忽略。
+                    bool eachSegmentOnce = expectedSegments.Count > 0;
 
-                    foreach (int expected in bossSkillDamages)
+                    foreach (int expected in expectedSegments)
                     {
-                        if (damages.FindAll(d => d == expected).Count != 1)
+                        if (damages.FindAll(d => d == expected).Count !=
+                            expectedSegments.FindAll(d => d == expected).Count)
                         {
-                            eachBossSkillOnce = false;
+                            eachSegmentOnce = false;
                         }
                     }
 
                     Check("BOSS AI：技能冷却生效（4 秒内每段技能只打一次）",
-                        eachBossSkillOnce && bossSkillDamages.Count > 0,
-                        $"每段出现次数 {string.Join("，", bossSkillDamages.ConvertAll(d => $"{d}×{damages.FindAll(x => x == d).Count}"))}；" +
+                        eachSegmentOnce,
+                        $"每段出现次数 {string.Join("，", expectedSegments.ConvertAll(d => $"{d}×{damages.FindAll(x => x == d).Count}"))}；" +
                         $"明细 {DescribeLines(hits)}");
                 }
                 else
@@ -9153,15 +9156,32 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             SkillRow? slash = tables.FindSkill(2001);
             int rangeMm = slash == null ? 0 : slash.Value.RangeMm;
-            int hitFrame = slash == null || slash.Value.HitFrames.Length == 0 ? 0 : slash.Value.HitFrames[0];
             int cooldownTicks = slash == null ? 0 : slash.Value.CooldownTicks;
+            int[] hitFrames = slash == null ? Array.Empty<int>() : slash.Value.HitFrames;
+
+            // 2001 现在是**多段**技能（负责人把 hitFrames 写成 "15,29,41"），
+            // 所以期望值必须按表算：每段伤害 = 总伤害均分，帧号 = 表里的那一串。
+            int[] segmentDamages = slash == null
+                ? Array.Empty<int>()
+                : SkillSystem.SplitDamage(slash.Value.Damage, hitFrames.Length);
+
+            int lastHitFrame = hitFrames.Length == 0 ? 0 : hitFrames[hitFrames.Length - 1];
+            int totalDamage = 0;
+
+            foreach (int segmentDamage in segmentDamages)
+            {
+                totalDamage += segmentDamage;
+            }
+
+            // 让狼的血**够多**：多段技能会逐段扣，血量太少会在第一段就见底，后面的段就验不出来了。
+            int startHp = totalDamage + 100;
 
             // 注意：这里刻意不写死任何数值。冷却、射程、命中帧都能被负责人在 CSV 里改，
             // 探针只验"读出来的数被用上了"，改表不用改测试。
             Check("§17d 技能：旋风斩解析出冷却帧、射程与命中帧",
-                slash != null && cooldownTicks > 0 && rangeMm >= 100 && hitFrame >= 1,
+                slash != null && cooldownTicks > 0 && rangeMm >= 100 && hitFrames.Length > 0 && hitFrames[0] >= 1,
                 slash == null ? "找不到 2001" :
-                    $"cooldownTicks={cooldownTicks}，range={rangeMm}，hitFrame={hitFrame}");
+                    $"cooldownTicks={cooldownTicks}，range={rangeMm}，hitFrames=[{string.Join(",", hitFrames)}]");
 
             MonsterRow? boss = tables.FindMonster(6003);
 
@@ -9176,8 +9196,8 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             BattleEntity hero = battle.AddEntity(1001, 0, 1200, 0, 0, playerId: 1, moveSpeedMmPerTick: 40);
             BattleEntity far = battle.AddEntity(6002, 1, 7000, farX, 0);
-            BattleEntity wolf = battle.AddEntity(6001, 1, 300, nearX, 0);
-            BattleEntity wolf2 = battle.AddEntity(6001, 1, 300, nearX, 0);
+            BattleEntity wolf = battle.AddEntity(6001, 1, startHp, nearX, 0);
+            BattleEntity wolf2 = battle.AddEntity(6001, 1, startHp, nearX, 0);
 
             string reason;
 
@@ -9188,32 +9208,45 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             Check("§17d 技能：射程内的目标能放出去",
                 battle.TryCastSkill(hero, 2001, wolf.Id, out reason), reason);
 
-            Check("§17d 技能：放出去的瞬间还没掉血（命中帧还没到）", wolf.Hp == 300, "hp=" + wolf.Hp);
+            Check("§17d 技能：放出去的瞬间还没掉血（命中帧还没到）", wolf.Hp == startHp, "hp=" + wolf.Hp);
 
-            bool cleanBeforeHit = true;
+            // 逐帧对照表：第 hitFrames[i] 帧掉 segmentDamages[i]，其它帧一点不动。
+            //   ⚠️ 别写死"第几帧掉多少" —— 命中帧与伤害都能被负责人在 CSV 里改。
+            int expectedHp = startHp;
+            bool segmentsMatch = true;
+            var segmentTrace = new System.Text.StringBuilder();
 
-            for (int i = 0; i < hitFrame - 1; i++)
+            for (int frame = 1; frame <= lastHitFrame; frame++)
             {
                 battle.Step();
 
-                if (wolf.Hp != 300)
+                for (int i = 0; i < hitFrames.Length; i++)
                 {
-                    cleanBeforeHit = false;
+                    if (hitFrames[i] != frame)
+                    {
+                        continue;
+                    }
+
+                    expectedHp = Math.Max(0, expectedHp - segmentDamages[i]);
+                    segmentTrace.Append($"第 {frame} 帧 -{segmentDamages[i]} | ");
+                }
+
+                if (wolf.Hp != expectedHp)
+                {
+                    segmentsMatch = false;
+                    segmentTrace.Append($"第 {frame} 帧实际 {wolf.Hp}、应为 {expectedHp} | ");
                     break;
                 }
             }
 
-            Check($"§17d 技能：命中帧之前不掉血（前 {hitFrame - 1} 帧）", cleanBeforeHit, "hp=" + wolf.Hp);
-
-            battle.Step();
-
-            Check($"§17d 技能：第 {hitFrame} 帧扣血（300 血被 500 伤害打空）",
-                wolf.Hp == 0 && !wolf.Alive, "hp=" + wolf.Hp);
+            Check($"§17d 技能：多段命中逐段结算（帧 {string.Join(",", hitFrames)}，伤害 {string.Join(",", segmentDamages)}）",
+                segmentsMatch && wolf.Hp == startHp - totalDamage,
+                $"hp={wolf.Hp}（起始 {startHp}，总伤害 {totalDamage}）；{segmentTrace}");
 
             int left = battle.SkillCooldownTicksLeft(hero.Id, 2001);
 
-            Check($"§17d 技能：冷却按表走（{cooldownTicks} 帧，已过 {hitFrame} 帧）",
-                left == cooldownTicks - hitFrame, "left=" + left);
+            Check($"§17d 技能：冷却按表走（{cooldownTicks} 帧，已过 {lastHitFrame} 帧）",
+                left == cooldownTicks - lastHitFrame, "left=" + left);
 
             Check("§17d 技能：冷却内再放被拒",
                 !battle.TryCastSkill(hero, 2001, wolf2.Id, out reason) && reason.Contains("冷却"), reason);
