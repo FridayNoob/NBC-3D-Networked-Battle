@@ -5,6 +5,7 @@
 
 | 日期 | 症状（用户看到什么） | 根因（一句话） | 改了哪些文件 | 怎么确认 |
 | --- | --- | --- | --- | --- |
+| 2026-11-20 | 在动画里加了好几个 `OnSkillHit`，点「试算/写回」却还是只显示一个时间、写回只写一段 | 试算与写回用的是上次「扫描」缓存的 `rows`，加完事件没重扫就是旧快照 | `Client/Assets/_Project/Editor/SkillHitSection.cs`（试算与写回前都先 `rows = SkillHitWriter.Collect()` 重扫） | 加 4 个事件后点试算 ⇒ `2001：15 → 15,16,29,41`（四段），不再只出第一段 |
 | 2026-11-20 | 在动画事件窗口点「添加/删除」时 Console 刷 `Please use Editor.AnimationUtility to add persistent animation events`；参数名只有 Int/String/Float，不知道该填什么 | 代码用 AnimationClip.events 的旧 setter 写事件（Unity 不持久化还会告警），参数标签也没按事件语义起名 | Client/Assets/_Project/Editor/AnimationEventEditorWindow.cs（读写改 AnimationUtility.Get/SetAnimationEvents，新增 IntParameterLabel/DescribeInt）、Client/Assets/_Project/Editor/SkillHitWriter.cs（读事件同样改 AnimationUtility） | 反射调 AddEvent/RemoveEventAt ⇒ before=2 afterAdd=3 afterRemove=2 且无告警；窗口里「整数参数」标签随函数变（技能编号 / 技能序号 / 连击段数） |
 | 2026-11-20 | 手数「这一刀在第几帧」容易错，改动画又要重算，`Skill.csv` 的 `hitFrames` 不好维护 | 帧数只存在表里，和动画事件没有联系 | 新增 `Client/Assets/_Project/Editor/SkillHitWriter.cs`（扫 `OnSkillHit(技能编号)` → 按 `round(秒×30÷控制器速度)` 换算帧）与 `SkillHitSection.cs`（窗口里「扫描 / 试算 / 写回 Skill.csv」）；`PlayerAnimationEvents.OnSkillHit` 的 int 参数改为技能编号；三个技能片段各加一个示范事件 | 窗口里点「扫描」看到 2001/2002/2003 三行且帧号 40/22/48 与表一致；改事件时间后「试算」显示 `40 → 40,52`，点「写回」CSV 变成 `"40,52"` |
 | 2026-11-20 | 技能/普攻的伤害时机只能靠 Skill.csv 的 hitFrames 去对动画，换动画就错位；负责人想自己在关键帧挂 Event | 缺一个「动画播到哪一拍」的客户端通知点 | 新增 `Client/Assets/_Project/Game/Player/PlayerAnimationEvents.cs`（只做表现，不发协议） | 挂到带 Animator 的模型物体、在 Animation 窗口加 Event 后，Console 出现 `[动画事件] 技能 1 命中帧` |

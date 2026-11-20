@@ -44,6 +44,8 @@ namespace NBC.Editor
                 {
                     if (GUILayout.Button("试算（不写文件）", GUILayout.Height(24f), GUILayout.Width(140f)))
                     {
+                        // 先重扫：加完事件直接点试算时，rows 还是上次扫描的旧快照，会给出过期的帧号。
+                        rows = SkillHitWriter.Collect();
                         string message;
                         SkillHitWriter.WriteBack(rows, true, out message);
                         Debug.Log("[动画事件] 试算结果：\n" + message);
@@ -51,6 +53,8 @@ namespace NBC.Editor
 
                     if (GUILayout.Button("写回 Skill.csv", GUILayout.Height(24f), GUILayout.Width(140f)))
                     {
+                        // 写文件前同样重扫，保证写进去的是当前事件，不是上次的结果。
+                        rows = SkillHitWriter.Collect();
                         string message;
                         int changed = SkillHitWriter.WriteBack(rows, false, out message);
                         EditorUtility.DisplayDialog(
