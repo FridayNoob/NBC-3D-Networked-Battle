@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using NBC.Framework.Input;
 using NBC.Framework.Net;
 using NBC.Framework.Net.Adapter;
+using NBC.Game.Config;
 using NBC.Game.GameFlow;
 using NBC.Game.Net;
 using NBC.Protocol;
@@ -225,13 +226,91 @@ namespace NBC.Game.Bootstrap
         {
             if (m_session == null || !m_session.IsOnline)
             {
+                Debug.LogWarning("[技能] 还没连上服务器，技能 " + skillId + " 没发出去");
                 return false;
             }
 
             int target = targetEntityId > 0 ? targetEntityId : FindNearestEnemyId();
+
+            if (target == 0)
+            {
+                // 没有目标也要发（服务端会拒），但先把话说清楚：这类"按了没反应"最常见就是这里
+                Debug.LogWarning("[技能] 视野里没有活怪，技能 " + skillId + " 没有目标（服务端会判「目标不存在」）");
+            }
+            else if (TryMeasureTarget(skillId, target, out int distanceMm, out int rangeMm) && distanceMm > rangeMm)
+            {
+                // 本地先说清楚差多远，省得玩家以为技能坏了（服务端的权威判定在 TryCast 里，这里只是提示）
+                Debug.LogWarning("[技能] 目标太远：[" + (distanceMm / 1000f).ToString("0.0") + " 米] > 射程 [" +
+                                 (rangeMm / 1000f).ToString("0.0") + " 米]（技能 " + skillId + "），走近一点再放");
+                return false;
+            }
+
             m_session.SendSkillCast(skillId, target);
             Debug.Log("[技能] 请求释放 " + skillId + " → 单位 " + target);
             return true;
+        }
+
+        // 功能：量一下"英雄到目标"的距离，并读出这个技能的射程（都从快照与配置表来）。
+        // 入参：skillId 技能编号；targetId 目标实例编号
+        // 返回：true 表示两个数都拿到了；false 表示快照里没英雄/没目标或配置表没读到
+        // 步骤：
+        //   1) 快照里找自己的英雄，再找目标实体
+        //   2) 配置表里读 Skill 行的 rangeMm（读不到就当没有射程信息）
+        //   3) 距离用 long 平方和后开方，只做显示与提示用
+        // 上游：SendSkillCast
+        // 下游：SnapshotView.FindHero / Entities、ConfigMgr.TryGet
+        private bool TryMeasureTarget(int skillId, int targetId, out int distanceMm, out int rangeMm)
+        {
+            distanceMm = 0;
+            rangeMm = 0;
+
+            if (m_feed == null || m_feed.View == null)
+            {
+                return false;
+            }
+
+            EntitySnapshot hero = m_feed.View.FindHero(m_session.PlayerId);
+
+            if (hero == null)
+            {
+                return false;
+            }
+
+            IReadOnlyList<EntitySnapshot> entities = m_feed.View.Entities;
+            EntitySnapshot target = null;
+
+            for (int i = 0; i < entities.Count; i++)
+            {
+                if (entities[i].EntityId == targetId)
+                {
+                    target = entities[i];
+                    break;
+                }
+            }
+
+            if (target == null)
+            {
+                return false;
+            }
+
+            ConfigMgr configs = ConfigMgr.Instance;
+            SkillConfig skills;
+
+            if (configs != null && configs.Source != null && configs.TryGet(out skills))
+            {
+                Config_Skill row;
+
+                if (skills.TryGet(skillId, out row))
+                {
+                    rangeMm = row.rangeMm;
+                }
+            }
+
+            long dx = target.PosXMm - hero.PosXMm;
+            long dz = target.PosZMm - hero.PosZMm;
+            distanceMm = (int)Math.Sqrt((double)(dx * dx + dz * dz));
+
+            return rangeMm > 0;
         }
 
         // 功能：找离英雄最近的活着的怪物。

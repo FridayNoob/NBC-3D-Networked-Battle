@@ -574,8 +574,6 @@ namespace NBC.Game.Player
         {
             if (m_skillIds == null)
             {
-                m_skillIds = Array.Empty<int>();
-
                 ConfigMgr configs = ConfigMgr.Instance;
                 HeroConfig heroes;
 
@@ -585,13 +583,21 @@ namespace NBC.Game.Player
 
                     if (heroes.TryGet(DefaultHeroId, out row) && row.skillIds != null && row.skillIds.Length > 0)
                     {
+                        // 只有真读到才缓存；读不到保持 null，下次按键再试（曾经缓存成空数组，导致之后永远不发）
                         m_skillIds = row.skillIds;
                     }
+                }
+
+                if (m_skillIds == null)
+                {
+                    Debug.LogWarning("[技能] 读不到英雄 " + DefaultHeroId + " 的 skillIds（配置表没就绪？），这次只播动作、不发请求");
+                    return;
                 }
             }
 
             if (index < 1 || index > m_skillIds.Length)
             {
+                Debug.LogWarning("[技能] 按键 " + index + " 超出英雄技能数量 " + m_skillIds.Length + "，只播动作");
                 return;
             }
 
@@ -600,9 +606,17 @@ namespace NBC.Game.Player
                 m_netDriver = FindObjectOfType<RuntimeNetDriver>();
             }
 
-            if (m_netDriver != null)
+            if (m_netDriver == null)
             {
-                m_netDriver.SendSkillCast(m_skillIds[index - 1]);
+                Debug.LogWarning("[技能] 场景里没有 RuntimeNetDriver（离线？），只播动作、不发请求");
+                return;
+            }
+
+            int skillId = m_skillIds[index - 1];
+
+            if (!m_netDriver.SendSkillCast(skillId))
+            {
+                Debug.LogWarning("[技能] 请求没有发出去：网络会话未就绪（技能 " + skillId + "）");
             }
         }
 
