@@ -530,9 +530,11 @@ namespace NBC.Game.Player
         // 上游/下游：IsDeadNow / BeginCountdown / ResolveDeath / ExitToWorld 调用。
         private RuntimeNetDriver GetDriver()
         {
-            if (m_driver == null)
+            // 场景里可能有两个驱动（Login 的 [MenuSession] 常驻 + 副本的 [DungeonSession]），
+            // 优先用已进房的那个，否则死亡判定会读到一个永远 IsJoined=false 的驱动。
+            if (m_driver == null || !m_driver.IsJoined)
             {
-                m_driver = UnityEngine.Object.FindObjectOfType<RuntimeNetDriver>();
+                m_driver = RuntimeNetDriver.FindJoined();
             }
 
             return m_driver;

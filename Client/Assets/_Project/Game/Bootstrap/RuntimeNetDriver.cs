@@ -222,6 +222,42 @@ namespace NBC.Game.Bootstrap
         //   3) 交给 NetSession.SendSkillCast，并打一条日志方便对账
         // 上游：PlayerBrain 的 Q/E/R（R043b 临时入口；R043a 会换成 RuntimeSkillDriver）
         // 下游：NetSession.SendSkillCast
+        // 功能：找「当前真正在副本里」的那个网络驱动。
+        // 入参：无。
+        // 返回：已进房的那个驱动；一个都没进房时退回任意一个（离线/主菜单）；一个都没有返回 null。
+        // 步骤：
+        //   1) 取场景里所有 RuntimeNetDriver
+        //   2) 优先返回 IsJoined == true 的
+        //   3) 退而求其次返回第一个非空的
+        // 上游：PlayerBrain 发技能前
+        // 下游：UnityEngine.Object.FindObjectsOfType
+        // 注意：Login 的 [MenuSession] 会常驻，进副本又建了 [DungeonSession]，
+        //       所以场景里可能同时有两个驱动；FindObjectOfType 拿到没进房的那个就会「发了但没人收」。
+        public static RuntimeNetDriver FindJoined()
+        {
+            RuntimeNetDriver[] drivers = FindObjectsOfType<RuntimeNetDriver>();
+            RuntimeNetDriver fallback = null;
+
+            foreach (RuntimeNetDriver driver in drivers)
+            {
+                if (driver == null)
+                {
+                    continue;
+                }
+
+                if (fallback == null)
+                {
+                    fallback = driver;
+                }
+
+                if (driver.IsJoined)
+                {
+                    return driver;
+                }
+            }
+
+            return fallback;
+        }
         public bool SendSkillCast(int skillId, int targetEntityId = 0)
         {
             if (m_session == null || !m_session.IsOnline)

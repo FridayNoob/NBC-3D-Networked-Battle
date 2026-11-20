@@ -609,14 +609,22 @@ namespace NBC.Game.Player
                 return;
             }
 
-            if (m_netDriver == null)
+            // 场景里可能有两个驱动（Login 的 [MenuSession] 常驻 + 副本的 [DungeonSession]），
+            // 必须挑已经进房的那个；退而求其次按 Unity 的假 null 语义重新找。
+            if (m_netDriver == null || !m_netDriver.IsJoined)
             {
-                m_netDriver = FindObjectOfType<RuntimeNetDriver>();
+                m_netDriver = RuntimeNetDriver.FindJoined();
             }
 
             if (m_netDriver == null)
             {
                 Debug.LogWarning("[技能] 场景里没有 RuntimeNetDriver（离线？），只播动作、不发请求");
+                return;
+            }
+
+            if (!m_netDriver.IsJoined)
+            {
+                Debug.LogWarning("[技能] 找到的 RuntimeNetDriver 还没进房（可能拿到了常驻的 [MenuSession]），这次不发请求");
                 return;
             }
 

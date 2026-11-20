@@ -127,7 +127,8 @@ namespace NBC.Boot
             RegisterAttackInput();
 
             // R049：入口脚本可能已经建好跨场景的 [DungeonSession] 并挂了驱动，这里只在没有驱动时才补一个。
-            RuntimeNetDriver existing = FindObjectOfType<RuntimeNetDriver>();
+            // 用「已进房」的那个：Login 的 [MenuSession] 也常驻，直接 FindObjectOfType 可能拿到没进房的那个。
+            RuntimeNetDriver existing = RuntimeNetDriver.FindJoined();
             if (existing != null)
             {
                 existing.MonsterPrefab = m_monsterPrefab;
