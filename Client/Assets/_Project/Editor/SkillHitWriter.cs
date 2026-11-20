@@ -73,7 +73,7 @@ namespace NBC.Editor
                         continue;
                     }
 
-                    AnimationEvent[] events = clip.events;
+                    AnimationEvent[] events = UnityEditor.AnimationUtility.GetAnimationEvents(clip);
                     List<float> times = new List<float>();
                     int skillId = 0;
 

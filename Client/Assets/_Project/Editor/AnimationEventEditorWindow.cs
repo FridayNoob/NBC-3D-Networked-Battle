@@ -372,9 +372,9 @@ namespace NBC.Editor
             m_functionName = names[picked];
             m_functionName = EditorGUILayout.TextField("函数名（可手填）", m_functionName);
 
-            m_intParameter = EditorGUILayout.IntField("Int 参数", m_intParameter);
-            m_stringParameter = EditorGUILayout.TextField("String 参数", m_stringParameter);
-            m_floatParameter = EditorGUILayout.FloatField("Float 参数", m_floatParameter);
+            m_intParameter = EditorGUILayout.IntField(IntParameterLabel(), m_intParameter);
+            m_stringParameter = EditorGUILayout.TextField("字符串参数（本类事件不用，留空）", m_stringParameter);
+            m_floatParameter = EditorGUILayout.FloatField("浮点参数（本类事件不用，0）", m_floatParameter);
 
             if (GUILayout.Button("添加到片段", GUILayout.Height(28f)))
             {
@@ -392,7 +392,7 @@ namespace NBC.Editor
         {
             EditorGUILayout.LabelField("现有事件", EditorStyles.boldLabel);
 
-            AnimationEvent[] events = m_clip.events;
+            AnimationEvent[] events = AnimationUtility.GetAnimationEvents(m_clip);
 
             if (events.Length == 0)
             {
@@ -407,7 +407,7 @@ namespace NBC.Editor
                 AnimationEvent item = events[i];
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(item.time.ToString("F3") + " 秒", GUILayout.Width(90f));
-                EditorGUILayout.LabelField(item.functionName + "（Int " + item.intParameter + "）");
+                EditorGUILayout.LabelField(item.functionName + "（" + DescribeInt(item) + "）");
 
                 if (GUILayout.Button("删除", GUILayout.Width(56f)))
                 {
@@ -442,7 +442,7 @@ namespace NBC.Editor
                 return;
             }
 
-            List<AnimationEvent> list = new List<AnimationEvent>(m_clip.events);
+            List<AnimationEvent> list = new List<AnimationEvent>(AnimationUtility.GetAnimationEvents(m_clip));
             AnimationEvent item = new AnimationEvent();
             item.time = m_timeSeconds;
             item.functionName = m_functionName;
@@ -451,7 +451,7 @@ namespace NBC.Editor
             item.floatParameter = m_floatParameter;
             list.Add(item);
             list.Sort(CompareByTime);
-            m_clip.events = list.ToArray();
+            AnimationUtility.SetAnimationEvents(m_clip, list.ToArray());
             Save();
 
             Debug.Log("[动画事件] 已添加：" + m_clip.name + " @ " + m_timeSeconds.ToString("F3") + " 秒 → " + m_functionName);
@@ -465,10 +465,10 @@ namespace NBC.Editor
         // 下游：AnimationClip.events / AssetDatabase.SaveAssets
         private void RemoveEventAt(int index)
         {
-            List<AnimationEvent> list = new List<AnimationEvent>(m_clip.events);
+            List<AnimationEvent> list = new List<AnimationEvent>(AnimationUtility.GetAnimationEvents(m_clip));
             AnimationEvent removed = list[index];
             list.RemoveAt(index);
-            m_clip.events = list.ToArray();
+            AnimationUtility.SetAnimationEvents(m_clip, list.ToArray());
             Save();
 
             Debug.Log("[动画事件] 已删除：" + m_clip.name + " 的 " + removed.functionName + "（" + removed.time.ToString("F3") + " 秒）");
@@ -497,6 +497,51 @@ namespace NBC.Editor
             AssetDatabase.SaveAssets();
         }
 
+        // 功能：按当前函数名，给「整数参数」这一栏起一个看得懂的名字。
+        // 入参：无（读 m_functionName）
+        // 返回：这一栏的显示标签
+        // 步骤：按已知函数名映射；未知函数给通用标签
+        // 上游：DrawAddRow
+        // 下游：EditorGUILayout.IntField
+        private string IntParameterLabel()
+        {
+            switch (m_functionName)
+            {
+                case "OnSkillHit":
+                    return "技能编号（int，例如 2001）";
+                case "OnSkillStart":
+                    return "技能序号（int，1~3）";
+                case "OnAttackHit":
+                    return "连击段数（int，1~3）";
+                case "OnFootstep":
+                    return "整数参数（本事件不用）";
+                default:
+                    return "整数参数（int，可选）";
+            }
+        }
+
+        // 功能：把一条事件的整数参数翻译成人话，显示在事件列表里。
+        // 入参：item 一条动画事件
+        // 返回：例如「技能 2001」或「第 2 段」
+        // 步骤：按函数名决定前缀词，再拼参数值
+        // 上游：DrawEventList
+        // 下游：EditorGUILayout.LabelField
+        private static string DescribeInt(AnimationEvent item)
+        {
+            switch (item.functionName)
+            {
+                case "OnSkillHit":
+                    return "技能 " + item.intParameter;
+                case "OnSkillStart":
+                    return "技能序号 " + item.intParameter;
+                case "OnAttackHit":
+                    return "第 " + item.intParameter + " 段";
+                case "OnFootstep":
+                    return "无参数";
+                default:
+                    return "整数参数 " + item.intParameter;
+            }
+        }
         // 功能：取候选函数名（优先反射 PlayerAnimationEvents 的 On 方法）。
         // 入参：无
         // 返回：函数名数组，至少包含 FallbackFunctionNames
