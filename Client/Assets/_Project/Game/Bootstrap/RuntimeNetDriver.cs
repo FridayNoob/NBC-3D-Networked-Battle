@@ -683,16 +683,21 @@ namespace NBC.Game.Bootstrap
             set { m_autoJoin = value; m_presence.SetAutoJoin(value); }
         }
 
-        // 功能：进副本：把四个开关一次性打到「在副本里」，并允许自动进房。
+        // 功能：进副本：把四个开关一次性打到「在副本里」，允许自动进房，并把上一局的死亡表现复位。
         // 入参：无。
         // 返回：无。
-        // 步骤：1) 交给 BattlePresence.EnterDungeon 2) 同步序列化字段，免得 Inspector 值与运行值不一致。
-        // 上游/下游：DungeonEntrance.FinishEnter；下游 Update 的进房判断与表现层。
+        // 步骤：
+        //   1) 交给 BattlePresence.EnterDungeon
+        //   2) 同步序列化字段，免得 Inspector 值与运行值不一致
+        //   3) 复位本地玩家的死亡表现：上一局死过的话，状态机还停在 Die、PlayerDeathFlow 的 m_resolved 也还是 true
+        //      （true 会让它不再开始倒计时，于是「人躺着、又没黑幕」）
+        // 上游/下游：DungeonEntrance.FinishEnter；下游 BattlePresence、PlayerDeathFlow.ReviveAfterRestart。
         public void EnterDungeon()
         {
             m_presence.EnterDungeon();
             m_autoJoin = m_presence.AutoJoin;
             m_bindPresentation = m_presence.InDungeon;
+            ReviveLocalPlayerAfterRestart();
         }
 
         // 功能：控制是否把快照画到场景里、并纠偏本地英雄。
