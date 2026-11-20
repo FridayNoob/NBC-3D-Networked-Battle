@@ -965,12 +965,11 @@ public sealed class DungeonBattle
 
     /// <summary>
     /// 第 `index` 个席位的出生点（确定性：同一席位每次都在同一个地方）。
-    /// <para>⚠️ 半径从 1000mm 收到 **500mm**（2026-09-26，与 `BossAggroRangeMm` 一起改的）：
-    /// BOSS 出生在 <c>-SpawnRadiusMm</c>（副本 1001 = −3000mm），而出生点原来在离原点 1000mm 处
-    /// ⇒ 0 号席位 (`-1000, 0`) 距 BOSS **正好 2000mm = BOSS 普攻射程**，
-    /// **一进房就在它脸上**（这也是负责人"老被打死"的直接原因）。</para>
-    /// <para>收到 500mm 之后，四个席位距 BOSS 的最小距离是 <c>3000 − 500 = 2500mm</c>，
-    /// 已经**大于仇恨范围 2200mm** ⇒ 进房先安全，交不交战由你决定。</para>
+    /// <para>⚠️ 2026-11-20：从原点附近挪到场地北侧 <c>(0, 4500)</c>。原因：客户端加载 Battle
+    /// 场景要 5~7 秒，这段时间服务端已经在打；旧的 `(-500, 0)` 距 BOSS 只有 2500mm
+    /// （= 旋风斩射程），距普通怪 3500mm（&lt; 仇恨 4000）⇒ 玩家还没接管就被打死。</para>
+    /// <para>新位置：距 BOSS 约 5400mm、距最近的怪约 6400mm，都远在仇恨（4000）与技能射程（2500）之外；
+    /// 仍在原来的活动范围 ±5000mm 内，交不交战由玩家走过去决定。</para>
     /// </summary>
     /// <param name="index">席位序号（0 起）。</param>
     /// <returns>(x, z) 毫米。</returns>
@@ -978,10 +977,10 @@ public sealed class DungeonBattle
     {
         switch (index & 3)
         {
-            case 0: return (-500, 0);
-            case 1: return (500, 0);
-            case 2: return (0, -500);
-            default: return (0, 500);
+            case 0: return (0, 4500);
+            case 1: return (-500, 4500);
+            case 2: return (500, 4500);
+            default: return (0, 4000);
         }
     }
 

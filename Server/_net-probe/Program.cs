@@ -2409,6 +2409,14 @@ namespace NBC.NetProbe
                 BattleEntity hero = h.HeroOf(a)!;
                 int distance = DungeonBattle.DistanceMm(boss, hero);
 
+                // ⚠️ 射程判据是**圆形**（`InAttackRange` 用平方和），而 `DistanceMm` 是切比雪夫。
+                //   2026-11-20 出生点挪到 (0,4500) 之后，两个实体不再只在 X 轴上，
+                //   两种度量的差会吃掉边界用例（切比雪夫 4500、真实 5404 ⇒ 边界判成"射程外"）。
+                //   所以边界用例按**圆形距离**取整算：ceil 保证「等于射程算在」，-1 保证「短 1mm 算不在」。
+                long edgeDx = boss.PosXmm - hero.PosXmm;
+                long edgeDz = boss.PosZmm - hero.PosZmm;
+                int circleDistance = (int)Math.Ceiling(Math.Sqrt((double)(edgeDx * edgeDx + edgeDz * edgeDz)));
+
                 Bt.BtContext NewHeroCtx() => new Bt.BtContext
                 {
                     World = battle,
@@ -2438,12 +2446,12 @@ namespace NBC.NetProbe
                     new Bt.HasTargetCondition().Tick(NewCtx()) == Bt.BtStatus.Success, "目标=" + hero.Id);
 
                 var inRangeExact = new Bt.InAttackRangeCondition();
-                inRangeExact.Configure(new ProbeParams().Set("rangeMm", distance.ToString()));
+                inRangeExact.Configure(new ProbeParams().Set("rangeMm", circleDistance.ToString()));
                 Check("BT 条件：InAttackRange 距离等于射程算「在」",
-                    inRangeExact.Tick(NewCtx()) == Bt.BtStatus.Success, "距离=" + distance + "，射程=" + distance);
+                    inRangeExact.Tick(NewCtx()) == Bt.BtStatus.Success, "圆形距离=" + circleDistance + "，射程=" + circleDistance);
 
                 var inRangeShort = new Bt.InAttackRangeCondition();
-                inRangeShort.Configure(new ProbeParams().Set("rangeMm", Math.Max(1, distance - 1).ToString()));
+                inRangeShort.Configure(new ProbeParams().Set("rangeMm", Math.Max(1, circleDistance - 1).ToString()));
                 Check("BT 条件：InAttackRange 差 1mm 就是「不在」",
                     inRangeShort.Tick(NewCtx()) == Bt.BtStatus.Failure, "距离=" + distance + "，射程=" + (distance - 1));
 
@@ -2557,25 +2565,28 @@ private static void Boss_ChasesTheHero()
                 BattleEntity boss = FindBoss(battle)!;
                 BattleEntity hero = h.HeroOf(a)!;
 
-                // R018（2026-11-05）：语义反转 —— 出生点就在仇恨圈内（2.5 米 < 4 米），
-                //   一进副本就该被追。原来那条「出生点必须在圈外」的断言按设计不再成立。
+                // 2026-11-20：出生点从 (-500,0) 挪到 (0,4500)（离 BOSS 5.4 米、离最近的怪 6.4 米），
+                // 原因是客户端加载 Battle 要 5~7 秒，服务端已经开打 —— 旧出生点距 BOSS 只有 2500mm
+                //（= 旋风斩射程），玩家还没接管就被打死。判据随之反转：出生点必须在仇恨圈外。
                 int spawnDistance = DungeonBattle.DistanceMm(boss, hero);
-                Check("BOSS AI：出生点就在仇恨圈内（R018 之后：一进副本就会被追）",
-                    spawnDistance < DungeonBattle.BossAggroRangeMm,
-                    $"出生距离 {spawnDistance}mm < 仇恨范围 {DungeonBattle.BossAggroRangeMm}mm");
+                Check("BOSS AI：出生点在仇恨圈外（2026-11-20 挪远后：进场先安全）",
+                    spawnDistance > DungeonBattle.BossAggroRangeMm,
+                    $"出生距离 {spawnDistance}mm > 仇恨范围 {DungeonBattle.BossAggroRangeMm}mm");
 
-                // 英雄站着不动，BOSS 也应该主动压上来（拉近距离，或已经能打到你）
+                // 玩家主动走进仇恨圈之后，BOSS 才该压上来
                 int before = DungeonBattle.DistanceMm(boss, hero);
                 int hpBefore = hero.Hp;
+                bool walked = h.MoveUntilInRange(a, boss.Id, 400);
                 h.SendIdleInputFor(a, 20);
                 int after = DungeonBattle.DistanceMm(boss, hero);
 
-                bool engaged = BrainOf(battle, FindBoss(battle)!.Id).StateName == "追击" || BrainOf(battle, FindBoss(battle)!.Id).StateName == "攻击";
+                string bossState = BrainOf(battle, FindBoss(battle)!.Id).StateName;
+                bool engaged = bossState != "站桩";
                 bool closing = after < before || hero.Hp < hpBefore;
 
-                Check("BOSS AI：英雄站着不动 BOSS 也会主动过来（R018 新行为）",
-                    engaged && closing,
-                    $"距离 {before}mm → {after}mm；状态={BrainOf(battle, FindBoss(battle)!.Id).StateName}；HP {hpBefore} → {hero.Hp}");
+                Check("BOSS AI：走进仇恨圈后 BOSS 主动压上来（2026-11-20 改判据）",
+                    walked && engaged && closing,
+                    $"走近={walked}；距离 {before}mm → {after}mm；状态={bossState}；HP {hpBefore} → {hero.Hp}");
             }
         }
 
@@ -10217,7 +10228,11 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
             /// <returns>进射程了返回 true。</returns>
             public bool MoveUntilInRange(Client client, int targetId, int maxTicks, int moveX = 1000)
             {
-                for (int i = 0; i < maxTicks; i++)
+                // 2026-11-20：出生点挪到 (0, 4500) 之后，离怪有 5~7 米，只朝 ±X 走是到不了的
+                //（目标在斜方向）。所以这里改成「朝目标同时走 X 和 Z」，并把帧数上限放宽。
+                int limit = Math.Max(maxTicks, 400);
+
+                for (int i = 0; i < limit; i++)
                 {
                     DungeonBattle battle = BattleOf(client);
                     BattleEntity hero = HeroOf(client);
@@ -10239,7 +10254,18 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
                     // ⚠️ 方向**必须能指定**：2026-09-26 这条原来写死"往 +X 走"
                     //    （当时场上只有右边的狼），拿它去追左边（-X）的 BOSS 会让英雄**反向跑**，
                     //    报错形状是"走到 8000mm 还没进射程"—— 一眼看不出是工具的问题。
-                    MoveFor(client, moveX, 0, 1);
+                    // 2026-11-20：改成朝目标二维逼近（两个轴都算方向），moveX 只在两个方向都到不了时兜底。
+                    int dx = target.PosXmm - hero.PosXmm;
+                    int dz = target.PosZmm - hero.PosZmm;
+                    int stepX = dx == 0 ? 0 : (dx > 0 ? 1000 : -1000);
+                    int stepZ = dz == 0 ? 0 : (dz > 0 ? 1000 : -1000);
+
+                    if (stepX == 0 && stepZ == 0)
+                    {
+                        stepX = moveX;
+                    }
+
+                    MoveFor(client, stepX, stepZ, 1);
                 }
 
                 return false;
