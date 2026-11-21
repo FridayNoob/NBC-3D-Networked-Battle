@@ -127,8 +127,25 @@ namespace NBC.Boot
             RegisterAttackInput();
 
             // R049：入口脚本可能已经建好跨场景的 [DungeonSession] 并挂了驱动，这里只在没有驱动时才补一个。
-            // 用「已进房」的那个：Login 的 [MenuSession] 也常驻，直接 FindObjectOfType 可能拿到没进房的那个。
+            // ⚠️ 2026-11-21：判据从「已进房」放宽成「场景里有驱动就沿用」——进副本时驱动是**先建后连**，
+            //    加载 Battle 的这几帧它还没进房，FindJoined() 会返回 null，于是这里又建了第二个驱动
+            //    ⇒ 两个驱动各自自动进房（一个被 1002 拒），回世界时只退掉其中一个，另一个把英雄留在副本里挨打。
             RuntimeNetDriver existing = RuntimeNetDriver.FindJoined();
+
+            if (existing == null)
+            {
+                RuntimeNetDriver[] all = FindObjectsOfType<RuntimeNetDriver>();
+
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i] != null && all[i].gameObject.name == "[DungeonSession]")
+                    {
+                        existing = all[i];
+                        break;
+                    }
+                }
+            }
+
             if (existing != null)
             {
                 existing.MonsterPrefab = m_monsterPrefab;
