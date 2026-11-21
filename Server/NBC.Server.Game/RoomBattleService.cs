@@ -890,7 +890,7 @@ public sealed class RoomBattleService
             // 目的：确认「进副本少 200」是发生在开局保护期内（保护没生效）还是保护到期后（窗口太短）。
             BattleEntity? victim = battle.Find(_hitBuffer[h].TargetId);
 
-            if (victim != null && victim.Kind == 0)
+            if (victim != null && victim.Kind == 0 && _hitBuffer[h].Applied > 0)
             {
                 Note?.Invoke($"[掉血诊断] 英雄 {victim.Id} 掉了 {_hitBuffer[h].Applied}（剩 {_hitBuffer[h].RemainingHp}，"
                              + $"第 {battle.Tick} 帧，保护中={battle.IsInvulnerable(victim.Id)}）");
