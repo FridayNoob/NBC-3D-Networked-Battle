@@ -438,7 +438,8 @@ public sealed class RoomBattleService
             //    在草稿里根本不存在 ⇒ 明细里连"0 杀 0 死"那一行都没有 ⇒ 事后答不出"他在不在场"。
             battle.EnsurePlayerStat(playerId, DungeonBattle.HeroConfigId);
 
-            Note?.Invoke($"玩家 {playerId}（{room.Seats[i].PlayerName}）进入副本，出生点 ({spawnX}, {spawnZ})mm");
+            Note?.Invoke($"玩家 {playerId}（{room.Seats[i].PlayerName}）进入副本，出生点 ({spawnX}, {spawnZ})mm，"
+                         + $"开局保护 {battle.SpawnGraceTicks} 帧（约 {battle.SpawnGraceTicks / (double)NBC.Shared.Net.NetContract.TickRate:F1} 秒）");
         }
 
         // ② 世界里有英雄、但它对应的席位没了 → 移出（人走英雄走，不留在场上当靶子）
@@ -880,6 +881,16 @@ public sealed class RoomBattleService
         // ① 伤害（每次扣血一条）
         for (int h = 0; h < _hitBuffer.Count; h++)
         {
+            // 临时诊断（2026-11-21）：英雄掉血记一行，带帧号与保护状态。
+            // 目的：确认「进副本少 200」是发生在开局保护期内（保护没生效）还是保护到期后（窗口太短）。
+            BattleEntity? victim = battle.Find(_hitBuffer[h].TargetId);
+
+            if (victim != null && victim.Kind == 0)
+            {
+                Note?.Invoke($"[掉血诊断] 英雄 {victim.Id} 掉了 {_hitBuffer[h].Applied}（剩 {_hitBuffer[h].RemainingHp}，"
+                             + $"第 {battle.Tick} 帧，保护中={battle.IsInvulnerable(victim.Id)}）");
+            }
+
             byte[] payload = new ServerMessage
             {
                 Event = new ServerEvent { Damage = _hitBuffer[h] },
