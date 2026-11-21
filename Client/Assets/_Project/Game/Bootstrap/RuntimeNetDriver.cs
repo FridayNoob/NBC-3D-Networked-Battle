@@ -868,6 +868,31 @@ namespace NBC.Game.Bootstrap
             m_presence.SetAutoJoin(m_autoJoin);
             m_presence.MarkInDungeon(m_bindPresentation);
 
+            // 注意：2026-11-21 加的硬约束 —— 一个副本只允许一个驱动。
+            // 场景里已经有「[DungeonSession]」（副本入口建的那个）时，别的驱动必须自己让位：
+            // 既不自动进房、也不接管表现层（否则它会一边进房一边发输入，人回 World 后英雄还在副本里挨打）。
+            // 之所以要在这里兜底：进副本时驱动是「先建对象、后连服进房」，任何按 IsJoined 判断的代码
+            // 都可能看不见它，从而又建一个。
+            RuntimeNetDriver[] others = FindObjectsOfType<RuntimeNetDriver>();
+
+            for (int i = 0; i < others.Length; i++)
+            {
+                RuntimeNetDriver other = others[i];
+
+                if (other == null || other == this)
+                {
+                    continue;
+                }
+
+                if (other.gameObject.name == "[DungeonSession]" && gameObject.name != "[DungeonSession]")
+                {
+                    AutoJoin = false;
+                    BindPresentation = false;
+                    Debug.LogWarning("[Net] 场景里已有副本会话，驱动「" + gameObject.name + "」自动让位（不进房、不接管表现层）", this);
+                    break;
+                }
+            }
+
             m_feed = new PresentationFeed();
             m_reconnector = new NetReconnector(5, m_dungeonId);
 
