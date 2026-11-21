@@ -561,6 +561,11 @@ public sealed class RoomBattleService
         _inputs[input.PlayerId] = new PendingInput(
             ClampAxis(input.MoveX), ClampAxis(input.MoveY), battle.Tick);
 
+        // ②·五 结束开局保护：客户端**能发输入了**就说明 Battle 场景已经加载完、玩家开始操作了。
+        // 这比"固定 5~10 秒"可靠 —— 机械硬盘/慢机器加载 20 秒也不会被偷袭。
+        // 兜底：表里的 spawnGraceMs 仍是上限（客户端一直不操作就一直免伤到上限）。
+        battle.ClearProtection(battle.FindHeroOfPlayer(input.PlayerId)?.Id ?? 0);
+
         // ③ 动作：第 0 位 = 技能1（M3 里就是普攻）—— 立刻判定
         if ((input.ActionBits & 1u) != 0)
         {
