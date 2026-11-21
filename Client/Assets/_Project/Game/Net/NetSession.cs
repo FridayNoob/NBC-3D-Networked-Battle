@@ -748,10 +748,6 @@ namespace NBC.Game.Net
         // 下游：Send
         public void JoinRoom(string roomId, int dungeonId)
         {
-            // 临时诊断（2026-11-21）：谁在发进房？连调用栈一起打，定位「回世界后又自动进房」。
-            UnityEngine.Debug.Log("[Net] 请求进房：" + m_playerName + " 房号='" + (roomId ?? string.Empty) + "' 副本=" + dungeonId
-                + "\n" + new System.Diagnostics.StackTrace(1, false));
-
             Send(new ClientMessage
             {
                 JoinRoom = new JoinRoomRequest
@@ -765,7 +761,6 @@ namespace NBC.Game.Net
         // 功能：请求离开当前房间，结果同样走 RoomChanged / LastError。
         public void LeaveRoom()
         {
-            UnityEngine.Debug.Log("[Net] 请求退房：" + m_playerName + "\n" + new System.Diagnostics.StackTrace(1, false));
             Send(new ClientMessage { LeaveRoom = new LeaveRoomRequest() });
         }
 
