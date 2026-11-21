@@ -155,9 +155,15 @@ namespace NBC.Boot
             }
 
             RuntimeNetDriver driver = gameObject.AddComponent<RuntimeNetDriver>();
+
+            // 只有「独立用 Battle 场景直接 Play」才会走到这里（没有副本入口建的会话）。
+            // RuntimeNetDriver 的自动进房默认已改成 false（防止误建的驱动抢座位），
+            // 所以这一条路要显式打开，否则场景里进了房却没有英雄。
+            driver.AutoJoin = true;
+            driver.BindPresentation = true;
             driver.MonsterPrefab = m_monsterPrefab;
             m_driver = driver;
-            Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（自动连服 / 进房 / 发输入）");
+            Debug.Log("[HpBarDemo] 已挂上 RuntimeNetDriver（独立调试：自动进房）");
         }
 
         // 功能：接上配置表来源，并把全部配置表预加载进内存（HUD、任务、掉落都要查表）。

@@ -50,8 +50,12 @@ namespace NBC.Game.Bootstrap
         // 副本编号（房号留空 = 服务端安排）
         [SerializeField] private int m_dungeonId = 1001;
 
-        // 握完手自动进房（入口脚本会先把它关掉，等切到副本再打开）
-        [SerializeField] private bool m_autoJoin = true;
+        // 握完手自动进房（入口脚本会先把它关掉，等切到副本再打开）。
+        // ⚠️ 2026-11-21 默认值从 true 改成 false：这个组件是**运行时 AddComponent** 出来的，
+        //    默认 true 意味着「谁不小心多建一个驱动，它就会自己抢副本座位」——
+        //    表现是人在 World 里、服务端却在扣英雄的血（见 FIXES 2026-11-21）。
+        //    要进副本必须显式走 EnterDungeon()（入口脚本与独立调试场景各一处）。
+        [SerializeField] private bool m_autoJoin = false;
 
         // 是否把快照画成场景物体、并纠偏本地英雄（在 World 里连服时要关掉，否则会画出一堆副本怪）
         [SerializeField] private bool m_bindPresentation = true;
@@ -678,6 +682,28 @@ namespace NBC.Game.Bootstrap
             set { m_autoJoin = value; m_presence.SetAutoJoin(value); }
         }
 
+        // 功能：能不能发战斗输入 —— 在线、在房里、并且**人真的在副本里**。
+        // 入参：无（读 m_session 与 BattlePresence）。
+        // 返回：true = Update 可以走 PumpInput。
+        // 步骤：三个条件全部为真；判定逻辑在静态方法里，便于单测。
+        // 上游：Update。
+        // 下游：PumpInput。
+        // 注意：只判「在副本里」不够，断线后 NetSession.InRoom 仍是 true，所以在线也要判。
+        public bool CanSendInput
+        {
+            get { return ShouldSendInput(m_session != null && m_session.IsOnline, m_session != null && m_session.InRoom, m_presence.InDungeon); }
+        }
+
+        // 功能：输入闸门的纯判定（抽出来是为了能单测，不受 MonoBehaviour 生命周期影响）。
+        // 入参：online 会话是否在线；inRoom 是否在房间里；inDungeon 是否真的在副本里（BindPresentation）。
+        // 返回：true = 允许上行输入。
+        // 步骤：三个条件与一下。
+        // 上游/下游：CanSendInput；EditMode 用例 RuntimeNetDriverInputGateTests。
+        public static bool ShouldSendInput(bool online, bool inRoom, bool inDungeon)
+        {
+            return online && inRoom && inDungeon;
+        }
+
         // 功能：进副本：把四个开关一次性打到「在副本里」，允许自动进房，并把上一局的死亡表现复位。
         // 入参：无。
         // 返回：无。
@@ -701,7 +727,7 @@ namespace NBC.Game.Bootstrap
                 m_session.DiscardSnapshotsUntilRoomState();
             }
 
-            Debug.Log("[副本] 进副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
+            Debug.Log("[副本] 进副本（第 " + Time.frameCount + " 帧）驱动「" + gameObject.name + "」" + m_presence.ToString());
             ReviveLocalPlayerAfterRestart();
         }
 
@@ -743,7 +769,7 @@ namespace NBC.Game.Bootstrap
             m_presence.ExitToWorld();
             m_autoJoin = m_presence.AutoJoin;
             m_bindPresentation = m_presence.InDungeon;
-            Debug.Log("[副本] 离开副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
+            Debug.Log("[副本] 离开副本（第 " + Time.frameCount + " 帧）驱动「" + gameObject.name + "」" + m_presence.ToString());
             LeaveRoom();
 
             // 注意：2026-11-21 加。只要场景里还有**第二个**副本驱动（历史上被 HUD/入口重复建出来过），
@@ -953,8 +979,10 @@ namespace NBC.Game.Bootstrap
                 m_session.JoinRoom(string.Empty, m_dungeonId);
             }
 
-            // 必须同时「在线」才发输入：InRoom 只看房间字段，断线后它仍是 true（见 NetSession.InRoom）
-            if (m_session.IsOnline && m_session.InRoom)
+            // 必须同时「在线」才发输入：InRoom 只看房间字段，断线后它仍是 true（见 NetSession.InRoom）。
+            // 再叠一层「真的在副本里」：哪怕座位上还有我们，人已经在 World 就不该再发输入，
+            // 否则服务端会收到空输入 → 解除开局保护 → 英雄站在副本里被怪打（FIXES 2026-11-21）。
+            if (CanSendInput)
             {
                 NoteJoinedNow();
                 PumpInput();
@@ -1191,6 +1219,14 @@ namespace NBC.Game.Bootstrap
 
             if (m_session != null)
             {
+                // 销毁即离开：驱动被删掉（场景卸载、重复实例、用户切场景）时，
+                // 房间里不能留一个"没人操控却还在挨打"的英雄 —— 见 FIXES 2026-11-21。
+                if (m_session.IsOnline && m_session.InRoom)
+                {
+                    m_session.LeaveRoom();
+                    Debug.Log("[副本] 驱动「" + gameObject.name + "」被销毁，已请求退房");
+                }
+
                 m_session.StateChanged -= OnStateChanged;
                 m_session.HandshakeCompleted -= OnHandshakeCompleted;
                 m_session.Dispose();

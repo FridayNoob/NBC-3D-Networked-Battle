@@ -239,6 +239,10 @@ namespace NBC.NetProbe
             Battle_SpawnGrace();
 
             Console.WriteLine();
+            Console.WriteLine("【十七·八】一个玩家只占一个座位（2026-11-21「在 World 还掉血」的根因）");
+            RoomRules_SecondSessionOfSamePlayerTakesOverTheSeat();
+
+            Console.WriteLine();
             Console.WriteLine("【十八】M4-S3 §二十六：任务动作**走网线**（接取 ⇒ 状态同步；拒绝要说清；游客要挡住）");
             QuestAction_SocketRoundTrip();
 
@@ -9364,6 +9368,70 @@ private static void Boss_SpawnPointsAreOutsideAggroRange()
 
             // 命中帧对齐：技能自己那一下仍然在 hitFrame 后生效（无敌不影响自己打人）
             Check("§17e 无敌：免伤不影响技能自己的命中（命中帧按表）", hitFrame >= 1, "hitFrame=" + hitFrame);
+        }
+
+        /// <summary>
+        /// 【十七·八】一个玩家只占一个座位：同一 player_id 的第二条连接进房时，旧连接必须被断开、旧座位必须释放。
+        /// <para>事故背景（2026-11-21）：客户端误建了第二个 RuntimeNetDriver，两条连接同时进房；
+        /// 回 World 只退了其中一条，另一条让英雄留在副本里继续挨打 —— 表现就是"人在大厅，血条还在掉"。</para>
+        /// </summary>
+        private static void RoomRules_SecondSessionOfSamePlayerTakesOverTheSeat()
+        {
+            using (var h = new Harness())
+            {
+                Client first = h.ConnectAndHandshake("甲");
+                Client second = h.ConnectAndHandshake("乙");
+
+                h.WaitUntil(() => h.Sessions.Count >= 2, "两条会话都握手完成", 3000);
+
+                if (h.Sessions.Count < 2)
+                {
+                    Check("§17h 顶号：两条会话都握手完成", false, "只有 " + h.Sessions.Count + " 条");
+                    return;
+                }
+
+                // 模拟"同一个玩家开出两条连接"：握手后把第二位的 player_id 强行对齐成第一位。
+                // 真实世界里这是同一个账号在另一台设备/另一次误建连接上登录，服务端看到的就是两个会话、一个玩家。
+                ClientSession firstSession = h.Sessions[0];
+                ClientSession secondSession = h.Sessions[1];
+                secondSession.PlayerId = firstSession.PlayerId;
+
+                first.Send(new ClientMessage
+                {
+                    JoinRoom = new JoinRoomRequest { RoomId = string.Empty, DungeonId = 1001 },
+                });
+
+                h.WaitUntil(() => first.LastRoom() != null, "第一条连接先拿到席位表", 3000);
+
+                RoomState firstRoom = first.LastRoom();
+                string roomId = firstRoom == null ? string.Empty : firstRoom.RoomId;
+
+                second.Send(new ClientMessage
+                {
+                    JoinRoom = new JoinRoomRequest { RoomId = roomId, DungeonId = 1001 },
+                });
+
+                h.WaitUntil(() => h.Registry.Find(roomId) != null && h.Registry.Find(roomId).SeatCount == 1,
+                    "第二条连接进房后房间里只剩一个座位", 3000);
+
+                Room room = h.Registry.Find(roomId);
+                Room? occupied = h.Registry.FindByPlayerId(secondSession.PlayerId, out long occupiedSessionId);
+
+                Check("§17h 顶号：同 player_id 的两条连接进房后只留一个座位",
+                    room != null && room.SeatCount == 1,
+                    room == null ? "房间不在了" : "座位数=" + room.SeatCount + "，房间=" + room.RoomId);
+
+                Check("§17h 顶号：留下的是最后那条连接（新连接赢）",
+                    occupied != null && occupiedSessionId == secondSession.SessionId,
+                    "占座会话=" + occupiedSessionId + "，新会话=" + secondSession.SessionId +
+                    "，旧会话=" + firstSession.SessionId);
+
+                Check("§17h 顶号：旧连接被服务端主动断开（不留幽灵英雄）",
+                    h.SessionClosings.Exists(s => s.Contains("会话 " + firstSession.SessionId)) ||
+                    h.RoomNotes.Exists(s => s.Contains("旧连接")),
+                    "断开记录=" + (h.SessionClosings.Count == 0 ? "无" : string.Join(" | ", h.SessionClosings)) +
+                    "；房务说明=" + (h.RoomNotes.Count == 0 ? "无" : string.Join(" | ", h.RoomNotes)));
+            }
         }
 
         /// <summary>

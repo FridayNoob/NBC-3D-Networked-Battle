@@ -455,6 +455,38 @@ public sealed class RoomRegistry
         return null;
     }
 
+    /// <summary>这个玩家（按 playerId）坐在哪个房间的哪个席位上（跨会话查，给"顶号"用）。</summary>
+    /// <param name="playerId">玩家编号（0 = 还没握手，直接返回 null）。</param>
+    /// <param name="sessionId">命中席位的会话编号（没命中为 0）。</param>
+    /// <returns>房间或 null。</returns>
+    /// <remarks>
+    /// ⚠️ 为什么按 playerId 而不是 sessionId：同一个玩家可以开出**两条连接**（例如客户端误建了第二个驱动），
+    /// 两条连接在服务端眼里是两个人，都能进房、都能操控各自的英雄 —— 表现就是"人在大厅，副本里的角色还在挨打"。
+    /// 这条查询是"一个玩家最多一个座位"规则的唯一数据来源。
+    /// </remarks>
+    public Room? FindByPlayerId(long playerId, out long sessionId)
+    {
+        sessionId = 0;
+
+        if (playerId == 0)
+        {
+            return null;
+        }
+
+        foreach (Room room in _rooms.Values)
+        {
+            RoomSeat? seat = room.FindByPlayerId(playerId);
+
+            if (seat != null)
+            {
+                sessionId = seat.Session.SessionId;
+                return room;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>按房间号取。</summary>
     /// <param name="roomId">房间号。</param>
     /// <returns>房间或 null。</returns>

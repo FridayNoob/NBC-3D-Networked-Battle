@@ -144,8 +144,28 @@ public sealed class RoomService
             return DispatchResult.KickOut("JoinRoom 消息里没有 JoinRoomRequest 字段（协议违规）");
         }
 
-        RoomJoinResult result = _registry.Join(session, session.PlayerName, request.RoomId, request.DungeonId);
+        // 顶号（2026-11-21）：同一个玩家只允许占一个座位。
+        // 理由：客户端误建第二条会话时，服务端眼里就是两个玩家 —— 旧的坐在房间 d1001 里操控英雄，
+        // 人在 World 却一直掉血（见 FIXES 2026-11-21）。新连接是玩家此刻正在用的，踢旧的。
+        Room? occupied = _registry.FindByPlayerId(session.PlayerId, out long occupiedSessionId);
 
+        if (occupied != null && occupiedSessionId != session.SessionId)
+        {
+            RoomSeat? oldSeat = occupied.FindByPlayerId(session.PlayerId);
+
+            Note?.Invoke($"玩家 {session.PlayerId}（{session.PlayerName}）的旧连接（会话 {occupiedSessionId}）" +
+                         $"还坐在房间 {occupied.RoomId}，先断开它再进房");
+
+            _transport.Disconnect(occupiedSessionId, "同一玩家在另一条连接上重新进入（旧连接已断开）");
+
+            // 立刻释放旧座位，别等 SessionClosed 回调（它要等传输层收尾，期间房间会被当成"有人"）
+            if (oldSeat != null)
+            {
+                _registry.Leave(oldSeat.Session);
+            }
+        }
+
+        RoomJoinResult result = _registry.Join(session, session.PlayerName, request.RoomId, request.DungeonId);
         if (!result.Ok)
         {
             // 拒绝了：回一条**说清原因**的 ErrorResponse（见文件头第二节）
