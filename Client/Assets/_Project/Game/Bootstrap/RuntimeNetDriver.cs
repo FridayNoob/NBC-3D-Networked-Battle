@@ -745,6 +745,23 @@ namespace NBC.Game.Bootstrap
             m_bindPresentation = m_presence.InDungeon;
             Debug.Log("[副本] 离开副本（第 " + Time.frameCount + " 帧）" + m_presence.ToString());
             LeaveRoom();
+
+            // 注意：2026-11-21 加。只要场景里还有**第二个**副本驱动（历史上被 HUD/入口重复建出来过），
+            // 我们自己关掉自动进房还不够 —— 那个驱动下一帧看见房间空了就会立刻重新进房，
+            // 于是人已经在 World 里，服务端却还在副本里操控你的英雄（表现：World 里一直看到自己掉血）。
+            // 所以离开副本时把**所有同一副本的驱动**一起关掉自动进房；进副本时由 EnterDungeon 只打开自己的。
+            RuntimeNetDriver[] drivers = FindObjectsOfType<RuntimeNetDriver>();
+
+            for (int i = 0; i < drivers.Length; i++)
+            {
+                RuntimeNetDriver other = drivers[i];
+
+                if (other != null && other.m_dungeonId == m_dungeonId && other.AutoJoin)
+                {
+                    other.AutoJoin = false;
+                    Debug.LogWarning("[副本] 关掉另一个副本驱动「" + other.gameObject.name + "」的自动进房（同副本只该有一个）");
+                }
+            }
         }
 
         // 功能：控制是否把快照画到场景里、并纠偏本地英雄。
